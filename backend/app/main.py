@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.routes import docs, health, images, vision
+from app.api.routes import docs, health, images, vision, workspace
 from app.core.config import get_settings
 from app.core.upload_limits import ImageUploadBodyLimit
 
@@ -30,7 +30,9 @@ app.include_router(health.router)
 app.include_router(images.router)
 app.include_router(vision.router)
 app.include_router(docs.router)
+app.include_router(workspace.router)
 app.mount("/docs-assets", StaticFiles(directory=Path(__file__).resolve().parent / "docs_assets"), name="docs-assets")
+app.mount("/app/assets", StaticFiles(directory=workspace.FRONTEND_DIR / "assets", check_dir=False), name="workspace-assets")
 app.add_middleware(ImageUploadBodyLimit, max_bytes=settings.upload_max_bytes + 65536)
 
 

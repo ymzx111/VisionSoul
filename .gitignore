@@ -27,3 +27,6 @@ build/
 
 # 用户上传图片（运行时数据）
 /backend/storage/
+
+# 前端开发工具的本机运行记录
+/frontend/.sites-runtime/

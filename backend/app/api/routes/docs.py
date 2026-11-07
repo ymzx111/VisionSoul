@@ -20,6 +20,7 @@ def chinese_docs(request: Request) -> HTMLResponse:
     guide = (
         '<aside class="vs-docs-guide" aria-label="操作提示">'
         '<strong>中文接口文档</strong>'
+        '<p><a href="/app/">打开图片工作台：自动预览、无需填写编号 →</a></p>'
         '<p>使用顺序：上传图片 → 复制图片编号 → 提交图片理解。'
         '展开接口后，点击“试用接口”填写参数，再点击“发送请求”。</p>'
         '<p>GET 表示读取，POST 表示提交。字段旁有中文说明；'
