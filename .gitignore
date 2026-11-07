@@ -23,3 +23,6 @@ build/
 # 测试缓存
 .pytest_cache/
 .coverage
+
+# 用户上传图片（运行时数据）
+/backend/storage/

@@ -5,7 +5,9 @@
 """
 
 from functools import lru_cache
+from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,12 +29,18 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     app_description: str = (
         "VisionSoul —— 具备视觉感知与动态人格模拟能力的多模态 AI 交互系统。"
-        "当前为第一阶段：仅提供后端基础框架，尚未接入模型能力。"
+        "当前支持图片上传与预览，尚未接入模型能力。"
     )
 
     # ---- 启动参数（记录用；实际监听地址以启动命令为准）----
     host: str = "127.0.0.1"
     port: int = 8000
+
+    # 默认位置锚定 backend，避免在不同目录启动时把图片存到不同位置。
+    image_storage_dir: Path = Path(__file__).resolve().parents[2] / "storage" / "images"
+    upload_max_bytes: int = Field(default=10 * 1024 * 1024, ge=1, le=20 * 1024 * 1024)
+    image_max_pixels: int = Field(default=20_000_000, ge=1, le=40_000_000)
+    image_max_dimension: int = Field(default=8192, ge=1, le=16384)
 
 
 @lru_cache
