@@ -1,0 +1,6 @@
+# VisionSoul 后端依赖（Python 3.13）
+# 安装：pip install -r requirements.txt
+
+fastapi==0.115.6
+uvicorn==0.34.0
+pydantic-settings==2.7.1
