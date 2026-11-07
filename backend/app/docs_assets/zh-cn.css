@@ -1,0 +1,30 @@
+body { margin: 0; background: #fafafa; }
+.vs-docs-guide {
+  box-sizing: border-box;
+  max-width: 1420px;
+  margin: 24px auto 0;
+  padding: 16px 20px;
+  border-left: 4px solid #26804f;
+  background: #eef8f1;
+  color: #244337;
+  font: 14px/1.8 system-ui, "Microsoft YaHei", sans-serif;
+}
+.vs-docs-guide strong { font-size: 16px; }
+.vs-docs-guide p { margin: 4px 0; }
+.swagger-ui { font-family: system-ui, "Microsoft YaHei", sans-serif; }
+.swagger-ui .btn { min-width: 80px; }
+.swagger-ui .parameter__name.required::after { content: "必填"; }
+.swagger-ui .vs-native-file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.vs-file-picker { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.vs-file-picker span { overflow-wrap: anywhere; font-size: 13px; }
+.vs-file-picker button:disabled { opacity: .5; cursor: not-allowed; }
+@media (max-width: 720px) {
+  .vs-docs-guide { margin: 12px 12px 0; padding: 12px; }
+}

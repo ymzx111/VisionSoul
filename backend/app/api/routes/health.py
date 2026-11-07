@@ -7,6 +7,7 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import get_settings
 
@@ -18,7 +19,17 @@ settings = get_settings()
 _STARTED_AT = datetime.now(timezone.utc)
 
 
-@router.get("/health", summary="健康检查")
+class HealthStatus(BaseModel):
+    model_config = ConfigDict(title="健康状态")
+
+    status: str = Field(title="服务状态", description="ok 表示后端进程正常响应。")
+    project: str = Field(title="项目名称", description="当前后端项目名称。")
+    version: str = Field(title="项目版本", description="当前后端版本号。")
+    uptime_seconds: float = Field(title="已运行秒数", description="从本次进程启动到现在的秒数。")
+    timestamp: str = Field(title="检查时间", description="带时区的时间戳。")
+
+
+@router.get("/health", summary="健康检查", response_model=HealthStatus, response_description="后端运行状态及检查时间")
 def health_check() -> dict:
     """返回服务状态、版本与已运行时长。"""
     now = datetime.now(timezone.utc)

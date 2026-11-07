@@ -50,7 +50,7 @@ Set-Location .\backend
 ..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
 ```
 
-打开 http://127.0.0.1:8000/docs，展开 `POST /api/images`，点击 **Try it out**，选择图片后点击 **Execute**。
+打开 http://127.0.0.1:8000/docs，展开 `POST /api/images`，点击 **试用接口**，选择图片后点击 **发送请求**。
 成功时返回 HTTP 201，包含 `image_id`、`url`、实际保存大小和宽高。把返回的 `url` 接在服务地址后，即可预览图片。
 
 例如返回 `/api/images/某个图片标识`，则访问 `http://127.0.0.1:8000/api/images/某个图片标识`。
@@ -124,3 +124,12 @@ low 会降低输入图像细节；辨认小字或细节时可在 `.env` 中将 `
 详细联调结果与用量记录见 P004。当前是单次图片理解；连续对话、人格和记忆将在后续模块实现。
 
 官方参考：[更新记录](https://api-docs.deepseek.com/updates/)、[视觉输入说明](https://api-docs.deepseek.com/guides/vision/)。
+
+## 10. 中文接口文档
+
+`/docs` 提供中文按钮、栏目、文件选择器、字段名称提示和错误说明；页面顶部有“先上传、再提问”的操作提示。
+点击“字段说明”可查看图片编号、模型配置、回复和用量等字段的中文解释。
+`/openapi.json`、请求示例和实际响应仍保留程序使用的原始字段名，例如 `image_id`、`question`，便于直接复制调用。
+
+通用界面中文显示由 `backend/app/docs_assets/` 中的本地脚本和样式补充；Swagger 的核心资源仍使用原来的 CDN。
+后续若升级 Swagger 的主要版本，需要重新检查动态按钮与文件选择器的中文显示。

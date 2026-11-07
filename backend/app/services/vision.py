@@ -3,7 +3,7 @@
 import base64
 
 import httpx
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.config import Settings
 from app.services.images import find_image
@@ -24,17 +24,21 @@ class VisionServiceError(Exception):
 
 
 class TokenUsage(BaseModel):
-    prompt_tokens: int = Field(ge=0)
-    completion_tokens: int = Field(ge=0)
-    total_tokens: int = Field(ge=0)
+    model_config = ConfigDict(title="模型用量")
+
+    prompt_tokens: int = Field(ge=0, title="输入用量", description="图片和提问使用的输入 token 数量。")
+    completion_tokens: int = Field(ge=0, title="输出用量", description="模型回复使用的输出 token 数量。")
+    total_tokens: int = Field(ge=0, title="总用量", description="本次调用的 token 总数，不是金额。")
 
 
 class VisionAnswer(BaseModel):
-    image_id: str
-    answer: str
-    model: str
-    usage: TokenUsage | None = None
-    truncated: bool = False
+    model_config = ConfigDict(title="图片理解结果")
+
+    image_id: str = Field(title="图片编号", description="本次分析的图片。")
+    answer: str = Field(title="理解回复", description="模型对图片和问题的回答。")
+    model: str = Field(title="使用模型", description="DeepSeek 实际返回的模型名。")
+    usage: TokenUsage | None = Field(default=None, title="模型用量", description="服务商返回的 token 用量；未提供时为 null。")
+    truncated: bool = Field(default=False, title="回复是否被截断", description="true 表示回复达到输出上限；false 表示未因上限而截断。")
 
 
 class _Message(BaseModel):
