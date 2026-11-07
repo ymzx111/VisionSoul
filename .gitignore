@@ -1,0 +1,25 @@
+# Python 虚拟环境
+.venv/
+venv/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+
+# API 密钥和环境变量
+.env
+.env.*
+
+# PyCharm 配置
+.idea/
+
+# 前端依赖
+node_modules/
+
+# 构建文件
+dist/
+build/
+
+# 测试缓存
+.pytest_cache/
+.coverage
