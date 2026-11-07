@@ -9,6 +9,7 @@ __pycache__/
 # API 密钥和环境变量
 .env
 .env.*
+!backend/.env.example
 
 # PyCharm 配置
 .idea/

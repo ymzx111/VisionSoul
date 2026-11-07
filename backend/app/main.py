@@ -6,7 +6,7 @@
 
 from fastapi import FastAPI
 
-from app.api.routes import health, images
+from app.api.routes import health, images, vision
 from app.core.config import get_settings
 from app.core.upload_limits import ImageUploadBodyLimit
 
@@ -24,6 +24,7 @@ app = FastAPI(
 # 路由集中注册：以后新增模块，只需在这里 app.include_router(...)
 app.include_router(health.router)
 app.include_router(images.router)
+app.include_router(vision.router)
 app.add_middleware(ImageUploadBodyLimit, max_bytes=settings.upload_max_bytes + 65536)
 
 

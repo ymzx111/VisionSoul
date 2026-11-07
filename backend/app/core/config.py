@@ -6,8 +6,9 @@
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,7 +20,7 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=Path(__file__).resolve().parents[2] / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -29,7 +30,7 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     app_description: str = (
         "VisionSoul —— 具备视觉感知与动态人格模拟能力的多模态 AI 交互系统。"
-        "当前支持图片上传与预览，尚未接入模型能力。"
+        "当前支持图片上传、预览和 DeepSeek 图片理解。"
     )
 
     # ---- 启动参数（记录用；实际监听地址以启动命令为准）----
@@ -41,6 +42,13 @@ class Settings(BaseSettings):
     upload_max_bytes: int = Field(default=10 * 1024 * 1024, ge=1, le=20 * 1024 * 1024)
     image_max_pixels: int = Field(default=20_000_000, ge=1, le=40_000_000)
     image_max_dimension: int = Field(default=8192, ge=1, le=16384)
+
+    # 密钥只由后端读取，不加入任何接口响应。
+    deepseek_api_key: SecretStr = SecretStr("")
+    deepseek_model: Literal["deepseek-flash"] = "deepseek-flash"
+    deepseek_image_detail: Literal["low", "high"] = "low"
+    deepseek_max_tokens: int = Field(default=512, ge=32, le=2048)
+    deepseek_timeout_seconds: float = Field(default=45.0, ge=5.0, le=120.0)
 
 
 @lru_cache
