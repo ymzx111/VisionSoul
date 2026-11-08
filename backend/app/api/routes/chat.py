@@ -1,0 +1,97 @@
+"""本机伙伴对话。客户端只提供用户文字，不能注入历史角色或系统提示。"""
+import sqlite3
+from typing import Annotated, Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Path
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.core.config import Settings, get_settings
+from app.core.persona import PERSONA_ID, PERSONA_NAME, PERSONA_STYLE
+from app.services.chat import ChatService
+from app.services.chat_store import ChatStore
+from app.services.deepseek import DeepSeekError, TokenUsage, has_api_key
+
+router = APIRouter(prefix="/api/chat", tags=["伙伴对话"])
+Identifier = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
+
+
+class SendMessage(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid", title="发送伙伴消息")
+    conversation_id: Identifier | None = Field(default=None, title="话题编号", description="第一次发送留空，后续使用返回的话题编号。")
+    request_id: Identifier = Field(title="消息请求编号", description="前端自动生成；原样重试已完成的请求不会再调用模型。")
+    message: str = Field(min_length=1, max_length=2000, title="你的消息")
+    image_id: Identifier | None = Field(default=None, title="可选图片编号", description="一段话题最多关联一张图片。")
+
+
+class ChatMessage(BaseModel):
+    model_config = ConfigDict(title="对话消息")
+    id: int
+    role: Literal["user", "assistant"]
+    content: str
+    image_id: str | None = None
+    created_at: str
+
+
+class ChatTurn(BaseModel):
+    model_config = ConfigDict(title="伙伴回复")
+    conversation_id: str
+    image_id: str | None
+    user_message: ChatMessage
+    assistant_message: ChatMessage
+    model: str
+    usage: TokenUsage | None = None
+    truncated: bool = False
+    persona_id: str
+    replayed: bool = False
+
+
+def get_chat_service(settings: Annotated[Settings, Depends(get_settings)]) -> ChatService:
+    return ChatService(settings)
+
+
+def open_store(settings: Settings) -> ChatStore:
+    store = ChatStore(settings.chat_database_path)
+    try:
+        store.initialize()
+    except (OSError, sqlite3.Error) as exc:
+        raise HTTPException(503, "本机聊天记录暂不可用，请确认存储目录可写。") from exc
+    return store
+
+
+@router.get("/status", summary="查看伙伴配置（不调用模型）")
+def chat_status(settings: Annotated[Settings, Depends(get_settings)]) -> dict:
+    open_store(settings)
+    return {"configured": has_api_key(settings), "persona_id": PERSONA_ID, "name": PERSONA_NAME,
+            "style": PERSONA_STYLE, "context_turns": settings.chat_context_turns}
+
+
+@router.get("/conversations", summary="查看本机最近二十个话题")
+def conversations(settings: Annotated[Settings, Depends(get_settings)]) -> list[dict]:
+    try:
+        return open_store(settings).recent()
+    except (OSError, sqlite3.Error) as exc:
+        raise HTTPException(503, "暂时无法读取本机话题。") from exc
+
+
+@router.get("/conversations/{conversation_id}", summary="恢复一段话题（不调用模型）")
+def conversation(
+    conversation_id: Annotated[str, Path(pattern=r"^[0-9a-f]{32}$", title="话题编号")],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict:
+    try:
+        store = open_store(settings)
+        item = store.get(conversation_id)
+        if item is None:
+            raise HTTPException(404, "话题不存在，请新建话题。")
+        messages = store.messages(conversation_id)
+        return {**item, "messages": messages, "has_older": item["revision"] * 2 > len(messages)}
+    except (OSError, sqlite3.Error) as exc:
+        raise HTTPException(503, "暂时无法读取本机话题。") from exc
+
+
+@router.post("/messages", response_model=ChatTurn, summary="发送消息给小灵（产生 API 用量）")
+def send_message(request: SendMessage, service: Annotated[ChatService, Depends(get_chat_service)]) -> dict:
+    try:
+        return service.send(**request.model_dump())
+    except DeepSeekError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc

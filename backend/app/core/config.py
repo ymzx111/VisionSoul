@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     app_description: str = (
         "VisionSoul —— 具备视觉感知与动态人格模拟能力的多模态 AI 交互系统。"
-        "当前支持图片上传、预览和 DeepSeek 图片理解。"
+        "当前支持图片理解、固定伙伴人格、连续对话和本机聊天记录。"
     )
 
     # ---- 启动参数（记录用；实际监听地址以启动命令为准）----
@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     deepseek_image_detail: Literal["low", "high"] = "low"
     deepseek_max_tokens: int = Field(default=512, ge=32, le=2048)
     deepseek_timeout_seconds: float = Field(default=45.0, ge=5.0, le=120.0)
+
+    # 对话记录仅保存到本机；偏好提取和长期记忆在后续模块实现。
+    chat_database_path: Path = Path(__file__).resolve().parents[2] / "storage" / "chat.sqlite3"
+    chat_context_turns: int = Field(default=6, ge=1, le=12)
+    chat_context_chars: int = Field(default=12000, ge=2000, le=24000)
 
 
 @lru_cache
