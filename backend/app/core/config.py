@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     chat_database_path: Path = Path(__file__).resolve().parents[2] / "storage" / "chat.sqlite3"
     chat_context_turns: int = Field(default=6, ge=1, le=12)
     chat_context_chars: int = Field(default=12000, ge=2000, le=24000)
+    role_database_path: Path | None = None
+
+    @property
+    def roles_path(self) -> Path:
+        return self.role_database_path or self.chat_database_path.with_name("roles.sqlite3")
 
 
 @lru_cache

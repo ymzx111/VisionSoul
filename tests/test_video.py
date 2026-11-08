@@ -57,7 +57,7 @@ class VideoTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="visionsoul-video-test-")
         self.addCleanup(self.temp.cleanup)
-        self.settings = Settings(_env_file=None, video_storage_dir=Path(self.temp.name) / "videos",
+        self.settings = Settings(_env_file=None, video_storage_dir=Path(self.temp.name) / "videos",role_database_path=Path(self.temp.name)/"roles.sqlite3",
                                  deepseek_api_key="test-not-a-real-key")
         self.calls = []
         self.payload = result_payload()

@@ -34,7 +34,7 @@ class VisionFixture(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="visionsoul-vision-test-")
         self.addCleanup(self.temp.cleanup)
         self.settings = Settings(
-            _env_file=None, image_storage_dir=Path(self.temp.name),
+            _env_file=None, image_storage_dir=Path(self.temp.name), role_database_path=Path(self.temp.name)/"roles.sqlite3",
             deepseek_api_key="test-key-not-valid",
         )
         buffer = BytesIO()

@@ -7,7 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, Path
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.config import Settings, get_settings
-from app.core.persona import PERSONA_ID, PERSONA_NAME, PERSONA_STYLE
+from app.core.persona import PERSONA_ID, PERSONA_NAME, PERSONA_STYLE, load_persona
+from app.services.role_store import RoleStore
 from app.services.chat import ChatService
 from app.services.chat_store import ChatStore
 from app.services.deepseek import DeepSeekError, TokenUsage, has_api_key
@@ -72,8 +73,10 @@ def open_store(settings: Settings) -> ChatStore:
 @router.get("/status", summary="查看伙伴配置（不调用模型）")
 def chat_status(settings: Annotated[Settings, Depends(get_settings)]) -> dict:
     open_store(settings)
-    return {"configured": has_api_key(settings), "persona_id": PERSONA_ID, "name": PERSONA_NAME,
-            "style": PERSONA_STYLE, "context_turns": settings.chat_context_turns}
+    roles = RoleStore(settings.roles_path)
+    card = roles.current()
+    return {"configured": has_api_key(settings), "persona_id": load_persona(settings,roles)[2], "name": PERSONA_NAME,
+            "style": card["profile"]["traits"][:32] if card["revision"] else PERSONA_STYLE, "context_turns": settings.chat_context_turns}
 
 
 @router.get("/conversations", summary="查看本机最近二十个话题")

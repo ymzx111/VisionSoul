@@ -22,7 +22,7 @@ export default function VideoChatPanel({ workflow, state, videoState, draft, set
         <option value="">新话题 · 分享这段视频</option>
         {state.conversationId && !state.recent.some(item => item.id === state.conversationId) && <option value={state.conversationId}>当前视频话题</option>}
         {state.recent.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
-      </select><span>活泼俏皮，轻度幽默</span></div>
+      </select><span>{state.persona.style || '活泼俏皮，轻度幽默'}</span></div>
     <div className="chat-stream" ref={scroll} role="log" aria-label="视频对话记录" aria-live="polite" aria-busy={busy}>
       {state.loading ? <p className="chat-loading">正在恢复本机视频话题…</p> : messages.length ? <>
         {state.hasOlder && <p className="chat-history-note">这里只显示最近 200 条，完整记录仍保存在本机。</p>}

@@ -3,7 +3,8 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import Settings
-from app.core.persona import PERSONA_PROMPT
+from app.core.persona import PERSONA_PROMPT, load_persona
+from app.services.role_store import RoleStore
 from app.services.deepseek import API_URL, DeepSeekClient, DeepSeekError, TokenUsage, has_api_key, image_part
 
 # 保留既有导入名称，保证接口和原有验证可继续使用。
@@ -27,8 +28,11 @@ class DeepSeekVisionService:
 
     def analyze(self, image_id: str, question: str) -> VisionAnswer:
         picture = image_part(image_id, self.settings)
+        _, prompt, _ = load_persona(self.settings)
+        memory = RoleStore(self.settings.roles_path).memory_context(None,question)
         result = self.client.complete([
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": prompt + "\n本次是单张图片理解：先回答图片中的事实，再按用户问题自然回应。"},
+            *([{"role":"user","content":memory}] if memory else []),
             {"role": "user", "content": [{"type": "text", "text": question}, picture]},
         ])
         return VisionAnswer(image_id=image_id, **result.model_dump())

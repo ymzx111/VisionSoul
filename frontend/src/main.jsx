@@ -5,6 +5,8 @@ import { createChatWorkflow } from './chat-workflow.mjs';
 import ChatPanel from './ChatPanel.jsx';
 import VideoWorkspace from './VideoWorkspace.jsx';
 import { createVideoWorkflow } from './video-workflow.mjs';
+import { createRoleWorkflow } from './role-workflow.mjs';
+import RoleSettings from './RoleSettings.jsx';
 import './style.css';
 
 function Icon({ name, size = 20, className = '' }) {
@@ -46,6 +48,12 @@ function App() {
   const input = useRef(null);
   const [question, setQuestion] = useState('请描述这张图片的主要场景、物体和细节。');
   const [dragging, setDragging] = useState(false);
+  const roleWorkflow = useMemo(() => createRoleWorkflow(), []);
+  const roleState = useSyncExternalStore(roleWorkflow.subscribe, roleWorkflow.getState);
+  const [page, setPage] = useState(location.hash === '#/roles' ? 'roles' : 'chat');
+  useEffect(() => { const change = () => setPage(location.hash === '#/roles' ? 'roles' : 'chat'); window.addEventListener('hashchange',change); return () => window.removeEventListener('hashchange',change); }, []);
+  useEffect(() => () => roleWorkflow.dispose(), [roleWorkflow]);
+  useEffect(() => { if (page === 'chat') { void chatWorkflow.refreshPersona(); void videoChatWorkflow.refreshPersona(); } }, [page,chatWorkflow,videoChatWorkflow]);
   useEffect(() => { void workflow.initialize(); return () => workflow.dispose(); }, [workflow]);
   useEffect(() => { void chatWorkflow.initialize(); return () => chatWorkflow.dispose(); }, [chatWorkflow]);
   useEffect(() => { void videoWorkflow.initialize(); return () => videoWorkflow.dispose(); }, [videoWorkflow]);
@@ -53,7 +61,7 @@ function App() {
   useEffect(() => {
     if (videoChatState.videoId && videoChatState.videoId !== videoWorkflow.getState().video?.video_id) void videoWorkflow.loadVideo(videoChatState.videoId);
   }, [videoChatState.videoId, videoWorkflow]);
-  const busy = state.analyzing || chatState.sending || videoState.uploading || videoState.loadingVideo || videoState.analyzing || videoChatState.sending || videoChatState.loading;
+  const busy = state.analyzing || chatState.sending || videoState.uploading || videoState.loadingVideo || videoState.analyzing || videoChatState.sending || videoChatState.loading || roleState.busy;
   const count = state.files.length;
   const multiple = count > 1;
   const canAnalyze = count === 1 && state.uploadStage === 'ready' && state.configured === true && question.trim() && !state.analyzing;
@@ -69,11 +77,12 @@ function App() {
       <a href="/app/" className="brand" aria-label="VisionSoul 工作台"><span className="brand-mark"><Icon name="leaf" size={22}/></span><span>VisionSoul<span className="brand-caption">画面 · 发现 · 陪伴</span></span></a>
       <div className="flex items-center gap-5">
         <span className="model-state"><span className={`status-dot ${state.configured ? 'is-ready' : ''}`}/>{state.configured ? 'DeepSeek Flash · 已配置' : state.configError ? '后端连接待检查' : state.configured === false ? '模型待配置' : '正在检查配置'}</span>
+        <button className="role-entry" disabled={busy} onClick={() => { location.hash = page === 'roles' ? '' : '/roles'; }}>{page === 'roles' ? '← 返回对话' : '角色与记忆'}</button>
         <a className="docs-link" href="/docs" target="_blank" rel="noreferrer">接口文档 <span aria-hidden="true">↗</span></a>
       </div>
     </header>
 
-    <main className="workspace">
+    {page === 'roles' ? <RoleSettings workflow={roleWorkflow} state={roleState}/> : <main className="workspace">
       <div className="workspace-title"><div><p className="eyebrow">VisionSoul 工作台</p><h1>{mode === 'video' ? '让画面，连成一段发现。' : mode === 'image' ? '看见画面，发现细节。' : '和小灵，聊聊此刻。'}</h1></div>
         <div className="mode-tabs" role="tablist" aria-label="工作台模式"><button role="tab" aria-selected={mode === 'video'} disabled={busy} onClick={() => setMode('video')}>视频观察</button><button role="tab" aria-selected={mode === 'image'} disabled={busy} onClick={() => setMode('image')}>图片理解</button><button role="tab" aria-selected={mode === 'chat'} disabled={busy} onClick={() => setMode('chat')}>伙伴对话</button></div></div>
       {mode === 'video' ? <VideoWorkspace workflow={videoWorkflow} state={videoState} chatWorkflow={videoChatWorkflow} chatState={videoChatState} draft={videoDraft} setDraft={setVideoDraft}/> : <div className="work-grid">
@@ -119,7 +128,7 @@ function App() {
           <div className="analysis-footer"><span className="subtle-dot"/><span>当前版本：单张图片理解</span><span>上传后不会自动分析</span></div>
         </section>}
       </div>}
-    </main>
+    </main>}
     <footer className="page-footer"><span>VisionSoul <span className="footer-separator">/</span> 从看见，到理解</span><span>轻量体验，逐步生长。</span></footer>
   </div>;
 }

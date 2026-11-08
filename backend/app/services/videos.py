@@ -17,11 +17,12 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.config import Settings
-from app.core.persona import PERSONA_CORE
+from app.core.persona import PERSONA_CORE, load_persona
 from app.services.deepseek import DeepSeekClient, DeepSeekError, ModelReply, TokenUsage, has_api_key
 
 logger = logging.getLogger(__name__)
-VIDEO_PROMPT = PERSONA_CORE + "\n\n" + (Path(__file__).resolve().parents[1] / "prompts" / "video.md").read_text(encoding="utf-8").strip()
+VIDEO_TASK = (Path(__file__).resolve().parents[1] / "prompts" / "video.md").read_text(encoding="utf-8").strip()
+VIDEO_PROMPT = PERSONA_CORE + "\n\n" + VIDEO_TASK
 PIPELINE_VERSION = "video-v2-uniform-30-exact-dedup"
 UPLOAD_LOCK = threading.Lock()
 ANALYSIS_LOCK = threading.Lock()
@@ -109,19 +110,21 @@ class VideoService:
     def __init__(self, settings: Settings, client: DeepSeekClient | None = None):
         self.settings = settings
         self.client = client or DeepSeekClient(settings)
+        self.prompt = load_persona(settings)[0] + "\n\n" + VIDEO_TASK
 
-    def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None) -> VideoAnswer:
+    def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None, memory_text: str = "") -> VideoAnswer:
         directory = video_directory(info.video_id, self.settings)
         parts = [{"type": "text", "text": "请按上述 json 格式分析以下有序视频采样。只观察画面，不包含音频。"}]
         for frame in info.frames:
             parts.append({"type": "text", "text": f"帧编号 {frame.index}；采样秒数 {frame.seen_at}"})
             encoded = base64.b64encode((directory / f"frame-{frame.index}.jpg").read_bytes()).decode("ascii")
             parts.append({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + encoded, "detail": "low"}})
-        prompt = VIDEO_PROMPT
+        prompt = self.prompt
         if caption:
             prompt += "\n本次是用户带文字分享视频。reply必须直接回应用户这句话并结合已有对话；observations和summary只记录画面可见事实，不把用户提供的地名、日期、心情写成视觉识别结论。"
             parts.append({"type": "text", "text": "用户这次想说：" + caption})
-        reply = self.client.complete([{"role": "system", "content": prompt}, *(history or []),
+        reply = self.client.complete([{"role": "system", "content": prompt},
+            *([{"role":"user","content":memory_text}] if memory_text else []), *(history or []),
             {"role": "user", "content": parts}], json_mode=True, max_tokens=self.settings.video_max_tokens)
         try:
             if reply.truncated:
@@ -152,7 +155,7 @@ class VideoService:
                 "observations": [{**row.model_dump(), "time_seconds": frames[row.frame_index].time_seconds}
                                  for row in result.observations]}
 
-    def start_conversation(self, video_id: str, message: str, history: list[dict]) -> tuple[dict, ModelReply | None]:
+    def start_conversation(self, video_id: str, message: str, history: list[dict], memory_text: str = "") -> tuple[dict, ModelReply | None]:
         """首次无观察时一次请求同时看图和接话；已有观察时让聊天服务仅用文字接话。"""
         info = self.info(video_id)
         directory = video_directory(video_id, self.settings)
@@ -182,7 +185,7 @@ class VideoService:
             snapshot = available()
             if snapshot:
                 return snapshot, None
-            answer = self._observe(info, message, history)
+            answer = self._observe(info,message,history,memory_text)
             snapshot = self._snapshot(info, answer)
             # 只缓存视觉事实，不把针对这一条消息的个性回应带进其他话题。
             evidence = {"observations": [row.model_dump() for row in answer.observations],
@@ -208,7 +211,7 @@ class VideoService:
 
     def _cache_path(self, directory: Path) -> Path:
         # 密钥不参与指纹；提示/输出预算/抽帧记录变化时不会误用旧结果。
-        fingerprint = hashlib.sha256((PIPELINE_VERSION + VIDEO_PROMPT + self.settings.deepseek_model
+        fingerprint = hashlib.sha256((PIPELINE_VERSION + self.prompt + self.settings.deepseek_model
             + str(self.settings.video_max_tokens) + (directory / "manifest.json").read_text(encoding="utf-8")).encode()).hexdigest()[:24]
         return directory / f"analysis-{fingerprint}.json"
 

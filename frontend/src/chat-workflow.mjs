@@ -139,5 +139,6 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
   }
   return { getState: () => state, subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     initialize, loadConversation, newConversation, send,
+    async refreshPersona() { try { const persona = await read(fetcher,'/api/chat/status'); publish({ persona }); } catch { /* 不丢失已有对话和输入。 */ } },
     dispose() { disposed = true; epoch++; controller?.abort(); listeners.clear(); } };
 }
