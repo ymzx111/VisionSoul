@@ -1,0 +1,167 @@
+"""视频配文、持久话题记忆、一次调用与旧库迁移验证；模型使用模拟传输。"""
+from io import BytesIO
+import json
+from pathlib import Path
+import sqlite3
+import sys
+import tempfile
+import unittest
+
+import httpx
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+from fastapi.testclient import TestClient
+from app.api.routes.chat import get_chat_service
+from app.core.config import Settings, get_settings
+from app.main import app
+from app.services.chat import ChatService
+from app.services.chat_store import ChatStore
+from app.services.deepseek import DeepSeekClient, DeepSeekError
+from app.services.videos import VideoService
+from test_video import make_video, result_payload
+
+
+def pictures(payload):
+    return [part for message in payload["messages"] if isinstance(message["content"], list)
+            for part in message["content"] if part["type"] == "image_url"]
+
+
+class VideoChatTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.fixture = tempfile.TemporaryDirectory(prefix="visionsoul-video-chat-fixture-")
+        cls.addClassCleanup(cls.fixture.cleanup)
+        path = Path(cls.fixture.name) / "clip.mp4"
+        make_video(path)
+        cls.data = path.read_bytes()
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="visionsoul-video-chat-")
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        self.settings = Settings(_env_file=None, deepseek_api_key="test-key-not-valid",
+            chat_database_path=root / "chat.sqlite3", video_storage_dir=root / "videos")
+        self.calls = []
+        self.status = 200
+
+        def handler(request):
+            payload = json.loads(request.content)
+            self.calls.append(payload)
+            answer = json.dumps(result_payload(), ensure_ascii=False) if payload.get("response_format") else "记得，你说去了西湖。"
+            return httpx.Response(self.status, json={"model": "deepseek-flash", "choices": [
+                {"message": {"content": answer}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}})
+
+        self.client = DeepSeekClient(self.settings, httpx.MockTransport(handler))
+        self.videos = VideoService(self.settings, self.client)
+        self.video = self.videos.upload(BytesIO(self.data))
+        self.chat = ChatService(self.settings, self.client, self.videos)
+
+    def send(self, message="嘿，我今天去了西湖，你看看这段视频。", request="1", conversation=None, video=True):
+        return self.chat.send(conversation_id=conversation, request_id=request * 32, message=message,
+                              image_id=None, video_id=self.video.video_id if video else None)
+
+    def test_new_video_caption_one_call_then_text_followup_and_restore(self):
+        first = self.send()
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(len(pictures(self.calls[0])), 2)
+        self.assertIn("西湖", self.calls[0]["messages"][-1]["content"][-1]["text"])
+        self.assertEqual(first["video_id"], self.video.video_id)
+        self.assertEqual(first["user_message"]["video_id"], self.video.video_id)
+        second = self.send("我刚才说去哪儿了？", "2", first["conversation_id"], video=False)
+        self.assertEqual(second["conversation_id"], first["conversation_id"])
+        self.assertFalse(pictures(self.calls[1]))
+        self.assertIn("西湖", json.dumps(self.calls[1]["messages"], ensure_ascii=False))
+        self.assertNotIn("response_format", self.calls[1])
+        fresh = ChatStore(self.settings.chat_database_path)
+        fresh.initialize()
+        self.assertEqual(len(fresh.messages(first["conversation_id"])), 4)
+        self.assertIn("西湖", json.loads(fresh.get(first["conversation_id"])["video_context"])["opening_message"])
+        replay = self.send(request="1")
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(len(self.calls), 2)
+
+    def test_new_topic_reuses_visual_facts_but_not_previous_caption_or_reply(self):
+        first = self.send("这是只属于第一个话题的地名秘密。")
+        second = self.send("这个视频什么颜色？", "2")
+        self.assertNotEqual(first["conversation_id"], second["conversation_id"])
+        self.assertFalse(pictures(self.calls[-1]))
+        sent = json.dumps(self.calls[-1], ensure_ascii=False)
+        self.assertNotIn("地名秘密", sent)
+        self.assertNotIn(first["assistant_message"]["content"], sent)
+
+    def test_existing_standalone_analysis_is_reused_without_resending_images(self):
+        self.videos.analyze(self.video.video_id)
+        self.calls.clear()
+        self.send()
+        self.assertEqual(len(self.calls), 1)
+        self.assertFalse(pictures(self.calls[0]))
+
+    def test_opening_share_survives_recent_window_and_latest_correction_is_included(self):
+        first = self.send()
+        for index in range(2, 9):
+            self.send(f"第 {index} 轮问题", str(index), first["conversation_id"], video=False)
+        self.send("更正一下，其实是东湖。", "9", first["conversation_id"], video=False)
+        sent = json.dumps(self.calls[-1]["messages"], ensure_ascii=False)
+        self.assertIn("西湖", sent)
+        self.assertIn("东湖", sent)
+        self.assertIn("最新用户更正优先", sent)
+        self.assertFalse(pictures(self.calls[-1]))
+        self.assertLessEqual(len(self.calls[-1]["messages"]), 15)
+
+    def test_cannot_change_video_or_mix_image_in_same_topic(self):
+        first = self.send()
+        count = len(self.calls)
+        for kwargs in [{"video_id": "f" * 64, "image_id": None}, {"video_id": None, "image_id": "a" * 32}]:
+            with self.assertRaises(DeepSeekError) as error:
+                self.chat.send(conversation_id=first["conversation_id"], request_id="2" * 32, message="换素材", **kwargs)
+            self.assertEqual(error.exception.status_code, 409)
+        self.assertEqual(len(self.calls), count)
+
+    def test_failure_does_not_save_half_turn_and_never_auto_retries(self):
+        self.status = 503
+        with self.assertRaises(DeepSeekError):
+            self.send()
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.chat.store.recent(), [])
+
+    def test_api_restore_kind_filter_and_role_injection_rejection(self):
+        app.dependency_overrides[get_settings] = lambda: self.settings
+        app.dependency_overrides[get_chat_service] = lambda: self.chat
+        self.addCleanup(app.dependency_overrides.clear)
+        with TestClient(app) as client:
+            body = {"request_id": "1" * 32, "message": "去了西湖", "video_id": self.video.video_id}
+            response = client.post("/api/chat/messages", json=body)
+            self.assertEqual(response.status_code, 200, response.text)
+            conversation = response.json()["conversation_id"]
+            restored = client.get(f"/api/chat/conversations/{conversation}").json()
+            self.assertEqual(restored["video_id"], self.video.video_id)
+            self.assertIsInstance(restored["video_context"], dict)
+            self.assertEqual(len(client.get("/api/chat/conversations?kind=video").json()), 1)
+            self.assertEqual(client.get("/api/chat/conversations").json(), [])
+            self.assertEqual(client.post("/api/chat/messages", json={**body, "history": []}).status_code, 422)
+            self.assertEqual(client.post("/api/chat/messages", json={**body, "image_id": "a" * 32}).status_code, 422)
+
+    def test_migration_preserves_legacy_rows_and_is_idempotent(self):
+        path = Path(self.temp.name) / "legacy.sqlite3"
+        with sqlite3.connect(path) as conn:
+            conn.executescript("""
+                CREATE TABLE conversations(id TEXT PRIMARY KEY,title TEXT NOT NULL,image_id TEXT,
+                    created_at TEXT NOT NULL,updated_at TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0);
+                CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT,conversation_id TEXT NOT NULL,
+                    role TEXT NOT NULL,content TEXT NOT NULL,image_id TEXT,created_at TEXT NOT NULL);
+                INSERT INTO conversations VALUES('old','原话题',NULL,'now','now',1);
+                INSERT INTO messages(conversation_id,role,content,created_at) VALUES('old','user','原消息','now');
+            """)
+        conn.close()
+        store = ChatStore(path)
+        store.initialize()
+        store.initialize()
+        self.assertEqual(store.messages("old")[0]["content"], "原消息")
+        self.assertIsNone(store.get("old")["video_id"])
+        self.assertEqual(len(store.recent("image")), 1)
+        self.assertEqual(store.recent("video"), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

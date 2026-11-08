@@ -38,6 +38,9 @@ function App() {
   const chatState = useSyncExternalStore(chatWorkflow.subscribe, chatWorkflow.getState);
   const videoWorkflow = useMemo(() => createVideoWorkflow(), []);
   const videoState = useSyncExternalStore(videoWorkflow.subscribe, videoWorkflow.getState);
+  const videoChatWorkflow = useMemo(() => createChatWorkflow({ mode: 'video' }), []);
+  const videoChatState = useSyncExternalStore(videoChatWorkflow.subscribe, videoChatWorkflow.getState);
+  const [videoDraft, setVideoDraft] = useState('');
   const [mode, setMode] = useState('video');
   const [chatDraft, setChatDraft] = useState('');
   const input = useRef(null);
@@ -46,7 +49,11 @@ function App() {
   useEffect(() => { void workflow.initialize(); return () => workflow.dispose(); }, [workflow]);
   useEffect(() => { void chatWorkflow.initialize(); return () => chatWorkflow.dispose(); }, [chatWorkflow]);
   useEffect(() => { void videoWorkflow.initialize(); return () => videoWorkflow.dispose(); }, [videoWorkflow]);
-  const busy = state.analyzing || chatState.sending || videoState.uploading || videoState.analyzing;
+  useEffect(() => { void videoChatWorkflow.initialize(); return () => videoChatWorkflow.dispose(); }, [videoChatWorkflow]);
+  useEffect(() => {
+    if (videoChatState.videoId && videoChatState.videoId !== videoWorkflow.getState().video?.video_id) void videoWorkflow.loadVideo(videoChatState.videoId);
+  }, [videoChatState.videoId, videoWorkflow]);
+  const busy = state.analyzing || chatState.sending || videoState.uploading || videoState.loadingVideo || videoState.analyzing || videoChatState.sending || videoChatState.loading;
   const count = state.files.length;
   const multiple = count > 1;
   const canAnalyze = count === 1 && state.uploadStage === 'ready' && state.configured === true && question.trim() && !state.analyzing;
@@ -69,7 +76,7 @@ function App() {
     <main className="workspace">
       <div className="workspace-title"><div><p className="eyebrow">VisionSoul 工作台</p><h1>{mode === 'video' ? '让画面，连成一段发现。' : mode === 'image' ? '看见画面，发现细节。' : '和小灵，聊聊此刻。'}</h1></div>
         <div className="mode-tabs" role="tablist" aria-label="工作台模式"><button role="tab" aria-selected={mode === 'video'} disabled={busy} onClick={() => setMode('video')}>视频观察</button><button role="tab" aria-selected={mode === 'image'} disabled={busy} onClick={() => setMode('image')}>图片理解</button><button role="tab" aria-selected={mode === 'chat'} disabled={busy} onClick={() => setMode('chat')}>伙伴对话</button></div></div>
-      {mode === 'video' ? <VideoWorkspace workflow={videoWorkflow} state={videoState}/> : <div className="work-grid">
+      {mode === 'video' ? <VideoWorkspace workflow={videoWorkflow} state={videoState} chatWorkflow={videoChatWorkflow} chatState={videoChatState} draft={videoDraft} setDraft={setVideoDraft}/> : <div className="work-grid">
         <section className={`panel image-panel ${dragging ? 'is-dragging' : ''}`} aria-labelledby="image-heading"
           onDragOver={event => { event.preventDefault(); if (!busy) setDragging(true); }}
           onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget instanceof Node ? event.relatedTarget : null)) setDragging(false); }} onDrop={drop}>

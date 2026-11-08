@@ -17,10 +17,11 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.config import Settings
-from app.services.deepseek import DeepSeekClient, DeepSeekError, TokenUsage, has_api_key
+from app.core.persona import PERSONA_CORE
+from app.services.deepseek import DeepSeekClient, DeepSeekError, ModelReply, TokenUsage, has_api_key
 
 logger = logging.getLogger(__name__)
-VIDEO_PROMPT = (Path(__file__).resolve().parents[1] / "prompts" / "video.md").read_text(encoding="utf-8")
+VIDEO_PROMPT = PERSONA_CORE + "\n\n" + (Path(__file__).resolve().parents[1] / "prompts" / "video.md").read_text(encoding="utf-8").strip()
 PIPELINE_VERSION = "video-v2-uniform-30-exact-dedup"
 UPLOAD_LOCK = threading.Lock()
 ANALYSIS_LOCK = threading.Lock()
@@ -65,10 +66,13 @@ class Observation(BaseModel):
     uncertain: bool = Field(title="是否待确认")
 
 
-class VideoContent(BaseModel):
+class VideoEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     observations: list[Observation] = Field(min_length=1, max_length=8, title="观察记录")
     summary: str = Field(min_length=1, max_length=240, title="视频概述")
+
+
+class VideoContent(VideoEvidence):
     reply: str = Field(min_length=1, max_length=240, title="小灵回应")
 
 
@@ -105,6 +109,102 @@ class VideoService:
     def __init__(self, settings: Settings, client: DeepSeekClient | None = None):
         self.settings = settings
         self.client = client or DeepSeekClient(settings)
+
+    def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None) -> VideoAnswer:
+        directory = video_directory(info.video_id, self.settings)
+        parts = [{"type": "text", "text": "请按上述 json 格式分析以下有序视频采样。只观察画面，不包含音频。"}]
+        for frame in info.frames:
+            parts.append({"type": "text", "text": f"帧编号 {frame.index}；采样秒数 {frame.seen_at}"})
+            encoded = base64.b64encode((directory / f"frame-{frame.index}.jpg").read_bytes()).decode("ascii")
+            parts.append({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + encoded, "detail": "low"}})
+        prompt = VIDEO_PROMPT
+        if caption:
+            prompt += "\n本次是用户带文字分享视频。reply必须直接回应用户这句话并结合已有对话；observations和summary只记录画面可见事实，不把用户提供的地名、日期、心情写成视觉识别结论。"
+            parts.append({"type": "text", "text": "用户这次想说：" + caption})
+        reply = self.client.complete([{"role": "system", "content": prompt}, *(history or []),
+            {"role": "user", "content": parts}], json_mode=True, max_tokens=self.settings.video_max_tokens)
+        try:
+            if reply.truncated:
+                raise ValueError("truncated")
+            content = VideoContent.model_validate_json(reply.answer)
+            indices = [item.frame_index for item in content.observations]
+            if len(set(indices)) != len(indices) or any(index >= len(info.frames) for index in indices):
+                raise ValueError("unknown frame")
+            for observation in content.observations:
+                if any(not keyword.strip() or len(keyword) > 24 for keyword in observation.keywords):
+                    raise ValueError("invalid keyword")
+            content.observations.sort(key=lambda item: item.frame_index)
+            merged = []
+            for observation in content.observations:
+                signature = (set(observation.keywords), observation.uncertain)
+                if merged and signature == (set(merged[-1].keywords), merged[-1].uncertain):
+                    continue
+                merged.append(observation)
+            content.observations = merged
+        except ValueError as exc:
+            raise DeepSeekError("模型返回的结构化结果不完整，本次可能已有用量；不会自动重试。", 502) from exc
+        return VideoAnswer(**content.model_dump(), video_id=info.video_id, model=reply.model, usage=reply.usage)
+
+    @staticmethod
+    def _snapshot(info: VideoInfo, result: VideoEvidence) -> dict:
+        frames = {frame.index: frame for frame in info.frames}
+        return {"video_id": info.video_id, "duration_seconds": info.duration_seconds, "summary": result.summary,
+                "observations": [{**row.model_dump(), "time_seconds": frames[row.frame_index].time_seconds}
+                                 for row in result.observations]}
+
+    def start_conversation(self, video_id: str, message: str, history: list[dict]) -> tuple[dict, ModelReply | None]:
+        """首次无观察时一次请求同时看图和接话；已有观察时让聊天服务仅用文字接话。"""
+        info = self.info(video_id)
+        directory = video_directory(video_id, self.settings)
+        evidence_path = self._cache_path(directory).with_suffix(".evidence.json")
+
+        def available():
+            cached = self._cached(directory)
+            if cached:
+                return self._snapshot(info, cached)
+            if evidence_path.is_file():
+                try:
+                    content = VideoEvidence.model_validate_json(evidence_path.read_text(encoding="utf-8"))
+                    if any(row.frame_index >= len(info.frames) for row in content.observations):
+                        raise ValueError("unknown frame")
+                    return self._snapshot(info, content)
+                except ValueError as exc:
+                    raise VideoError("保存的视频观察无法读取，不会自动重新付费分析。", 500) from exc
+            return None
+
+        snapshot = available()
+        if snapshot:
+            return snapshot, None
+        if not ANALYSIS_LOCK.acquire(blocking=False):
+            raise VideoError("已有视频正在观察，请稍等后再发送。", 409)
+        try:
+            # 等待请求锁前若其他话题已完成，只取事实，不复用对另一个用户消息的回应。
+            snapshot = available()
+            if snapshot:
+                return snapshot, None
+            answer = self._observe(info, message, history)
+            snapshot = self._snapshot(info, answer)
+            # 只缓存视觉事实，不把针对这一条消息的个性回应带进其他话题。
+            evidence = {"observations": [row.model_dump() for row in answer.observations],
+                        "summary": answer.summary}
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=directory, prefix=".evidence-", delete=False) as output:
+                    temporary = Path(output.name)
+                    json.dump(evidence, output, ensure_ascii=False)
+                os.replace(temporary, evidence_path)
+            except OSError:
+                # 已完成模型回复优先入聊天事务；附加事实缓存失败不能诱导再次付费。
+                logger.warning("视频观察复用缓存暂未保存；本轮仍由聊天记录保存")
+            finally:
+                if temporary:
+                    try:
+                        temporary.unlink(missing_ok=True)
+                    except OSError:
+                        logger.warning("视频观察临时缓存待后续清理")
+            return snapshot, ModelReply(answer=answer.reply, model=answer.model, usage=answer.usage)
+        finally:
+            ANALYSIS_LOCK.release()
 
     def _cache_path(self, directory: Path) -> Path:
         # 密钥不参与指纹；提示/输出预算/抽帧记录变化时不会误用旧结果。
@@ -195,36 +295,7 @@ class VideoService:
                 return cached
             if not has_api_key(self.settings):
                 raise DeepSeekError("尚未配置 DeepSeek API Key，请配置后重启服务。", 503)
-            info = self.info(video_id)
-            parts = [{"type": "text", "text": "请按上述 json 格式分析以下有序视频采样。只观察画面，不包含音频。"}]
-            for frame in info.frames:
-                parts.append({"type": "text", "text": f"帧编号 {frame.index}；采样秒数 {frame.seen_at}"})
-                encoded = base64.b64encode((directory / f"frame-{frame.index}.jpg").read_bytes()).decode("ascii")
-                parts.append({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + encoded, "detail": "low"}})
-            reply = self.client.complete([{"role": "system", "content": VIDEO_PROMPT},
-                {"role": "user", "content": parts}], json_mode=True, max_tokens=self.settings.video_max_tokens)
-            try:
-                if reply.truncated:
-                    raise ValueError("truncated")
-                content = VideoContent.model_validate_json(reply.answer)
-                indices = [item.frame_index for item in content.observations]
-                if len(set(indices)) != len(indices) or any(index >= len(info.frames) for index in indices):
-                    raise ValueError("unknown frame")
-                for observation in content.observations:
-                    if any(not keyword.strip() or len(keyword) > 24 for keyword in observation.keywords):
-                        raise ValueError("invalid keyword")
-                content.observations.sort(key=lambda item: item.frame_index)
-                # 部分模型仍会重复描述邻近画面；仅合并关键词和确定程度相同的相邻记录。
-                merged = []
-                for observation in content.observations:
-                    signature = (set(observation.keywords), observation.uncertain)
-                    if merged and signature == (set(merged[-1].keywords), merged[-1].uncertain):
-                        continue
-                    merged.append(observation)
-                content.observations = merged
-            except ValueError as exc:
-                raise DeepSeekError("模型返回的结构化结果不完整，本次可能已有用量；不会自动重试。", 502) from exc
-            answer = VideoAnswer(**content.model_dump(), video_id=video_id, model=reply.model, usage=reply.usage)
+            answer = self._observe(self.info(video_id))
             path = self._cache_path(directory)
             temporary = None
             try:

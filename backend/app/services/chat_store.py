@@ -54,6 +54,13 @@ class ChatStore:
                     fingerprint TEXT NOT NULL, response_json TEXT NOT NULL
                 );
             """)
+            # 兼容已有 SQLite；不重建或清空原表。写锁保护并发首次迁移。
+            conn.execute("BEGIN IMMEDIATE")
+            for table, columns in {"conversations": ["video_id", "video_context"], "messages": ["video_id"]}.items():
+                present = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+                for column in columns:
+                    if column not in present:
+                        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
 
     def cached(self, request_id: str) -> dict | None:
         with self.connection() as conn:
@@ -72,45 +79,48 @@ class ChatStore:
             ).fetchall()
             return [dict(row) for row in reversed(rows)]
 
-    def recent(self) -> list[dict]:
+    def recent(self, kind: str | None = None) -> list[dict]:
+        condition = "WHERE c.video_id IS NOT NULL" if kind == "video" else "WHERE c.video_id IS NULL" if kind == "image" else ""
         with self.connection() as conn:
             return [dict(row) for row in conn.execute(
                 "SELECT c.*, (SELECT count(*) FROM messages m WHERE m.conversation_id=c.id) AS message_count "
-                "FROM conversations c ORDER BY updated_at DESC LIMIT 20"
+                f"FROM conversations c {condition} ORDER BY updated_at DESC LIMIT 20"
             ).fetchall()]
 
     def finish_turn(self, *, conversation: dict | None, conversation_id: str, image_id: str | None,
                     message: str, model_reply: dict, request_id: str, fingerprint: str,
-                    persona_id: str) -> dict:
+                    persona_id: str, video_id: str | None = None, video_context: dict | None = None) -> dict:
         timestamp = now_iso()
+        encoded_context = json.dumps(video_context, ensure_ascii=False) if video_context else None
         with self.connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             if conversation is None:
                 conn.execute(
-                    "INSERT INTO conversations(id,title,image_id,created_at,updated_at,revision) VALUES(?,?,?,?,?,1)",
-                    (conversation_id, message[:24], image_id, timestamp, timestamp),
+                    "INSERT INTO conversations(id,title,image_id,created_at,updated_at,revision,video_id,video_context) VALUES(?,?,?,?,?,1,?,?)",
+                    (conversation_id, message[:24], image_id, timestamp, timestamp, video_id, encoded_context),
                 )
             else:
                 changed = conn.execute(
-                    "UPDATE conversations SET image_id=?,updated_at=?,revision=revision+1 WHERE id=? AND revision=?",
-                    (image_id, timestamp, conversation_id, conversation["revision"]),
+                    "UPDATE conversations SET image_id=?,updated_at=?,video_id=?,video_context=?,revision=revision+1 WHERE id=? AND revision=?",
+                    (image_id, timestamp, video_id, encoded_context, conversation_id, conversation["revision"]),
                 ).rowcount
                 if not changed:
                     raise ChatConflict("对话已发生变化，请刷新后重试。")
             new_attachment = image_id if image_id and not (conversation or {}).get("image_id") else None
+            new_video = video_id if video_id and not (conversation or {}).get("video_id") else None
             cursor = conn.execute(
-                "INSERT INTO messages(conversation_id,role,content,image_id,created_at) VALUES(?,?,?,?,?)",
-                (conversation_id, "user", message, new_attachment, timestamp),
+                "INSERT INTO messages(conversation_id,role,content,image_id,created_at,video_id) VALUES(?,?,?,?,?,?)",
+                (conversation_id, "user", message, new_attachment, timestamp, new_video),
             )
             user = {"id": cursor.lastrowid, "role": "user", "content": message,
-                    "image_id": new_attachment, "created_at": timestamp}
+                    "image_id": new_attachment, "video_id": new_video, "created_at": timestamp}
             cursor = conn.execute(
                 "INSERT INTO messages(conversation_id,role,content,image_id,created_at) VALUES(?,?,?,?,?)",
                 (conversation_id, "assistant", model_reply["answer"], None, timestamp),
             )
             assistant = {"id": cursor.lastrowid, "role": "assistant", "content": model_reply["answer"],
                          "image_id": None, "created_at": timestamp}
-            response = {"conversation_id": conversation_id, "image_id": image_id,
+            response = {"conversation_id": conversation_id, "image_id": image_id, "video_id": video_id, "video_context": video_context,
                         "user_message": user, "assistant_message": assistant,
                         "model": model_reply["model"], "usage": model_reply.get("usage"),
                         "truncated": model_reply.get("truncated", False), "persona_id": persona_id, "replayed": False}

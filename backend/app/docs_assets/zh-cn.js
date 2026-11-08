@@ -38,6 +38,7 @@
     "observations": "observations（观察记录）", "keywords": "keywords（主要事物）",
     "uncertain": "uncertain（是否待确认）", "summary": "summary（视频概述）",
     "reply": "reply（小灵回应）", "cached": "cached（是否复用结果）", "result": "result（已有结果）",
+    "video_context": "video_context（本话题视频观察与首次分享）", "kind": "kind（话题类型）",
     "max_bytes": "max_bytes（文件大小上限）", "max_seconds": "max_seconds（时长上限）",
     "max_frames": "max_frames（采样上限）", "Body_upload_api_videos_post": "视频上传请求",
     "Body_upload_image_api_images_post": "图片上传请求",

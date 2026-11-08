@@ -119,3 +119,36 @@ test('30-frame upload and evidence at index 29 are accepted with 30-second limit
   assert.equal(await workflow.analyze(), true);
   assert.equal(workflow.getState().result.observations[0].frame_index, 29);
 });
+
+test('15-second 24fps videos accept all 30 sampled frames including indices 20 to 29', async () => {
+  const video = { ...info(), duration_seconds: 15, sample_count: 30,
+    frames: Array.from({ length: 30 }, (_, index) => {
+      const time = Math.round(Math.ceil(index * 359 / 29) / 24 * 1000) / 1000;
+      return { index, time_seconds: time, seen_at: [time] };
+    }) };
+  const workflow = createVideoWorkflow({ storage: null, fetcher: async url => response(url.endsWith('status') ? config : video) });
+  await workflow.initialize();
+  assert.equal(await workflow.selectFiles([file()]), true);
+  assert.equal(workflow.getState().video.frames.length, 30);
+  assert.equal(workflow.getState().video.frames[29].time_seconds, 14.958);
+  assert.equal(workflow.getState().error, '');
+});
+
+test('index and timestamp errors have distinct messages without any paid request', async () => {
+  for (const [frame, message] of [
+    [{ ...info().frames[1], index: 20 }, /采样编号/],
+    [{ ...info().frames[1], time_seconds: 7 }, /采样时间/],
+    [{ ...info().frames[1], time_seconds: NaN }, /采样时间/],
+  ]) {
+    let calls = 0;
+    const workflow = createVideoWorkflow({ storage: null, fetcher: async url => {
+      assert.ok(!url.endsWith('analyze'));
+      calls++;
+      return response(url.endsWith('status') ? config : { ...info(), frames: [info().frames[0], frame] });
+    } });
+    await workflow.initialize();
+    assert.equal(await workflow.selectFiles([file()]), false);
+    assert.match(workflow.getState().error, message);
+    assert.equal(calls, 2);
+  }
+});

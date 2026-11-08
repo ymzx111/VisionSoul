@@ -18,8 +18,11 @@ async function read(fetcher, url, options = {}) {
   return data;
 }
 
-export function createChatWorkflow({ fetcher = globalThis.fetch, storage = browserStorage(), makeId = uuid } = {}) {
+export function createChatWorkflow({ fetcher = globalThis.fetch, storage = browserStorage(), makeId = uuid, mode = 'image' } = {}) {
+  const key = mode === 'video' ? 'visionsoul.current-video-conversation' : KEY;
+  const recentUrl = mode === 'video' ? '/api/chat/conversations?kind=video' : '/api/chat/conversations';
   let state = { conversationId: null, imageId: null, messages: [], recent: [], sending: false,
+    videoId: null, videoContext: null,
     loading: false, error: '', pending: null, usage: null, truncated: false, replayed: false,
     persona: { name: '小灵', style: '活泼俏皮，轻度幽默', context_turns: 6 } };
   const listeners = new Set();
@@ -33,15 +36,16 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
     state = { ...state, ...change }; listeners.forEach(listener => listener());
   };
   const remember = id => {
-    try { if (id) storage?.setItem(KEY, id); else storage?.removeItem(KEY); } catch { /* 不支持本地存储时仍可继续聊天。 */ }
+    try { if (id) storage?.setItem(key, id); else storage?.removeItem(key); } catch { /* 不支持本地存储时仍可继续聊天。 */ }
   };
   const applyConversation = data => {
     if (!ID.test(data.id) || !Array.isArray(data.messages)) throw new Error('话题记录不完整，请新建话题。');
     if (data.messages.some(item => !['user', 'assistant'].includes(item.role) || typeof item.content !== 'string')) {
       throw new Error('话题记录格式异常，请新建话题。');
     }
+    if (mode === 'video' && !/^[0-9a-f]{64}$/.test(data.video_id || '')) throw new Error('这不是视频话题，请选择视频话题或新建。');
     remember(data.id);
-    publish({ conversationId: data.id, imageId: data.image_id || null, messages: data.messages,
+    publish({ conversationId: data.id, imageId: data.image_id || null, videoId: data.video_id || null, videoContext: data.video_context || null, messages: data.messages,
       usage: null, truncated: false, replayed: false, error: '', hasOlder: data.has_older === true });
   };
   async function initialize() {
@@ -52,12 +56,12 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
     try {
       const [persona, recent] = await Promise.all([
         read(fetcher, '/api/chat/status', { signal: controller.signal }),
-        read(fetcher, '/api/chat/conversations', { signal: controller.signal }),
+        read(fetcher, recentUrl, { signal: controller.signal }),
       ]);
       if (current !== epoch || disposed) return;
       publish({ persona, recent });
       let saved;
-      try { saved = storage?.getItem(KEY); } catch { /* 当前页内仍可使用。 */ }
+      try { saved = storage?.getItem(key); } catch { /* 当前页内仍可使用。 */ }
       if (saved && ID.test(saved)) {
         try {
           const data = await read(fetcher, `/api/chat/conversations/${saved}`, { signal: controller.signal });
@@ -86,24 +90,29 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
   function newConversation() {
     if (state.sending || state.loading || disposed) return false;
     epoch++; retry = null; remember(null);
-    publish({ conversationId: null, imageId: null, messages: [], pending: null,
+    publish({ conversationId: null, imageId: null, videoId: null, videoContext: null, messages: [], pending: null,
       usage: null, truncated: false, replayed: false, error: '', hasOlder: false });
     return true;
   }
-  async function send(message, imageId = null, { imageCount = imageId ? 1 : 0, uploadReady = true } = {}) {
+  async function send(message, imageId = null, { imageCount = imageId ? 1 : 0, uploadReady = true, videoId = null } = {}) {
     if (state.sending || state.loading || disposed) return false;
+    if (mode === 'video' && (!uploadReady || (!videoId && !state.videoId))) {
+      publish({ error: uploadReady ? '请先选择并上传一个视频。' : '请等待视频上传完成，或清空未上传成功的选择后继续原话题。' }); return false;
+    }
     if (imageCount > 1) { publish({ error: '目前只能分析单个图像，请仅保留一张或清空图片后聊文字。' }); return false; }
     if (imageCount === 1 && (!imageId || !uploadReady)) { publish({ error: '请等待图片上传成功，或清空图片后聊文字。' }); return false; }
     const content = message.trim();
     if (!content || content.length > 2000) { publish({ error: '请填写 1 至 2000 个字符的消息。' }); return false; }
     const changedImage = state.imageId && imageId && state.imageId !== imageId;
-    if (changedImage) newConversation();
+    const changedVideo = mode === 'video' && state.videoId && videoId && state.videoId !== videoId;
+    if (changedImage || changedVideo) newConversation();
     const body = { conversation_id: state.conversationId, message: content, image_id: imageId };
+    if (mode === 'video') body.video_id = videoId || state.videoId;
     const fingerprint = JSON.stringify(body);
     if (!retry || retry.fingerprint !== fingerprint) retry = { fingerprint, request_id: makeId() };
     const current = epoch;
     controller = new AbortController();
-    publish({ sending: true, error: '', pending: { role: 'user', content, image_id: imageId }, usage: null, truncated: false });
+    publish({ sending: true, error: '', pending: { role: 'user', content, image_id: imageId, video_id: state.videoId ? null : body.video_id }, usage: null, truncated: false });
     try {
       const data = await read(fetcher, '/api/chat/messages', { method: 'POST', signal: controller.signal,
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, request_id: retry.request_id }) });
@@ -112,18 +121,19 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
           || data.assistant_message?.role !== 'assistant' || !data.assistant_message.content?.trim()) {
         throw new Error('回复内容不完整，请重试以恢复这条消息。');
       }
+      if (mode === 'video' && data.video_id !== body.video_id) throw new Error('视频关联结果不一致，请重试恢复原消息。');
       const existing = new Set(state.messages.map(item => item.id));
       const additions = [data.user_message, data.assistant_message].filter(item => !existing.has(item.id));
       remember(data.conversation_id); retry = null;
-      publish({ conversationId: data.conversation_id, imageId: data.image_id || null,
+      publish({ conversationId: data.conversation_id, imageId: data.image_id || null, videoId: data.video_id || null, videoContext: data.video_context || null,
         messages: [...state.messages, ...additions], usage: data.usage, truncated: data.truncated,
         replayed: data.replayed, pending: null, sending: false });
-      void read(fetcher, '/api/chat/conversations').then(recent => {
+      void read(fetcher, recentUrl).then(recent => {
         if (current === epoch) publish({ recent });
       }).catch(() => { /* 回复已保存，列表读取失败不能把成功消息变成失败。 */ });
       return true;
     } catch (error) {
-      if (current === epoch && error.name !== 'AbortError') publish({ error: readableError(error), sending: false, pending: null });
+      if (current === epoch && error.name !== 'AbortError') publish({ error: readableError(error) + (mode === 'video' ? ' 请求失败或超时也可能已有用量；不会自动重试。' : ''), sending: false, pending: null });
       return false;
     }
   }

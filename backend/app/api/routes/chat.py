@@ -1,9 +1,10 @@
 """本机伙伴对话。客户端只提供用户文字，不能注入历史角色或系统提示。"""
+import json
 import sqlite3
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.config import Settings, get_settings
 from app.core.persona import PERSONA_ID, PERSONA_NAME, PERSONA_STYLE
@@ -21,6 +22,13 @@ class SendMessage(BaseModel):
     request_id: Identifier = Field(title="消息请求编号", description="前端自动生成；原样重试已完成的请求不会再调用模型。")
     message: str = Field(min_length=1, max_length=2000, title="你的消息")
     image_id: Identifier | None = Field(default=None, title="可选图片编号", description="一段话题最多关联一张图片。")
+    video_id: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None = Field(default=None, title="可选视频编号", description="先上传视频，再与文字一起发送；同话题后续可不再填写。")
+
+    @model_validator(mode="after")
+    def one_media(self):
+        if self.image_id and self.video_id:
+            raise ValueError("一次只能分享一张图片或一个视频。")
+        return self
 
 
 class ChatMessage(BaseModel):
@@ -29,6 +37,7 @@ class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str
     image_id: str | None = None
+    video_id: str | None = None
     created_at: str
 
 
@@ -36,6 +45,8 @@ class ChatTurn(BaseModel):
     model_config = ConfigDict(title="伙伴回复")
     conversation_id: str
     image_id: str | None
+    video_id: str | None = None
+    video_context: dict | None = None
     user_message: ChatMessage
     assistant_message: ChatMessage
     model: str
@@ -66,10 +77,10 @@ def chat_status(settings: Annotated[Settings, Depends(get_settings)]) -> dict:
 
 
 @router.get("/conversations", summary="查看本机最近二十个话题")
-def conversations(settings: Annotated[Settings, Depends(get_settings)]) -> list[dict]:
+def conversations(settings: Annotated[Settings, Depends(get_settings)], kind: Literal["image", "video"] = "image") -> list[dict]:
     try:
-        return open_store(settings).recent()
-    except (OSError, sqlite3.Error) as exc:
+        return open_store(settings).recent(kind)
+    except (OSError, sqlite3.Error, json.JSONDecodeError) as exc:
         raise HTTPException(503, "暂时无法读取本机话题。") from exc
 
 
@@ -84,8 +95,10 @@ def conversation(
         if item is None:
             raise HTTPException(404, "话题不存在，请新建话题。")
         messages = store.messages(conversation_id)
-        return {**item, "messages": messages, "has_older": item["revision"] * 2 > len(messages)}
-    except (OSError, sqlite3.Error) as exc:
+        video_context = item.pop("video_context", None)
+        return {**item, "video_context": json.loads(video_context) if video_context else None,
+                "messages": messages, "has_older": item["revision"] * 2 > len(messages)}
+    except (OSError, sqlite3.Error, json.JSONDecodeError) as exc:
         raise HTTPException(503, "暂时无法读取本机话题。") from exc
 
 

@@ -26,15 +26,21 @@ function validatedResult(result, video) {
   return result;
 }
 
-function validatedVideo(data) {
+function validatedVideo(data, maxFrames) {
   if (!VIDEO_ID.test(data.video_id) || !Array.isArray(data.frames) || !data.frames.length
       || !Number.isFinite(data.duration_seconds) || data.duration_seconds <= 0) {
     throw new Error('视频上传结果不完整，请重新上传。');
   }
-  const video = { ...data, video_url: `/api/videos/${data.video_id}/file`, frames: data.frames.map(frame => {
-    if (!Number.isInteger(frame.index) || frame.index < 0 || frame.index > 29
-        || !Number.isFinite(frame.time_seconds) || frame.time_seconds < 0 || frame.time_seconds > data.duration_seconds) {
-      throw new Error('视频采样时间无效，请检查后端记录。');
+  if (data.frames.length > maxFrames) {
+    throw new Error('视频采样数量与当前页面不匹配，请刷新页面后重新选择视频。');
+  }
+  const video = { ...data, video_url: `/api/videos/${data.video_id}/file`, frames: data.frames.map((frame, index) => {
+    // 编号随实际采样数组校验，不再和旧版 20 张或新版 30 张上限重复绑定。
+    if (!Number.isInteger(frame.index) || frame.index !== index) {
+      throw new Error('视频采样编号不连续，请刷新页面后重新选择视频。');
+    }
+    if (!Number.isFinite(frame.time_seconds) || frame.time_seconds < 0 || frame.time_seconds > data.duration_seconds) {
+      throw new Error('视频采样时间超出时长或格式无效，请重新选择视频。');
     }
     return { ...frame, url: `/api/videos/${data.video_id}/frames/${frame.index}` };
   }) };
@@ -43,7 +49,7 @@ function validatedVideo(data) {
 }
 
 export function createVideoWorkflow({ fetcher = globalThis.fetch, storage = globalThis.localStorage } = {}) {
-  let state = { video: null, filename: '', uploading: false, analyzing: false, result: null,
+  let state = { video: null, filename: '', uploading: false, loadingVideo: false, analyzing: false, result: null,
     error: '', configError: '', configured: null, maxBytes: 50 * 1024 * 1024, maxSeconds: 30, maxFrames: 30 };
   let disposed = false;
   let initialized = false;
@@ -79,7 +85,7 @@ export function createVideoWorkflow({ fetcher = globalThis.fetch, storage = glob
       try { id = storage?.getItem(STORAGE_KEY); } catch { return; }
       if (!VIDEO_ID.test(id || '')) return;
       try {
-        const video = validatedVideo(await call(`/api/videos/${id}`));
+        const video = validatedVideo(await call(`/api/videos/${id}`), state.maxFrames);
         if (current === version) publish({ video, result: video.result || null, filename: '上次的视频' });
       } catch (error) {
         if (current === version && error.name !== 'AbortError') publish({ error: `上次的视频未能恢复：${errorMessage(error)}` });
@@ -89,7 +95,7 @@ export function createVideoWorkflow({ fetcher = globalThis.fetch, storage = glob
   }
 
   async function selectFiles(input) {
-    if (disposed || state.analyzing || state.uploading) return false;
+    if (disposed || state.analyzing || state.uploading || state.loadingVideo) return false;
     const files = Array.from(input);
     if (files.length !== 1) { publish({ error: '请一次选择一个 MP4 视频。' }); return false; }
     const file = files[0];
@@ -103,13 +109,28 @@ export function createVideoWorkflow({ fetcher = globalThis.fetch, storage = glob
     const form = new FormData();
     form.append('file', file, file.name);
     try {
-      const video = validatedVideo(await call('/api/videos', { method: 'POST', body: form }));
+      const video = validatedVideo(await call('/api/videos', { method: 'POST', body: form }), state.maxFrames);
       if (current !== version || disposed) return false;
       publish({ video, result: video.result || null, uploading: false });
       remember(video.video_id);
       return true;
     } catch (error) {
       if (current === version && error.name !== 'AbortError') publish({ uploading: false, error: errorMessage(error) });
+      return false;
+    }
+  }
+
+  async function loadVideo(id) {
+    if (disposed || state.uploading || state.analyzing || !VIDEO_ID.test(id || '')) return false;
+    const current = ++version;
+    publish({ video: null, result: null, filename: '', loadingVideo: true, error: '' });
+    try {
+      const video = validatedVideo(await call(`/api/videos/${id}`), state.maxFrames);
+      if (current !== version || disposed) return false;
+      publish({ video, result: video.result || null, filename: '话题中的视频', loadingVideo: false });
+      remember(id); return true;
+    } catch (error) {
+      if (current === version && error.name !== 'AbortError') publish({ loadingVideo: false, error: errorMessage(error) });
       return false;
     }
   }
@@ -138,9 +159,9 @@ export function createVideoWorkflow({ fetcher = globalThis.fetch, storage = glob
   }
 
   return { getState: () => state, subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    initialize, selectFiles, analyze,
+    initialize, selectFiles, analyze, loadVideo,
     clear() {
-      if (disposed || state.uploading || state.analyzing) return false;
+      if (disposed || state.uploading || state.loadingVideo || state.analyzing) return false;
       version++; remember(null); publish({ video: null, filename: '', result: null, error: '' }); return true;
     },
     dispose() { disposed = true; version++; controllers.forEach(controller => controller.abort()); listeners.clear(); },
