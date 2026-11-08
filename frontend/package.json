@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
-    "test": "node --test src/workflow.test.mjs src/chat-workflow.test.mjs"
+    "test": "node --test src/*.test.mjs"
   },
   "dependencies": {
     "react": "19.3.1",

@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     app_description: str = (
         "VisionSoul —— 具备视觉感知与动态人格模拟能力的多模态 AI 交互系统。"
-        "当前支持图片理解、固定伙伴人格、连续对话和本机聊天记录。"
+        "当前支持短视频观察、图片理解、固定伙伴人格和本机连续对话。"
     )
 
     # ---- 启动参数（记录用；实际监听地址以启动命令为准）----
@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     upload_max_bytes: int = Field(default=10 * 1024 * 1024, ge=1, le=20 * 1024 * 1024)
     image_max_pixels: int = Field(default=20_000_000, ge=1, le=40_000_000)
     image_max_dimension: int = Field(default=8192, ge=1, le=16384)
+
+    video_storage_dir: Path = Path(__file__).resolve().parents[2] / "storage" / "videos"
+    video_max_bytes: int = Field(default=50 * 1024 * 1024, ge=1024, le=100 * 1024 * 1024)
+    video_max_seconds: float = Field(default=30.0, ge=1, le=30)
+    video_max_frames: int = Field(default=30, ge=2, le=30)
+    video_decode_timeout_seconds: float = Field(default=45.0, ge=5, le=90)
+    video_max_tokens: int = Field(default=1600, ge=512, le=2048)
 
     # 密钥只由后端读取，不加入任何接口响应。
     deepseek_api_key: SecretStr = SecretStr("")

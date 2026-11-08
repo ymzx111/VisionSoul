@@ -28,6 +28,18 @@
     "ImageUploaded": "图片上传结果", "TokenUsage": "模型用量",
     "VisionAnswer": "图片理解结果", "VisionRequest": "图片理解请求",
     "VisionStatus": "图片理解配置", "ProjectInfo": "项目信息", "HealthStatus": "健康状态",
+    "VideoInfo": "视频上传结果", "VideoAnswer": "视频观察结果", "VideoStatus": "视频配置",
+    "SampleFrame": "采样画面", "Observation": "观察记录", "AnalyzeRequest": "视频分析请求",
+    "video_id": "video_id（视频编号）", "video_url": "video_url（播放地址）",
+    "duration_seconds": "duration_seconds（视频时长）", "sample_count": "sample_count（采样次数）",
+    "sample_interval_seconds": "sample_interval_seconds（采样间隔）", "frames": "frames（采样画面）",
+    "frame_index": "frame_index（依据采样编号）", "index": "index（采样编号）",
+    "time_seconds": "time_seconds（采样秒数）", "seen_at": "seen_at（相同画面的采样时间）",
+    "observations": "observations（观察记录）", "keywords": "keywords（主要事物）",
+    "uncertain": "uncertain（是否待确认）", "summary": "summary（视频概述）",
+    "reply": "reply（小灵回应）", "cached": "cached（是否复用结果）", "result": "result（已有结果）",
+    "max_bytes": "max_bytes（文件大小上限）", "max_seconds": "max_seconds（时长上限）",
+    "max_frames": "max_frames（采样上限）", "Body_upload_api_videos_post": "视频上传请求",
     "Body_upload_image_api_images_post": "图片上传请求",
     "SendMessage": "发送伙伴消息", "ChatMessage": "对话消息", "ChatTurn": "伙伴回复",
     "conversation_id": "conversation_id（话题编号）", "request_id": "request_id（消息请求编号）",
@@ -35,7 +47,7 @@
     "created_at": "created_at（创建时间）", "persona_id": "persona_id（固定人格编号）",
     "user_message": "user_message（用户消息）", "assistant_message": "assistant_message（伙伴回复）",
     "replayed": "replayed（是否恢复已有回复）",
-    "file": "file（图片文件）", "image_id": "image_id（图片编号）",
+    "file": "file（上传文件）", "image_id": "image_id（图片编号）",
     "question": "question（提问内容）", "answer": "answer（理解回复）",
     "model": "model（使用模型）", "usage": "usage（模型用量）",
     "truncated": "truncated（回复是否被截断）", "configured": "configured（是否已填密钥）",
@@ -74,19 +86,19 @@
         const button = document.createElement("button");
         button.type = "button";
         button.className = "btn";
-        button.textContent = "选择图片";
+        button.textContent = "选择文件";
         button.addEventListener("click", () => input.click());
         const name = document.createElement("span");
         name.setAttribute("aria-live", "polite");
         const update = () => {
-          name.textContent = input.files?.length ? Array.from(input.files, f => f.name).join("、") : "尚未选择图片";
-          button.textContent = input.files?.length ? "更换图片" : "选择图片";
+          name.textContent = input.files?.length ? Array.from(input.files, f => f.name).join("、") : "尚未选择文件";
+          button.textContent = input.files?.length ? "更换文件" : "选择文件";
         };
         input.addEventListener("change", update);
         picker.append(button, name);
         input.before(picker);
         input.classList.add("vs-native-file");
-        input.setAttribute("aria-label", "图片文件");
+        input.setAttribute("aria-label", "上传文件");
         input.setAttribute("aria-hidden", "true");
         input.setAttribute("tabindex", "-1");
         update();

@@ -7,3 +7,4 @@ pydantic-settings==2.7.1
 python-multipart==0.0.33
 Pillow==13.0.0
 httpx==0.28.1
+av==19.0.2

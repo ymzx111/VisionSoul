@@ -75,14 +75,17 @@ class DeepSeekClient:
         self.settings = settings
         self.transport = transport
 
-    def complete(self, messages: list[dict]) -> ModelReply:
+    def complete(self, messages: list[dict], *, json_mode: bool = False,
+                 max_tokens: int | None = None) -> ModelReply:
         if not has_api_key(self.settings):
             raise DeepSeekError("尚未配置 DeepSeek API Key，请在 backend/.env 中填写后重启服务。", 503)
         key = self.settings.deepseek_api_key.get_secret_value().strip()
         if not key.isascii() or any(c.isspace() for c in key):
             raise DeepSeekError("DeepSeek 密钥格式不正确，请检查后端配置。", 503)
         payload = {"model": self.settings.deepseek_model, "messages": messages,
-                   "thinking": {"type": "disabled"}, "max_tokens": self.settings.deepseek_max_tokens, "stream": False}
+                   "thinking": {"type": "disabled"}, "max_tokens": max_tokens or self.settings.deepseek_max_tokens, "stream": False}
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
         try:
             timeout = httpx.Timeout(self.settings.deepseek_timeout_seconds, connect=10.0)
             with httpx.Client(timeout=timeout, transport=self.transport, follow_redirects=False) as client:

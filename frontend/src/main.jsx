@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { createImageWorkflow } from './workflow.mjs';
 import { createChatWorkflow } from './chat-workflow.mjs';
 import ChatPanel from './ChatPanel.jsx';
+import VideoWorkspace from './VideoWorkspace.jsx';
+import { createVideoWorkflow } from './video-workflow.mjs';
 import './style.css';
 
 function Icon({ name, size = 20, className = '' }) {
@@ -34,14 +36,17 @@ function App() {
   const state = useSyncExternalStore(workflow.subscribe, workflow.getState);
   const chatWorkflow = useMemo(() => createChatWorkflow(), []);
   const chatState = useSyncExternalStore(chatWorkflow.subscribe, chatWorkflow.getState);
-  const [mode, setMode] = useState('image');
+  const videoWorkflow = useMemo(() => createVideoWorkflow(), []);
+  const videoState = useSyncExternalStore(videoWorkflow.subscribe, videoWorkflow.getState);
+  const [mode, setMode] = useState('video');
   const [chatDraft, setChatDraft] = useState('');
   const input = useRef(null);
   const [question, setQuestion] = useState('请描述这张图片的主要场景、物体和细节。');
   const [dragging, setDragging] = useState(false);
   useEffect(() => { void workflow.initialize(); return () => workflow.dispose(); }, [workflow]);
   useEffect(() => { void chatWorkflow.initialize(); return () => chatWorkflow.dispose(); }, [chatWorkflow]);
-  const busy = state.analyzing || chatState.sending;
+  useEffect(() => { void videoWorkflow.initialize(); return () => videoWorkflow.dispose(); }, [videoWorkflow]);
+  const busy = state.analyzing || chatState.sending || videoState.uploading || videoState.analyzing;
   const count = state.files.length;
   const multiple = count > 1;
   const canAnalyze = count === 1 && state.uploadStage === 'ready' && state.configured === true && question.trim() && !state.analyzing;
@@ -54,7 +59,7 @@ function App() {
 
   return <div className="app-shell">
     <header className="topbar">
-      <a href="/app/" className="brand" aria-label="VisionSoul 图片工作台"><span className="brand-mark"><Icon name="leaf" size={22}/></span><span>VisionSoul<span className="brand-caption">图像 · 感知 · 对话</span></span></a>
+      <a href="/app/" className="brand" aria-label="VisionSoul 工作台"><span className="brand-mark"><Icon name="leaf" size={22}/></span><span>VisionSoul<span className="brand-caption">画面 · 发现 · 陪伴</span></span></a>
       <div className="flex items-center gap-5">
         <span className="model-state"><span className={`status-dot ${state.configured ? 'is-ready' : ''}`}/>{state.configured ? 'DeepSeek Flash · 已配置' : state.configError ? '后端连接待检查' : state.configured === false ? '模型待配置' : '正在检查配置'}</span>
         <a className="docs-link" href="/docs" target="_blank" rel="noreferrer">接口文档 <span aria-hidden="true">↗</span></a>
@@ -62,9 +67,9 @@ function App() {
     </header>
 
     <main className="workspace">
-      <div className="workspace-title"><div><p className="eyebrow">VisionSoul 工作台</p><h1>{mode === 'image' ? '看见画面，发现细节。' : '和小灵，聊聊此刻。'}</h1></div>
-        <div className="mode-tabs" role="tablist" aria-label="工作台模式"><button role="tab" aria-selected={mode === 'image'} disabled={busy} onClick={() => setMode('image')}>图片理解</button><button role="tab" aria-selected={mode === 'chat'} disabled={busy} onClick={() => setMode('chat')}>伙伴对话</button></div></div>
-      <div className="work-grid">
+      <div className="workspace-title"><div><p className="eyebrow">VisionSoul 工作台</p><h1>{mode === 'video' ? '让画面，连成一段发现。' : mode === 'image' ? '看见画面，发现细节。' : '和小灵，聊聊此刻。'}</h1></div>
+        <div className="mode-tabs" role="tablist" aria-label="工作台模式"><button role="tab" aria-selected={mode === 'video'} disabled={busy} onClick={() => setMode('video')}>视频观察</button><button role="tab" aria-selected={mode === 'image'} disabled={busy} onClick={() => setMode('image')}>图片理解</button><button role="tab" aria-selected={mode === 'chat'} disabled={busy} onClick={() => setMode('chat')}>伙伴对话</button></div></div>
+      {mode === 'video' ? <VideoWorkspace workflow={videoWorkflow} state={videoState}/> : <div className="work-grid">
         <section className={`panel image-panel ${dragging ? 'is-dragging' : ''}`} aria-labelledby="image-heading"
           onDragOver={event => { event.preventDefault(); if (!busy) setDragging(true); }}
           onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget instanceof Node ? event.relatedTarget : null)) setDragging(false); }} onDrop={drop}>
@@ -106,7 +111,7 @@ function App() {
           </div>
           <div className="analysis-footer"><span className="subtle-dot"/><span>当前版本：单张图片理解</span><span>上传后不会自动分析</span></div>
         </section>}
-      </div>
+      </div>}
     </main>
     <footer className="page-footer"><span>VisionSoul <span className="footer-separator">/</span> 从看见，到理解</span><span>轻量体验，逐步生长。</span></footer>
   </div>;
