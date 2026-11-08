@@ -159,12 +159,57 @@ class RoleTests(unittest.TestCase):
             self.assertEqual(card["name"],"小灵")
             self.assertEqual(client.get(root+"/sources").json()[0]["id"],turn["conversation_id"])
             wrong={**RoleProfile().model_dump(),"name":"另一个角色"}
-            self.assertEqual(client.post(root+"/publish",json={"profile":wrong,"expected":0}).status_code,409)
+            self.assertEqual(client.post(root+"/publish",json={"profile":wrong,"expected":0}).status_code,200)
+            self.assertEqual(client.get('/api/chat/status').json()['name'],'另一个角色')
             self.assertEqual(client.post(root+"/discuss",json={"message":"改性格","expected":0,"request_id":"7"*32,"system":"inject"}).status_code,422)
             created=client.post(root+"/memories",json={"category":"fact","content":"用户手动指定的信息。"}).json()["id"]
             self.assertEqual(client.delete(root+f"/memories/{created}?expected=1").status_code,200)
             self.assertEqual(len(self.roles.chats.messages(turn["conversation_id"])),2)
             self.assertEqual(client.get("/api/roles/another").status_code,404)
+
+    def test_free_definition_replaces_all_old_personality_rules_in_chat_and_preview(self):
+        definition = "  她是月港档案馆的守夜人，沉静寡言。\n\n" + "完整世界观可自由编写。"*40 + "  "
+        profile = RoleProfile(name="望舒",mode="free",definition=definition,traits="旧性格不应生效")
+        self.roles.store.save(profile,0,publish=True)
+        self.assertEqual(self.roles.store.current()['profile']['definition'],definition)
+        self.chat("晚上好")
+        prompt = self.calls[-1]['messages'][0]['content']
+        self.assertIn(definition,prompt)
+        self.assertIn('望舒',prompt)
+        for old in ['活泼俏皮','轻度幽默','旧性格不应生效','通常一到三个短段落','不每次结尾反问']:
+            self.assertNotIn(old,prompt)
+        self.roles.preview(profile,'打个招呼','8'*32)
+        self.assertIn(definition,self.calls[-1]['messages'][0]['content'])
+        self.assertNotIn('旧性格不应生效',self.calls[-1]['messages'][0]['content'])
+        from app.services.videos import VideoService
+        self.assertIn(definition,VideoService(self.settings,self.client).prompt)
+        self.assertNotIn('活泼俏皮',VideoService(self.settings,self.client).prompt)
+
+    def test_blank_free_draft_can_save_but_cannot_publish_or_preview(self):
+        profile=RoleProfile(mode='free',definition='',identity='',traits='',speaking_style='')
+        app.dependency_overrides[get_role_service]=lambda:self.roles
+        self.addCleanup(app.dependency_overrides.clear)
+        root='/api/roles/xiaoling'
+        with TestClient(app) as client:
+            self.assertEqual(client.put(root+'/draft',json={'profile':profile.model_dump(),'expected':0}).status_code,200)
+            self.assertEqual(client.post(root+'/publish',json={'profile':profile.model_dump(),'expected':1}).status_code,409)
+            self.assertEqual(client.post(root+'/preview',json={'profile':profile.model_dump(),'message':'你好','request_id':'9'*32}).status_code,409)
+        self.assertEqual(load_persona(self.settings)[0],PERSONA_CORE)
+        self.assertEqual(len(self.calls),0)
+
+    def test_old_json_without_new_fields_remains_readable_and_versions_preserve_original(self):
+        legacy=RoleProfile().model_dump()
+        del legacy['mode'],legacy['definition']
+        with self.roles.store.connection() as conn:
+            conn.execute('UPDATE role_cards SET profile_json=?,draft_json=? WHERE id=?',(json.dumps(legacy),json.dumps(legacy),'xiaoling'))
+        self.assertEqual(self.roles.store.current()['profile']['mode'],'legacy')
+        self.assertEqual(load_persona(self.settings)[0],PERSONA_CORE)
+        new=RoleProfile(name='新人物',mode='free',definition='她来自未来都市，说话克制。')
+        self.roles.store.save(new,0,publish=True)
+        self.assertEqual(self.roles.store.current()['name'],'新人物')
+        self.roles.store.save(RoleProfile.model_validate(legacy),1,publish=True)
+        self.assertEqual(self.roles.store.current()['name'],'小灵')
+        self.assertNotIn('未来都市',load_persona(self.settings)[1])
 
 
 if __name__=="__main__":

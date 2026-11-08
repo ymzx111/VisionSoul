@@ -1,3 +1,5 @@
+import { freeProfile, roleText } from './role-import.mjs';
+
 const ROOT = '/api/roles/xiaoling';
 const uuid = () => crypto.randomUUID().replaceAll('-', '');
 
@@ -37,8 +39,9 @@ export function createRoleWorkflow({ fetcher = globalThis.fetch, makeId = uuid }
       return result;
     } catch (error) { if (error.status === 409) retries.delete(path); throw error; }
   }
+  const savedProfile = () => { const profile = { ...state.form, name: state.form.name.trim() || '未命名角色' }; return profile.mode === 'free' ? freeProfile(profile) : profile; };
   async function saveDraft() {
-    const card = await api('/draft', { profile: state.form, expected: state.card.draft_revision }, 'PUT');
+    const card = await api('/draft', { profile: savedProfile(), expected: state.card.draft_revision }, 'PUT');
     apply(card);
   }
   async function reload() {
@@ -61,11 +64,21 @@ export function createRoleWorkflow({ fetcher = globalThis.fetch, makeId = uuid }
       if (!initialized) { initialized = true; await reload(); }
       else await operate(async () => publish({ sources: await api('/sources') }));
     }, reload,
-    update(field, value) { if (state.busy || state.loading || !state.form || !Object.hasOwn(state.form, field) || field === 'name') return; publish({ form: { ...state.form, [field]: value }, dirty: true }); },
+    update(field, value) { if (state.busy || state.loading || !state.form || !['name','definition'].includes(field)) return;
+      publish({ form: { ...freeProfile(state.form), [field]: value }, dirty: true, preview: null }); },
+    startBlank() { if (state.busy || state.loading || !state.form) return;
+      publish({ form: { ...freeProfile(state.form,''), name: '' }, dirty: true, preview: null, error: '', notice: '空白草稿已准备好，直接写入或粘贴新人物设定即可；保存后才会替换草稿。' }); },
     loadVersion(revision) { if (state.busy || state.loading) return; const version = state.card.versions.find(item => item.revision === Number(revision)); if (version) publish({ form: { ...version.profile }, dirty: true, notice: '历史版本已载入草稿，保存并生效后才会影响对话。' }); },
+    importDraft(text) { return operate(async () => {
+      if (!state.form || !state.card) throw new Error('请先读取角色卡，再导入。');
+      const profile = freeProfile(state.form,text);
+      const card = await api('/draft', { profile, expected: state.card.draft_revision }, 'PUT');
+      apply(card);
+      publish({ preview: null, notice: '人物设定原文已保存为草稿，未调用模型。' });
+    }); },
     save(publishNow = false) { return operate(async () => {
-      if (publishNow) apply(await api('/publish', { profile: state.form, expected: state.card.draft_revision })); else await saveDraft();
-      publish({ notice: publishNow ? '小灵的新设定已生效，后续新消息会使用这份设定。' : '草稿已保存，正在使用的设定未改变。' });
+      if (publishNow) apply(await api('/publish', { profile: savedProfile(), expected: state.card.draft_revision })); else await saveDraft();
+      publish({ notice: publishNow ? '人物设定已生效，后续新消息会使用这份设定。' : '草稿已保存，正在使用的设定未改变。' });
     }); },
     discuss(message) { if (!message.trim()) return Promise.resolve(false); return operate(async () => {
       if (state.dirty) await saveDraft();
@@ -73,7 +86,7 @@ export function createRoleWorkflow({ fetcher = globalThis.fetch, makeId = uuid }
       apply(result.card); publish({ notice: '设定讨论已整理到右侧草稿，尚未生效。' });
     }); },
     preview(message) { if (!message.trim()) return Promise.resolve(false); return operate(async () => {
-      const result = await model('/preview', { profile: state.form, message: message.trim() }); publish({ preview: result.answer, notice: '这是草稿预览，不会进入正式聊天或记忆。' });
+      const result = await model('/preview', { profile: savedProfile(), message: message.trim() }); publish({ preview: result.answer, notice: '这是草稿预览，不会进入正式聊天或记忆。' });
     }); },
     extract(conversationId) { if (!conversationId) return Promise.resolve(false); return operate(async () => {
       const result = await model('/extract', { conversation_id: conversationId });

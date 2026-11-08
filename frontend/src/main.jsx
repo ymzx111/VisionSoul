@@ -83,7 +83,7 @@ function App() {
     </header>
 
     {page === 'roles' ? <RoleSettings workflow={roleWorkflow} state={roleState}/> : <main className="workspace">
-      <div className="workspace-title"><div><p className="eyebrow">VisionSoul 工作台</p><h1>{mode === 'video' ? '让画面，连成一段发现。' : mode === 'image' ? '看见画面，发现细节。' : '和小灵，聊聊此刻。'}</h1></div>
+      <div className="workspace-title"><div><p className="eyebrow">VisionSoul 工作台</p><h1>{mode === 'video' ? '让画面，连成一段发现。' : mode === 'image' ? '看见画面，发现细节。' : `和${chatState.persona.name}，聊聊此刻。`}</h1></div>
         <div className="mode-tabs" role="tablist" aria-label="工作台模式"><button role="tab" aria-selected={mode === 'video'} disabled={busy} onClick={() => setMode('video')}>视频观察</button><button role="tab" aria-selected={mode === 'image'} disabled={busy} onClick={() => setMode('image')}>图片理解</button><button role="tab" aria-selected={mode === 'chat'} disabled={busy} onClick={() => setMode('chat')}>伙伴对话</button></div></div>
       {mode === 'video' ? <VideoWorkspace workflow={videoWorkflow} state={videoState} chatWorkflow={videoChatWorkflow} chatState={videoChatState} draft={videoDraft} setDraft={setVideoDraft}/> : <div className="work-grid">
         <section className={`panel image-panel ${dragging ? 'is-dragging' : ''}`} aria-labelledby="image-heading"
@@ -122,7 +122,7 @@ function App() {
           <div className="result-body" aria-live="polite" aria-busy={state.analyzing}>
             {state.analyzing ? <div className="result-empty"><span className="result-orbit"><Icon name="spark" size={30}/></span><h3>正在观察图片中的细节</h3><p>请稍等，回复会显示在这里。</p></div>
               : state.analysisError ? <div className="notice notice-error" role="alert"><Icon name="alert" size={19}/><div><strong>这次分析没有完成</strong><p>{state.analysisError}</p></div></div>
-              : state.result ? <article className="answer"><div className="answer-source"><span className="answer-avatar"><Icon name="leaf" size={16}/></span>小灵<span>· DeepSeek Flash</span></div><p className="answer-text" data-testid="analysis-answer">{state.result.answer}</p>{state.result.truncated && <p className="truncated-note">本次回复达到长度上限，部分内容可能未显示。</p>}</article>
+              : state.result ? <article className="answer"><div className="answer-source"><span className="answer-avatar"><Icon name="leaf" size={16}/></span>{chatState.persona.name}<span>· DeepSeek Flash</span></div><p className="answer-text" data-testid="analysis-answer">{state.result.answer}</p>{state.result.truncated && <p className="truncated-note">本次回复达到长度上限，部分内容可能未显示。</p>}</article>
               : <div className="result-empty"><span className="result-orbit"><Icon name="spark" size={30}/></span><h3>让好奇心，走进画面</h3><p>选择一张图片，写下问题，<br/>再点击“开始分析”。</p></div>}
           </div>
           <div className="analysis-footer"><span className="subtle-dot"/><span>当前版本：单张图片理解</span><span>上传后不会自动分析</span></div>

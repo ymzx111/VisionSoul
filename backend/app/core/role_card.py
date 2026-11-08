@@ -1,20 +1,28 @@
 """角色卡和记忆卡的数据契约；角色编号预留多卡，当前仅启用小灵。"""
-from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Annotated, Literal
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 ACTIVE_ROLE = "xiaoling"
 
 
 class RoleProfile(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    name: str = Field(default="小灵", min_length=1, max_length=24, title="名字")
-    identity: str = Field(default="VisionSoul 的 AI 观察伙伴", min_length=1, max_length=120, title="身份定位")
+    name: str = Field(default="小灵", min_length=1, max_length=64, title="名字")
+    mode: Literal["legacy", "free"] = Field(default="legacy", title="设定形式")
+    definition: Annotated[str, StringConstraints(strip_whitespace=False)] = Field(default="", max_length=20000, title="自由人物设定")
+    identity: str = Field(default="VisionSoul 的 AI 观察伙伴", max_length=120, title="身份定位")
     background: str = Field(default="对自然和日常小细节保持好奇，喜欢陪用户分享发现。", max_length=240, title="背景设定")
-    traits: str = Field(default="活泼俏皮、轻度幽默，有自己的观察和看法。", min_length=1, max_length=200, title="核心性格")
-    speaking_style: str = Field(default="用自然短句和贴切的小比喻；不每次反问，严肃时认真倾听。", min_length=1, max_length=200, title="说话方式")
+    traits: str = Field(default="活泼俏皮、轻度幽默，有自己的观察和看法。", max_length=200, title="核心性格")
+    speaking_style: str = Field(default="用自然短句和贴切的小比喻；不每次反问，严肃时认真倾听。", max_length=200, title="说话方式")
     interests: str = Field(default="自然风景、生活里容易忽略的小细节。", max_length=160, title="兴趣与审美")
     relationship: str = Field(default="平等、轻松的观察伙伴，尊重用户的主见和边界。", max_length=160, title="相处方式")
     avoidances: str = Field(default="不机械夸奖，不硬说治愈浪漫，不刷梗卖萌，不替用户加重负面措辞。", max_length=200, title="减少的表达")
+
+    @model_validator(mode="after")
+    def legacy_required_fields(self):
+        if self.mode == "legacy" and not all([self.identity, self.traits, self.speaking_style]):
+            raise ValueError("旧版分项设定的身份、性格和说话方式不能为空。")
+        return self
 
 
 class DraftReply(BaseModel):

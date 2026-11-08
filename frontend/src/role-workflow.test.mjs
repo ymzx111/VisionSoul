@@ -20,14 +20,14 @@ function setup(handler) {
 test('entering settings and editing locally never calls model',async()=> {
   const {workflow,calls}=setup(()=>assert.fail('no mutation expected'));
   await workflow.initialize();
-  workflow.update('traits','有主见');
+  workflow.update('definition','有主见');
   assert.equal(workflow.getState().dirty,true);
   assert.equal(calls.length,3);
   assert.equal(workflow.getState().card.profile.traits,'俏皮');
   await workflow.initialize();
   assert.equal(calls.length,4);
   assert.equal(calls.at(-1)[0].endsWith('/sources'),true);
-  assert.equal(workflow.getState().form.traits,'有主见');
+  assert.equal(workflow.getState().form.definition,'有主见');
   assert.equal(workflow.getState().dirty,true);
 });
 
@@ -38,7 +38,7 @@ test('manual dirty form is saved before discussion; response stays draft',async(
     assert.equal(body.expected,1);
     return ok({card:{...card(),draft:{...profile,traits:'更有主见'},draft_revision:2},usage:{total_tokens:100}});
   });
-  await workflow.initialize();workflow.update('traits','有主见');
+  await workflow.initialize();workflow.update('definition','有主见');
   assert.equal(await workflow.discuss('进一步整理'),true);
   assert.equal(calls[3][0].endsWith('/draft'),true);
   assert.equal(calls[4][0].endsWith('/discuss'),true);
@@ -81,4 +81,32 @@ test('busy guard blocks double model submission',async()=> {
   assert.equal(await workflow.preview('测试'),false);
   done(ok({answer:'一次回复'}));await pending;
   assert.equal(calls.filter(([url])=>url.endsWith('/preview')).length,1);
+});
+
+test('free text import saves original content only as draft without model or memory calls',async()=> {
+  let saved;
+  const {workflow,calls}=setup(async(url,options)=> {
+    assert.equal(url,'/api/roles/xiaoling/draft');
+    assert.equal(options.method,'PUT'); saved=JSON.parse(options.body);
+    return ok({...card(),draft:saved.profile,draft_revision:1});
+  });
+  await workflow.initialize(); workflow.update('name','望舒');
+  const text='她是来自月港的旅人。\n\n说话沉静、惜字如金。'+ '背景故事。'.repeat(70);
+  assert.equal(await workflow.importDraft(text),true);
+  assert.equal(saved.expected,0); assert.equal(saved.profile.name,'望舒');
+  assert.equal(saved.profile.mode,'free'); assert.equal(saved.profile.definition,text);
+  assert.equal(saved.profile.traits,''); assert.equal(saved.profile.background,'');
+  assert.equal(workflow.getState().card.revision,0); assert.equal(calls.length,4);
+});
+
+test('blank reset clears local character only; failed save preserves the new text',async()=> {
+  const {workflow,calls}=setup(async()=>({ok:false,status:409,json:async()=>({detail:'草稿已更新，请重新读取。'})}));
+  await workflow.initialize(); workflow.startBlank();
+  assert.equal(workflow.getState().form.definition,''); assert.equal(workflow.getState().form.name,'');
+  assert.equal(workflow.getState().form.traits,''); assert.equal(calls.length,3);
+  workflow.update('definition','全新的世界观');
+  assert.equal(await workflow.save(false),false);
+  assert.equal(workflow.getState().form.definition,'全新的世界观');
+  assert.equal(workflow.getState().card.profile.traits,'俏皮');
+  assert.equal(workflow.getState().dirty,true);
 });

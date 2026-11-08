@@ -51,6 +51,7 @@
     "interests": "interests（兴趣与审美）", "relationship": "relationship（相处方式）",
     "avoidances": "avoidances（减少的表达）", "category": "category（记忆类型）",
     "memory_id": "memory_id（记忆条目编号）",
+    "definition": "definition（自由人物设定）", "mode": "mode（设定形式）",
     "conversation_id": "conversation_id（话题编号）", "request_id": "request_id（消息请求编号）",
     "message": "message（你的消息）", "content": "content（消息内容）", "role": "role（发言者）",
     "created_at": "created_at（创建时间）", "persona_id": "persona_id（固定人格编号）",

@@ -78,7 +78,6 @@ def current(s: Annotated[RoleService,Depends(service)]):
 @router.put("/draft",summary="只保存角色草稿（不生效、不调用模型）")
 def draft(body: SaveCard,s: Annotated[RoleService,Depends(service)]):
     def action():
-        s.check_profile(body.profile)
         return s.store.save(body.profile,body.expected)
     return run(action)
 
@@ -86,7 +85,8 @@ def draft(body: SaveCard,s: Annotated[RoleService,Depends(service)]):
 @router.post("/publish",summary="保存并启用小灵设定（不调用模型）")
 def publish(body: SaveCard,s: Annotated[RoleService,Depends(service)]):
     def action():
-        s.check_profile(body.profile)
+        if body.profile.mode == "free" and not body.profile.definition.strip():
+            raise RoleConflict("请先写入人物设定，再保存生效；空白草稿可以单独保存。")
         return s.store.save(body.profile,body.expected,publish=True)
     return run(action)
 

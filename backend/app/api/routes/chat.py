@@ -75,8 +75,10 @@ def chat_status(settings: Annotated[Settings, Depends(get_settings)]) -> dict:
     open_store(settings)
     roles = RoleStore(settings.roles_path)
     card = roles.current()
-    return {"configured": has_api_key(settings), "persona_id": load_persona(settings,roles)[2], "name": PERSONA_NAME,
-            "style": card["profile"]["traits"][:32] if card["revision"] else PERSONA_STYLE, "context_turns": settings.chat_context_turns}
+    profile = card["profile"]
+    style = "自定义人物" if profile["mode"] == "free" else profile["traits"][:32] if card["revision"] else PERSONA_STYLE
+    return {"configured": has_api_key(settings), "persona_id": load_persona(settings,roles)[2], "name": profile["name"],
+            "style": style, "context_turns": settings.chat_context_turns}
 
 
 @router.get("/conversations", summary="查看本机最近二十个话题")

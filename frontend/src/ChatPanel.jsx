@@ -25,8 +25,8 @@ export default function ChatPanel({ workflow, state, draft, setDraft, imageState
         <span className="chat-author">{item.role === 'user' ? '你' : state.persona.name}{item.id === 'pending' ? ' · 正在发送' : ''}</span>
         {item.image_id && <a href={`/api/images/${item.image_id}`} target="_blank" rel="noreferrer" className="chat-image-link"><img src={`/api/images/${item.image_id}`} alt="这一轮分享的图片"/></a>}
         <p data-testid={item.role === 'assistant' ? 'companion-message' : undefined}>{item.content}</p>
-      </article>)}{state.sending && <div className="companion-thinking"><span className="thinking-dot"/><span className="thinking-dot"/><span className="thinking-dot"/>小灵正在接话…</div>}</>
-        : <div className="chat-welcome"><span className="welcome-mark">灵</span><h3>嗨，我是小灵。</h3><p>今天有什么新鲜事？<br/>一张照片，或一句随口的想法，都可以从这里开始。</p><span>活泼一点，也认真听你说。</span></div>}
+      </article>)}{state.sending && <div className="companion-thinking"><span className="thinking-dot"/><span className="thinking-dot"/><span className="thinking-dot"/>{state.persona.name}正在接话…</div>}</>
+        : <div className="chat-welcome"><span className="welcome-mark">灵</span><h3>嗨，我是{state.persona.name}。</h3><p>今天有什么新鲜事？<br/>一张照片，或一句随口的想法，都可以从这里开始。</p><span>按你设定的人物，接着聊下去。</span></div>}
     </div>
     <div className="chat-composer">
       {multiple && <div className="notice notice-warning" role="alert">目前只能分析单个图像。请仅保留一张，或清空图片后继续文字对话。</div>}
@@ -35,8 +35,8 @@ export default function ChatPanel({ workflow, state, draft, setDraft, imageState
       {!imageReady && !multiple && <p className="chat-image-note">请等待图片上传成功；上传失败时，可重新选择或清空图片后聊文字。</p>}
       {state.error && <div className="notice notice-error" role="alert">{state.error}</div>}
       {state.truncated && <p className="chat-image-note">上一条回复达到长度上限，可继续追问。</p>}
-      <label className="sr-only" htmlFor="chat-message">发送给小灵的消息</label><textarea id="chat-message" maxLength={2000} value={draft} disabled={state.sending || state.loading}
-        onChange={event => setDraft(event.target.value)} placeholder="和小灵说点什么，也可以结合左侧图片追问…"/>
+      <label className="sr-only" htmlFor="chat-message">发送给角色的消息</label><textarea id="chat-message" maxLength={2000} value={draft} disabled={state.sending || state.loading}
+        onChange={event => setDraft(event.target.value)} placeholder="说点什么，也可以结合左侧图片追问…"/>
       <div className="question-actions"><span className="cost-note">发送才调用模型{state.usage ? ` · ${state.replayed ? '恢复上次回复' : '本次 ' + state.usage.total_tokens + ' token'}` : ''}</span>
         <button className="button button-primary" disabled={!canSend} onClick={() => void submit()}>{state.sending ? '正在回复…' : '发送消息 →'}</button></div>
     </div>

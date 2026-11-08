@@ -3,7 +3,7 @@ import hashlib
 import json
 import threading
 
-from app.core.persona import compile_profile, PROMPT_DIR
+from app.core.persona import compile_profile, companion_rules, PROMPT_DIR
 from app.core.role_card import DraftReply, MemoryExtraction, RoleProfile
 from app.services.chat_store import ChatStore
 from app.services.deepseek import DeepSeekClient, DeepSeekError
@@ -20,11 +20,6 @@ class RoleService:
         self.store = RoleStore(settings.roles_path)
         self.chats = ChatStore(settings.chat_database_path)
         self.client = client or DeepSeekClient(settings)
-
-    @staticmethod
-    def check_profile(profile):
-        if profile.name != "小灵":
-            raise RoleConflict("本项目当前只启用小灵，请保留这个名字。其他角色留待后续扩展。")
 
     def perform(self, kind, request_id, body, action):
         fingerprint = hashlib.sha256(json.dumps(body, sort_keys=True,ensure_ascii=False).encode()).hexdigest()
@@ -49,10 +44,11 @@ class RoleService:
             reply = self.client.complete(messages,json_mode=True,max_tokens=1000)
             try:
                 raw = json.loads(reply.answer)
-                if reply.truncated or set(raw["profile"]) != set(RoleProfile.model_fields):
+                supplied = set(raw["profile"])
+                minimum = {"name", "mode", "definition"} if raw["profile"].get("mode") == "free" else set(RoleProfile.model_fields) - {"mode", "definition"}
+                if reply.truncated or not minimum <= supplied:
                     raise ValueError("incomplete profile")
                 result = DraftReply.model_validate(raw)
-                self.check_profile(result.profile)
             except (ValueError,KeyError,TypeError) as exc:
                 raise DeepSeekError("角色草稿返回不完整，本次可能已有用量；不会自动重试。",502) from exc
             response = {"reply":result.reply,"usage":reply.usage.model_dump() if reply.usage else None,"cached":False}
@@ -62,9 +58,10 @@ class RoleService:
         return {**result,"card":self.store.current()}
 
     def preview(self, profile, message, request_id):
-        self.check_profile(profile)
         def action(rid,kind,fp):
-            prompt = compile_profile(profile)+"\n"+(PROMPT_DIR/"companion.md").read_text(encoding="utf-8")
+            if profile.mode == "free" and not profile.definition.strip():
+                raise RoleConflict("先写一点人物设定，再试试角色回应。")
+            prompt = compile_profile(profile)+"\n"+companion_rules(profile)
             prompt += "\n这是隔离的角色预览，不使用正式聊天记忆，不把测试称呼或经历保存为用户信息。用一两句回应测试消息。"
             reply = self.client.complete([{"role":"system","content":prompt},{"role":"user","content":message}],max_tokens=220)
             result = {**reply.model_dump(),"cached":False}

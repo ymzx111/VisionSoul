@@ -95,8 +95,8 @@ class RoleStore:
                 raise RoleConflict("草稿已被更新，请重新读取角色页后再修改。")
             revision = row["revision"] + int(publish)
             text, stamp = profile.model_dump_json(), now_iso()
-            conn.execute("UPDATE role_cards SET draft_json=?,draft_revision=draft_revision+1,updated_at=?,profile_json=?,revision=? WHERE id=?",
-                (text,stamp,text if publish else row["profile_json"],revision,self.role_id))
+            conn.execute("UPDATE role_cards SET draft_json=?,draft_revision=draft_revision+1,updated_at=?,profile_json=?,revision=?,name=? WHERE id=?",
+                (text,stamp,text if publish else row["profile_json"],revision,profile.name if publish else row["name"],self.role_id))
             if publish:
                 conn.execute("INSERT INTO role_versions VALUES(?,?,?,?)", (self.role_id,revision,text,stamp))
             if turn:
