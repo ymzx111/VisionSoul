@@ -153,17 +153,26 @@ test('index and timestamp errors have distinct messages without any paid request
   }
 });
 
-test('half-second 61-frame result and final frame evidence work even before status completes',async()=>{
-  const video={...info(),duration_seconds:30,sample_count:61,sampling_policy:'half_second',frames:Array.from({length:61},(_,index)=>({index,time_seconds:index===60?29.9:index*.5,seen_at:[index===60?29.9:index*.5]}))};
-  const result={...answer(),observations:[{...answer().observations[0],frame_index:60}]};
+test('one-second 31-frame result works even before status completes',async()=>{
+  const video={...info(),duration_seconds:30,sample_count:31,sampling_policy:'one_second',frames:Array.from({length:31},(_,index)=>({index,time_seconds:index===30?29.9:index,seen_at:[index===30?29.9:index]}))};
+  const result={...answer(),observations:[{...answer().observations[0],frame_index:30}]};
   const gate=deferred();
   const workflow=createVideoWorkflow({storage:null,fetcher:async url=>url.endsWith('status')?gate.promise:response(url.endsWith('analyze')?result:video)});
   const initializing=workflow.initialize();
   assert.equal(await workflow.selectFiles([file()]),true);
-  gate.resolve(response({...config,max_frames:61,sample_interval_seconds:.5}));await initializing;
-  assert.equal(workflow.getState().maxFrames,61);
-  assert.equal(workflow.getState().sampleInterval,.5);
-  assert.equal(workflow.getState().video.frames[60].index,60);
+  gate.resolve(response({...config,max_frames:31,sample_interval_seconds:1}));await initializing;
+  assert.equal(workflow.getState().maxFrames,31);
+  assert.equal(workflow.getState().sampleInterval,1);
+  assert.equal(workflow.getState().video.frames[30].index,30);
   assert.equal(await workflow.analyze(),true);
-  assert.equal(workflow.getState().result.observations[0].frame_index,60);
+  assert.equal(workflow.getState().result.observations[0].frame_index,30);
+});
+
+test('legacy half-second video restores all 61 frames under the new upload limit',async()=>{
+  const video={...info(),duration_seconds:30,sample_count:61,sampling_policy:'half_second',frames:Array.from({length:61},(_,index)=>({index,time_seconds:index===60?29.9:index*.5}))};
+  const workflow=createVideoWorkflow({storage:null,fetcher:async url=>response(url.endsWith('status')?{...config,max_frames:31,sample_interval_seconds:1}:video)});
+  await workflow.initialize();
+  assert.equal(await workflow.loadVideo(video.video_id),true);
+  assert.equal(workflow.getState().video.frames.length,61);
+  assert.equal(workflow.getState().maxFrames,31);
 });

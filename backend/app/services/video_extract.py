@@ -49,7 +49,7 @@ def extract(directory: Path, max_seconds: float, max_frames: int) -> dict:
         def keep(frame, timestamp):
             nonlocal sampled, last_sample_time
             if sampled >= max_frames:
-                raise ValueError("采样数量超过配置上限，请将 VIDEO_MAX_FRAMES 设置为61。")
+                raise ValueError("采样数量超过配置上限，请将 VIDEO_MAX_FRAMES 设置为31。")
             sampled += 1
             last_sample_time = timestamp
             factor = min(1.0, 1280 / max(frame.width, frame.height))

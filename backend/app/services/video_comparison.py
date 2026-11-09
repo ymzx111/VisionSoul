@@ -50,12 +50,12 @@ class Comparison(BaseModel):
             raise ValueError("invalid missing feature")
 
 
-def compact_times(values):
-    """压缩连续半秒采样点；不把间断复现的画面误写成连续一段。"""
+def compact_times(values, interval=0.5):
+    """按视频实际采样间隔压缩，兼容旧记录；不连接间断复现。"""
     groups = []
     for value in values:
         # 24/25fps等源帧时间会量化到半秒目标附近，不要求恰好0.500秒。
-        if groups and abs(value - groups[-1][-1] - 0.5) < 0.052:
+        if groups and abs(value - groups[-1][-1] - interval) < 0.052:
             groups[-1].append(value)
         else:
             groups.append([value])

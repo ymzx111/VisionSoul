@@ -61,7 +61,7 @@ class ComparisonTests(unittest.TestCase):
         self.service.inspect(video.video_id,'比对',[])
         self.assertIn('supporting_features',self.calls[-1]['messages'][0]['content'])
         images=[part for part in self.calls[-1]['messages'][-1]['content'] if part['type']=='image_url']
-        self.assertEqual(len(images),11)
+        self.assertEqual(len(images),6)
         self.assertGreater(sum(part['image_url']['detail']=='high' for part in images),0)
         self.assertLessEqual(sum(part['image_url']['detail']=='high' for part in images),4)
 

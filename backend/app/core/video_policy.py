@@ -1,5 +1,7 @@
 """统一采样协议，避免帧数上限在接口、抽帧和比对中漂移。"""
-SAMPLE_INTERVAL_SECONDS = 0.5
-MAX_SAMPLES = 61  # 30 秒的 60 个半秒点，加最后一个不同的实际画面。
-PIPELINE_VERSION = "video-v3-half-second-exact-global-dedup"
+SAMPLE_INTERVAL_SECONDS = 1.0
+NEW_MAX_SAMPLES = 31  # 30个整秒点，加最后一个不同的实际画面。
+MAX_SAMPLES = 61  # 读取旧半秒视频的兼容容量；新上传单独限制为31。
+PIPELINE_VERSION = "video-v4-one-second-audio"
+LEGACY_HALF_PIPELINE = "video-v3-half-second-exact-global-dedup"
 LEGACY_PIPELINE = "video-v2-uniform-30-exact-dedup"

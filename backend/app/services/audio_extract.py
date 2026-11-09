@@ -1,0 +1,125 @@
+"""受限子进程：音频重采样到视频共同时间轴，再离线转写；不访问API。"""
+import json
+import math
+import os
+from pathlib import Path
+import sys
+import wave
+
+import av
+import numpy as np
+
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from app.services.audio_evidence import AudioTranscript, SpeechSegment
+
+RATE = 16000
+
+
+def decode_timeline(source: Path, duration: float):
+    """不删除静音、不拼接间隙；音轨延后/提前均映射回视频0秒。"""
+    samples = np.zeros(math.ceil(duration * RATE), dtype=np.float32)
+    with av.open(str(source), format="mov", options={"protocol_whitelist": "file",
+            "enable_drefs": "0", "use_absolute_path": "0"}) as container:
+        if len(container.streams.video) != 1 or len(container.streams.audio) > 1:
+            raise ValueError("不支持多音轨视频")
+        if not container.streams.audio:
+            return None
+        video = container.streams.video[0]
+        origin = float((video.start_time or 0) * video.time_base)
+        stream = container.streams.audio[0]
+        if stream.codec_context.sample_rate > 192000 or stream.codec_context.channels > 8:
+            raise ValueError("音频资源上限异常")
+        stream.codec_context.thread_count = 2
+        resampler = av.AudioResampler(format="fltp", layout="mono", rate=RATE)
+        previous, decoded = -math.inf, 0
+
+        def keep(frame):
+            nonlocal previous, decoded
+            if frame.time is None:
+                raise ValueError("音频没有时间戳")
+            timestamp = float(frame.time) - origin
+            if not math.isfinite(timestamp) or timestamp < previous or not -2 <= timestamp <= duration + 2:
+                raise ValueError("音频时间戳异常")
+            previous = timestamp
+            values = frame.to_ndarray().reshape(-1)
+            decoded += len(values)
+            if decoded > RATE * 34 or not np.isfinite(values).all():
+                raise ValueError("音频解码数量异常")
+            start = round(timestamp * RATE)
+            left, right = max(0, start), min(len(samples), start + len(values))
+            if right > left:
+                samples[left:right] = values[left - start:right - start]
+
+        for count, frame in enumerate(container.decode(stream), 1):
+            if count > 10000:
+                raise ValueError("音频帧数异常")
+            for converted in resampler.resample(frame):
+                keep(converted)
+        for converted in resampler.resample(None):
+            keep(converted)
+    return samples
+
+
+def speech_segments(segments, duration):
+    """用词时间戳切成短句，防止整段30秒都成为一个宽泛的对应窗口。"""
+    result = []
+    for segment in segments:
+        if segment.no_speech_prob > 0.6 and segment.avg_logprob < -1.0:
+            continue
+        words = segment.words or []
+        chunks, chunk = [], []
+        for word in words:
+            chunk.append(word)
+            if word.end - chunk[0].start >= 4 or word.word.rstrip().endswith(("。", "！", "？", ".", "!", "?", "；")):
+                chunks.append(chunk)
+                chunk = []
+        if chunk:
+            chunks.append(chunk)
+        ranges = [(group[0].start, group[-1].end, "".join(word.word for word in group)) for group in chunks]
+        if not words:
+            ranges = [(segment.start, segment.end, segment.text)]
+        for start, end, text in ranges:
+            text = text.strip()
+            if text and end > 0 and start < duration:
+                result.append(SpeechSegment(id=len(result), start=round(max(0, start), 3),
+                    end=round(min(duration, end), 3), text=text))
+    return result
+
+
+def transcribe(directory: Path, model_dir: Path, threads: int):
+    duration = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))["duration_seconds"]
+    if not math.isfinite(duration) or not 0 < duration <= 30:
+        raise ValueError("视频时长无效")
+    samples = decode_timeline(directory / "source.mp4", duration)
+    if samples is None:
+        return AudioTranscript(status="no_audio", message="视频没有音轨，仅分析画面。")
+    with wave.open(str(directory / "audio.wav"), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(RATE)
+        output.writeframes((np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes())
+    if float(np.max(np.abs(samples), initial=0)) < 0.0005:
+        return AudioTranscript(status="no_speech", message="音轨接近静音，没有可用对白。")
+    if not (model_dir / "model.bin").is_file():
+        return AudioTranscript(status="unavailable", message="本机语音模型未就绪，仅分析画面；安装模型后重新上传可重试。")
+    from faster_whisper import WhisperModel
+    model = WhisperModel(str(model_dir), device="cpu", compute_type="int8", cpu_threads=threads,
+                         num_workers=1, local_files_only=True)
+    segments, info = model.transcribe(samples, language="zh", word_timestamps=True, vad_filter=True,
+        vad_parameters={"min_silence_duration_ms": 500}, condition_on_previous_text=False,
+        beam_size=3, temperature=0, hallucination_silence_threshold=1.0)
+    rows = speech_segments(segments, duration)
+    return AudioTranscript(status="ready" if rows else "no_speech", language=info.language,
+        message="本机自动转写，关键数字、名称和时间请回听确认。" if rows else "未识别到可靠对白，仅分析画面。", segments=rows)
+
+
+if __name__ == "__main__":
+    directory = Path(sys.argv[1])
+    try:
+        transcript = transcribe(directory, Path(sys.argv[2]), int(sys.argv[3]))
+    except Exception:
+        transcript = AudioTranscript(status="failed", message="本机对白处理失败，仅分析画面；可重新上传重试。")
+    temporary = directory / ".audio-result.json"
+    temporary.write_text(transcript.model_dump_json(), encoding="utf-8")
+    os.replace(temporary, directory / "audio.json")

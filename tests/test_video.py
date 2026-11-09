@@ -80,7 +80,7 @@ class VideoTests(unittest.TestCase):
     def test_real_decode_order_and_read_only_does_not_call_model(self):
         video = self.uploaded()
         self.assertEqual(video.duration_seconds, 6)
-        self.assertEqual(video.sample_count, 13)
+        self.assertEqual(video.sample_count, 7)
         self.assertEqual(video.frames[0].time_seconds, 0)
         self.assertAlmostEqual(video.frames[1].time_seconds, 3, delta=0.2)
         self.assertEqual(len(self.calls), 0)
@@ -92,20 +92,20 @@ class VideoTests(unittest.TestCase):
     def test_static_exact_duplicates_are_merged_with_times(self):
         path=Path(self.temp.name)/'static.mp4';make_video(path,seconds=12,static=True)
         video=self.service.upload(BytesIO(path.read_bytes()))
-        self.assertEqual(video.sample_count,25)
+        self.assertEqual(video.sample_count,13)
         self.assertEqual(len(video.frames),1)
-        self.assertEqual(len(video.frames[0].seen_at),25)
+        self.assertEqual(len(video.frames[0].seen_at),13)
         self.assertEqual(video.frames[0].seen_at[-1],11.9)
 
-    def test_half_second_samples_and_actual_tail_for_10_20_30_seconds(self):
+    def test_one_second_samples_and_actual_tail_for_10_20_30_seconds(self):
         for seconds in [10,20,30]:
             with self.subTest(seconds=seconds):
                 path=Path(self.temp.name)/f'{seconds}-seconds.mp4';make_video(path,seconds=seconds,varying=True)
                 video=self.service.upload(BytesIO(path.read_bytes()))
-                self.assertEqual(video.sample_count,seconds*2+1)
-                self.assertEqual(len(video.frames),seconds*2+1)
+                self.assertEqual(video.sample_count,seconds+1)
+                self.assertEqual(len(video.frames),seconds+1)
                 times=[frame.time_seconds for frame in video.frames]
-                self.assertEqual(times[:-1],[i*.5 for i in range(seconds*2)])
+                self.assertEqual(times[:-1],list(range(seconds)))
                 self.assertEqual(times[-1],seconds-.1)
                 self.assertFalse(self.calls)
 
@@ -113,16 +113,16 @@ class VideoTests(unittest.TestCase):
         path = Path(self.temp.name) / "low-fps.mp4"
         make_video(path, seconds=3, fps=2, varying=True)
         video = self.service.upload(BytesIO(path.read_bytes()))
-        self.assertEqual(video.sample_count, 6)
-        self.assertEqual([frame.time_seconds for frame in video.frames], [0, 0.5, 1, 1.5, 2, 2.5])
+        self.assertEqual(video.sample_count, 4)
+        self.assertEqual([frame.time_seconds for frame in video.frames], [0, 1, 2, 2.5])
 
     def test_identical_reappearing_picture_is_sent_once_with_all_occurrences(self):
         path=Path(self.temp.name)/'revisit.mp4';make_video(path,seconds=3,revisit=True)
         video=self.service.upload(BytesIO(path.read_bytes()))
-        self.assertEqual(video.sample_count,7)
+        self.assertEqual(video.sample_count,4)
         self.assertEqual(len(video.frames),2)
-        self.assertEqual(video.frames[0].seen_at,[0,.5,2,2.5,2.9])
-        self.assertEqual(video.frames[1].seen_at,[1,1.5])
+        self.assertEqual(video.frames[0].seen_at,[0,2,2.9])
+        self.assertEqual(video.frames[1].seen_at,[1])
         self.assertFalse(self.calls)
 
     def test_one_fps_never_duplicates_source_frames_to_fill_half_second_targets(self):
@@ -132,7 +132,8 @@ class VideoTests(unittest.TestCase):
         self.assertEqual([frame.time_seconds for frame in video.frames],[0,1,2])
 
     def test_old_thirty_frame_env_limit_upgrades_and_custom_small_limit_never_truncates(self):
-        self.assertEqual(Settings(_env_file=None,video_max_frames=30).video_max_frames,61)
+        self.assertEqual(Settings(_env_file=None,video_max_frames=30).video_max_frames,31)
+        self.assertEqual(Settings(_env_file=None,video_max_frames=61).video_max_frames,31)
         limited=VideoService(self.settings.model_copy(update={'video_max_frames':2}),self.client)
         with self.assertRaisesRegex(VideoError,'上限'):
             limited.upload(BytesIO(self.data))
@@ -171,7 +172,7 @@ class VideoTests(unittest.TestCase):
         make_video(path, seconds=12, rotation=90)
         settings = self.settings
         video = VideoService(settings).upload(BytesIO(path.read_bytes()))
-        self.assertEqual(video.sample_count, 25)
+        self.assertEqual(video.sample_count, 13)
         with Image.open(settings.video_storage_dir / video.video_id / "frame-0.jpg") as image:
             self.assertEqual(image.size, (64, 96))
 
@@ -304,21 +305,21 @@ class VideoTests(unittest.TestCase):
             self.assertTrue(restored["result"]["cached"])
             self.assertEqual(len(self.calls), 1)
 
-    def test_last_of_61_frames_is_served_and_valid_model_evidence(self):
+    def test_last_of_31_frames_is_served_and_valid_model_evidence(self):
         path = Path(self.temp.name) / "30-distinct.mp4"
         make_video(path, seconds=30, varying=True)
         video = self.service.upload(BytesIO(path.read_bytes()))
-        self.payload = result_payload(60)
+        self.payload = result_payload(30)
         app.dependency_overrides[get_settings] = lambda: self.settings
         app.dependency_overrides[get_video_service] = lambda: self.service
         self.addCleanup(app.dependency_overrides.clear)
         with TestClient(app) as client:
-            self.assertEqual(client.get(video.frames[60].url).status_code, 200)
+            self.assertEqual(client.get(video.frames[30].url).status_code, 200)
             response = client.post("/api/videos/analyze", json={"video_id": video.video_id})
             self.assertEqual(response.status_code, 200, response.text)
-            self.assertEqual(response.json()["observations"][-1]["frame_index"], 60)
+            self.assertEqual(response.json()["observations"][-1]["frame_index"], 30)
             images = [part for part in self.calls[0]["messages"][1]["content"] if part["type"] == "image_url"]
-            self.assertEqual(len(images), 61)
+            self.assertEqual(len(images), 31)
             self.assertEqual(len(self.calls), 1)
 
     def test_video_request_body_limit_before_multipart(self):

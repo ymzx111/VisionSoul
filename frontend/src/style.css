@@ -320,3 +320,9 @@ textarea:disabled { opacity: .7; }
   .video-actions { padding-left: 19px; padding-right: 19px; }
   .video-results { max-height: 620px; }
 }
+/* 带时间来源的对白，限制展开区域高度，避免撑长整个页面。 */
+.audio-evidence { margin: 10px 16px 16px; }
+.audio-evidence-scroll { max-height: 280px; overflow-y: auto; }
+.audio-link-card, .audio-transcript-row { padding: 10px 0; border-bottom: 1px solid var(--border, #e5e7eb); }
+.audio-link-card p, .audio-transcript-row p { margin: 6px 0; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.audio-link-card .text-button { margin-right: 12px; }

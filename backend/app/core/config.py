@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from app.core.video_policy import MAX_SAMPLES
+from app.core.video_policy import NEW_MAX_SAMPLES
 
 
 class Settings(BaseSettings):
@@ -47,9 +47,13 @@ class Settings(BaseSettings):
     video_storage_dir: Path = Path(__file__).resolve().parents[2] / "storage" / "videos"
     video_max_bytes: int = Field(default=50 * 1024 * 1024, ge=1024, le=100 * 1024 * 1024)
     video_max_seconds: float = Field(default=30.0, ge=1, le=30)
-    video_max_frames: int = Field(default=MAX_SAMPLES, ge=2, le=MAX_SAMPLES)
+    video_max_frames: int = Field(default=NEW_MAX_SAMPLES, ge=2, le=NEW_MAX_SAMPLES)
     video_decode_timeout_seconds: float = Field(default=45.0, ge=5, le=90)
     video_max_tokens: int = Field(default=1600, ge=512, le=2048)
+    audio_enabled: bool = True
+    audio_model_dir: Path = Path(__file__).resolve().parents[2] / "storage" / "models" / "faster-whisper-small"
+    audio_timeout_seconds: float = Field(default=180, ge=10, le=300)
+    audio_cpu_threads: int = Field(default=4, ge=1, le=8)
 
     # 密钥只由后端读取，不加入任何接口响应。
     deepseek_api_key: SecretStr = SecretStr("")
@@ -67,8 +71,8 @@ class Settings(BaseSettings):
     @field_validator("video_max_frames", mode="before")
     @classmethod
     def upgrade_old_sampling_limit(cls, value):
-        # 兼容旧 .env 中的30张配置，防止半秒采样被旧上限截断。
-        return MAX_SAMPLES if str(value) == "30" else value
+        # 迁移既有30/61配置；自定义的小上限仍明确报错，不截断。
+        return NEW_MAX_SAMPLES if str(value) in {"30", "61"} else value
 
     @property
     def roles_path(self) -> Path:

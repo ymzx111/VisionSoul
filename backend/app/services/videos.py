@@ -17,17 +17,19 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.config import Settings
-from app.core.video_policy import MAX_SAMPLES, PIPELINE_VERSION, LEGACY_PIPELINE
+from app.core.video_policy import MAX_SAMPLES, PIPELINE_VERSION, LEGACY_PIPELINE, LEGACY_HALF_PIPELINE
 from app.core.persona import PERSONA_CORE, load_persona
 from app.services.deepseek import DeepSeekClient, DeepSeekError, ModelReply, TokenUsage, has_api_key
 from app.services.video_comparison import Comparison, DETAIL_VERSION, compact_times
 from app.services.video_selection import select_from_directory
 from app.services.video_details import detail_path
+from app.services.audio_evidence import AudioTranscript, AudioLink, AUDIO_VERSION, audio_prompt, validate_links, add_time_citations
 
 logger = logging.getLogger(__name__)
 VIDEO_TASK = (Path(__file__).resolve().parents[1] / "prompts" / "video.md").read_text(encoding="utf-8").strip()
 VIDEO_PROMPT = PERSONA_CORE + "\n\n" + VIDEO_TASK
 COMPARISON_TASK = (Path(__file__).resolve().parents[1] / "prompts" / "video_comparison.md").read_text(encoding="utf-8").strip()
+AUDIO_TASK = (Path(__file__).resolve().parents[1] / "prompts" / "audio.md").read_text(encoding="utf-8").strip()
 UPLOAD_LOCK = threading.Lock()
 ANALYSIS_LOCK = threading.Lock()
 
@@ -78,6 +80,7 @@ class VideoEvidence(BaseModel):
     observations: list[Observation] = Field(min_length=1, max_length=8, title="观察记录")
     summary: str = Field(min_length=1, max_length=240, title="视频概述")
     comparison: Comparison | None = Field(default=None, title="多视角辨识与候选比对")
+    audio_links: list[AudioLink] = Field(default_factory=list, max_length=4, title="音画依据关系（模型判断）")
 
 
 class VideoContent(VideoEvidence):
@@ -85,6 +88,7 @@ class VideoContent(VideoEvidence):
 
 
 class VideoAnswer(VideoContent):
+    reply: str = Field(min_length=1, max_length=800, title="角色回应及按需附加的原始时间依据")
     video_id: str = Field(title="视频编号")
     model: str = Field(title="使用模型")
     usage: TokenUsage | None = Field(default=None, title="原分析用量")
@@ -99,7 +103,8 @@ class VideoInfo(BaseModel):
     sample_interval_seconds: float = Field(ge=0, title="目标采样间隔")
     sample_count: int = Field(ge=1, le=MAX_SAMPLES, title="采样次数")
     frames: list[SampleFrame] = Field(min_length=1, max_length=MAX_SAMPLES, title="去重后的画面")
-    sampling_policy: str = Field(default="half_second",title="采样策略")
+    sampling_policy: str = Field(default="one_second",title="采样策略")
+    audio: AudioTranscript = Field(default_factory=AudioTranscript, title="本机对白转写")
     video_url: str = Field(title="播放地址")
     result: VideoAnswer | None = Field(default=None, title="已有分析结果")
 
@@ -119,6 +124,25 @@ class VideoService:
         self.settings = settings
         self.client = client or DeepSeekClient(settings)
         self.prompt = load_persona(settings)[0] + "\n\n" + VIDEO_TASK
+
+    def _prepare_audio(self, directory: Path):
+        transcript = AudioTranscript(status="unavailable", message="本机音频识别已关闭，仅分析画面。")
+        if self.settings.audio_enabled:
+            command = [sys.executable, "-B", "-X", "utf8", str(Path(__file__).with_name("audio_extract.py")),
+                       str(directory), str(self.settings.audio_model_dir.resolve()), str(self.settings.audio_cpu_threads)]
+            try:
+                process = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, timeout=self.settings.audio_timeout_seconds,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                if process.returncode == 0 and (directory / "audio.json").is_file():
+                    AudioTranscript.model_validate_json((directory / "audio.json").read_text(encoding="utf-8"))
+                    return
+                transcript = AudioTranscript(status="failed", message="本机对白处理失败，仅分析画面；重新上传可重试。")
+            except subprocess.TimeoutExpired:
+                transcript = AudioTranscript(status="failed", message="本机对白处理超时，仅分析画面；重新上传可重试。")
+        temporary = directory / ".audio-status.json"
+        temporary.write_text(transcript.model_dump_json(), encoding="utf-8")
+        os.replace(temporary, directory / "audio.json")
 
     def _detail_frames(self, info: VideoInfo, directory: Path) -> dict[int, Path]:
         selected = select_from_directory(info.frames, directory)
@@ -148,15 +172,18 @@ class VideoService:
 
     def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None, memory_text: str = "", inspect: bool = False) -> VideoAnswer:
         directory = video_directory(info.video_id, self.settings)
-        parts = [{"type": "text", "text": "视频截图不含音频。图号@采样秒，区间是重复图的半秒采样点，不代表连续动作。"}]
+        parts = [{"type": "text", "text": "图号@原视频秒，区间是重复图的采样点，不代表连续动作。"}]
         detailed = self._detail_frames(info, directory) if inspect else {}
         for frame in info.frames:
             high = frame.index in detailed
-            parts.append({"type": "text", "text": f"{frame.index}@{compact_times(frame.seen_at)}"})
+            parts.append({"type": "text", "text": f"{frame.index}@{compact_times(frame.seen_at, info.sample_interval_seconds)}"})
             path = detailed[frame.index] if high else directory / f"frame-{frame.index}.jpg"
             encoded = base64.b64encode(path.read_bytes()).decode("ascii")
             parts.append({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + encoded, "detail": "high" if high else "low"}})
         prompt = self.prompt
+        parts.append({"type": "text", "text": audio_prompt(info.audio, info.frames)})
+        if info.audio.status == "ready":
+            prompt += "\n" + AUDIO_TASK
         if caption:
             parts.append({"type": "text", "text": caption})
         if inspect:
@@ -170,6 +197,7 @@ class VideoService:
             if reply.truncated:
                 raise ValueError("truncated")
             content = VideoContent.model_validate_json(reply.answer)
+            validate_links(content.audio_links, info.audio, info.frames)
             if inspect and content.comparison is None:
                 raise ValueError("missing comparison")
             if content.comparison:
@@ -190,7 +218,9 @@ class VideoService:
             content.observations = merged
         except ValueError as exc:
             raise DeepSeekError("模型返回的结构化结果不完整，本次可能已有用量；不会自动重试。", 502) from exc
-        return VideoAnswer(**content.model_dump(), video_id=info.video_id, model=reply.model, usage=reply.usage)
+        payload = content.model_dump()
+        payload["reply"] = add_time_citations(content.reply, caption, info.audio, content.audio_links)
+        return VideoAnswer(**payload, video_id=info.video_id, model=reply.model, usage=reply.usage)
 
     @staticmethod
     def _snapshot(info: VideoInfo, result: VideoEvidence) -> dict:
@@ -198,7 +228,8 @@ class VideoService:
         return {"video_id": info.video_id, "duration_seconds": info.duration_seconds, "summary": result.summary,
                 "observations": [{**row.model_dump(), "time_seconds": frames[row.frame_index].time_seconds}
                                  for row in result.observations],
-                "comparison": result.comparison.model_dump() if result.comparison else None}
+                "comparison": result.comparison.model_dump() if result.comparison else None,
+                "audio": info.audio.model_dump(), "audio_links": [row.model_dump() for row in result.audio_links]}
 
     def inspect(self, video_id: str, message: str, history: list[dict], memory_text: str = ""):
         """显式重新读画面，一次请求完成辨识、比对和接话；结果只随当前话题保存。"""
@@ -226,6 +257,7 @@ class VideoService:
                     content = VideoEvidence.model_validate_json(evidence_path.read_text(encoding="utf-8"))
                     if any(row.frame_index >= len(info.frames) for row in content.observations):
                         raise ValueError("unknown frame")
+                    validate_links(content.audio_links, info.audio, info.frames)
                     return self._snapshot(info, content)
                 except ValueError as exc:
                     raise VideoError("保存的视频观察无法读取，不会自动重新付费分析。", 500) from exc
@@ -245,7 +277,7 @@ class VideoService:
             snapshot = self._snapshot(info, answer)
             # 只缓存视觉事实，不把针对这一条消息的个性回应带进其他话题。
             evidence = {"observations": [row.model_dump() for row in answer.observations],
-                        "summary": answer.summary}
+                        "summary": answer.summary, "audio_links": [row.model_dump() for row in answer.audio_links]}
             temporary = None
             try:
                 with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=directory, prefix=".evidence-", delete=False) as output:
@@ -267,8 +299,12 @@ class VideoService:
 
     def _cache_path(self, directory: Path) -> Path:
         # 密钥不参与指纹；提示/输出预算/抽帧记录变化时不会误用旧结果。
-        fingerprint = hashlib.sha256((PIPELINE_VERSION + self.prompt + self.settings.deepseek_model
-            + str(self.settings.video_max_tokens) + (directory / "manifest.json").read_text(encoding="utf-8")).encode()).hexdigest()[:24]
+        manifest = (directory / "manifest.json").read_text(encoding="utf-8")
+        pipeline = json.loads(manifest).get("pipeline_version", PIPELINE_VERSION)
+        # 旧采样缓存沿用旧指纹；新音频缓存内容及任务提示参与新版本指纹。
+        audio = ((directory / "audio.json").read_text(encoding="utf-8") + AUDIO_TASK) if pipeline == PIPELINE_VERSION and (directory / "audio.json").is_file() else ""
+        fingerprint = hashlib.sha256((pipeline + self.prompt + self.settings.deepseek_model
+            + str(self.settings.video_max_tokens) + manifest + audio).encode()).hexdigest()[:24]
         return directory / f"analysis-{fingerprint}.json"
 
     def _cached(self, directory: Path) -> VideoAnswer | None:
@@ -277,8 +313,10 @@ class VideoService:
             return None
         try:
             answer = VideoAnswer.model_validate_json(path.read_text(encoding="utf-8"))
+            manifest=json.loads((directory/"manifest.json").read_text(encoding="utf-8"))
+            transcript = AudioTranscript.model_validate_json((directory / "audio.json").read_text(encoding="utf-8")) if (directory / "audio.json").is_file() else AudioTranscript()
+            validate_links(answer.audio_links, transcript, [SampleFrame(**{**frame, "url": ""}) for frame in manifest["frames"]])
             if answer.comparison:
-                manifest=json.loads((directory/"manifest.json").read_text(encoding="utf-8"))
                 answer.comparison.check_references({frame['index'] for frame in manifest['frames']})
             return answer.model_copy(update={"cached": True})
         except (ValueError, OSError) as exc:
@@ -289,9 +327,11 @@ class VideoService:
         directory = video_directory(video_id, self.settings)
         try:
             data = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
-            if data.get("pipeline_version") not in {PIPELINE_VERSION, LEGACY_PIPELINE}:
+            if data.get("pipeline_version") not in {PIPELINE_VERSION, LEGACY_PIPELINE, LEGACY_HALF_PIPELINE}:
                 raise VideoError("采样策略已更新，请重新选择原视频，生成整段均匀采样的画面。旧视频和结果仍保存在本机。", 409)
-            data["sampling_policy"] = "half_second" if data["pipeline_version"] == PIPELINE_VERSION else "legacy_uniform"
+            data["sampling_policy"] = {PIPELINE_VERSION: "one_second", LEGACY_HALF_PIPELINE: "half_second"}.get(data["pipeline_version"], "legacy_uniform")
+            if (directory / "audio.json").is_file():
+                data["audio"] = AudioTranscript.model_validate_json((directory / "audio.json").read_text(encoding="utf-8"))
             for frame in data["frames"]:
                 frame["url"] = f"/api/videos/{video_id}/frames/{frame['index']}"
                 frame["detail_url"] = f"/api/videos/{video_id}/frames/{frame['index']}/detail" if (directory / f"detail-{frame['index']}.jpg").is_file() else None
@@ -308,7 +348,7 @@ class VideoService:
             with upload_workspace(root) as directory:
                 if directory.parent != root:
                     raise VideoError("视频存储位置异常。", 500)
-                digest = hashlib.sha256((PIPELINE_VERSION + DETAIL_VERSION + str(self.settings.video_max_frames)
+                digest = hashlib.sha256((PIPELINE_VERSION + DETAIL_VERSION + AUDIO_VERSION + str(self.settings.audio_enabled) + str(self.settings.audio_model_dir.resolve()) + str(self.settings.video_max_frames)
                     + str(self.settings.video_max_seconds)).encode())
                 total = 0
                 with (directory / "source.mp4").open("wb") as output:
@@ -323,6 +363,9 @@ class VideoService:
                 video_id = digest.hexdigest()
                 target = root / video_id
                 if (target / "manifest.json").is_file():
+                    audio = self.info(video_id).audio
+                    if audio.status in {"failed", "unavailable"} and self.settings.audio_enabled:
+                        self._prepare_audio(target)
                     return self.info(video_id)
                 command = [sys.executable, "-B", "-X", "utf8", str(Path(__file__).with_name("video_extract.py")),
                     str(directory), str(self.settings.video_max_seconds), str(self.settings.video_max_frames)]
@@ -342,6 +385,7 @@ class VideoService:
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
                 manifest["pipeline_version"] = PIPELINE_VERSION
                 manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+                self._prepare_audio(directory)
                 directory.rename(target)
                 return self.info(video_id)
         finally:

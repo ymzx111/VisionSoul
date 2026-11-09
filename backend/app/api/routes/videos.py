@@ -25,7 +25,7 @@ class VideoStatus(BaseModel):
     configured: bool = Field(title="是否已配置密钥")
     max_bytes: int = Field(title="视频大小上限")
     max_seconds: float = Field(title="时长上限")
-    max_frames: int = Field(title="采样上限")
+    max_frames: int = Field(title="新视频采样上限，旧半秒记录仍可读取")
     sample_interval_seconds: float = Field(default=SAMPLE_INTERVAL_SECONDS,title="采样间隔秒")
 
 
@@ -47,8 +47,8 @@ def safe_error(error):
     return HTTPException(status_code=500, detail="本机视频存储暂时不可用，请检查权限。若刚调用分析，可能已有模型用量。")
 
 
-@router.post("", response_model=VideoInfo, status_code=201, summary="上传 MP4 并本地抽帧（不调用模型）")
-def upload(file: Annotated[UploadFile, File(description="H.264 MP4，不超过30秒、50 MB；每0.5秒采样并补末帧，最多61次，不重复低帧率源帧。")],
+@router.post("", response_model=VideoInfo, status_code=201, summary="本地抽帧与对白识别（不调用付费 API）")
+def upload(file: Annotated[UploadFile, File(description="H.264 MP4，不超过30秒、50 MB；每1秒采样并补末帧，最多31次；本机转写对白，不调用付费模型。")],
            service: Annotated[VideoService, Depends(get_video_service)]):
     try:
         return service.upload(file.file)

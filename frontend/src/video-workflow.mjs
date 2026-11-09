@@ -1,4 +1,5 @@
 import { validateComparison } from './video-comparison.mjs';
+import { validateAudioEvidence } from './audio-evidence.mjs';
 const VIDEO_ID = /^[0-9a-f]{64}$/;
 const STORAGE_KEY = 'visionsoul.currentVideo';
 
@@ -16,6 +17,7 @@ async function request(fetcher, url, options) {
 
 function validatedResult(result, video) {
   validateComparison(result.comparison,video.frames);
+  validateAudioEvidence(video.audio, result.audio_links, video.frames, video.duration_seconds);
   if (result.video_id !== video.video_id || !Array.isArray(result.observations) || !result.observations.length
       || typeof result.summary !== 'string' || typeof result.reply !== 'string') {
     throw new Error('视频分析结果不完整，请检查后端记录；不会自动重新分析。');
@@ -47,13 +49,14 @@ function validatedVideo(data, maxFrames) {
     return { ...frame, url: `/api/videos/${data.video_id}/frames/${frame.index}`,
       detail_url: frame.detail_url ? `/api/videos/${data.video_id}/frames/${frame.index}/detail` : null };
   }) };
+  validateAudioEvidence(video.audio, [], video.frames, video.duration_seconds);
   if (data.result) video.result = validatedResult(data.result, video);
   return video;
 }
 
 export function createVideoWorkflow({ fetcher = globalThis.fetch, storage = globalThis.localStorage } = {}) {
   let state = { video: null, filename: '', uploading: false, loadingVideo: false, analyzing: false, result: null,
-    error: '', configError: '', configured: null, maxBytes: 50 * 1024 * 1024, maxSeconds: 30, maxFrames: 61, sampleInterval: 0.5 };
+    error: '', configError: '', configured: null, maxBytes: 50 * 1024 * 1024, maxSeconds: 30, maxFrames: 31, sampleInterval: 1 };
   let disposed = false;
   let initialized = false;
   let version = 0;
@@ -80,7 +83,7 @@ export function createVideoWorkflow({ fetcher = globalThis.fetch, storage = glob
       try {
         const info = await call('/api/videos/status');
         publish({ configured: info.configured === true, maxBytes: info.max_bytes,
-          maxSeconds: info.max_seconds, maxFrames: info.max_frames, sampleInterval: info.sample_interval_seconds || 0.5, configError: '' });
+          maxSeconds: info.max_seconds, maxFrames: info.max_frames, sampleInterval: info.sample_interval_seconds || 1, configError: '' });
       } catch (error) { if (error.name !== 'AbortError') publish({ configError: errorMessage(error) }); }
     };
     const restore = async () => {
@@ -88,7 +91,7 @@ export function createVideoWorkflow({ fetcher = globalThis.fetch, storage = glob
       try { id = storage?.getItem(STORAGE_KEY); } catch { return; }
       if (!VIDEO_ID.test(id || '')) return;
       try {
-        const video = validatedVideo(await call(`/api/videos/${id}`), state.maxFrames);
+        const video = validatedVideo(await call(`/api/videos/${id}`), Math.max(61, state.maxFrames));
         if (current === version) publish({ video, result: video.result || null, filename: '上次的视频' });
       } catch (error) {
         if (current === version && error.name !== 'AbortError') publish({ error: `上次的视频未能恢复：${errorMessage(error)}` });
@@ -128,7 +131,7 @@ export function createVideoWorkflow({ fetcher = globalThis.fetch, storage = glob
     const current = ++version;
     publish({ video: null, result: null, filename: '', loadingVideo: true, error: '' });
     try {
-      const video = validatedVideo(await call(`/api/videos/${id}`), state.maxFrames);
+      const video = validatedVideo(await call(`/api/videos/${id}`), Math.max(61, state.maxFrames));
       if (current !== version || disposed) return false;
       publish({ video, result: video.result || null, filename: '话题中的视频', loadingVideo: false });
       remember(id); return true;
