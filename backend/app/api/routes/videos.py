@@ -11,6 +11,7 @@ from app.core.video_policy import MAX_SAMPLES, SAMPLE_INTERVAL_SECONDS
 from app.services.deepseek import DeepSeekError, has_api_key
 from app.services.videos import VideoAnswer, VideoError, VideoInfo, VideoService, video_directory
 from app.services.video_details import detail_path
+from app.services.audio_evidence import SpeechSegment, AudioTranscript
 
 router = APIRouter(prefix="/api/videos", tags=["短视频观察"])
 logger = logging.getLogger(__name__)
@@ -32,6 +33,35 @@ class VideoStatus(BaseModel):
 class AnalyzeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", title="视频分析请求")
     video_id: str = Field(pattern=r"^[0-9a-f]{64}$", title="已上传的视频编号")
+
+
+class AudioEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: int = Field(ge=0)
+    segments: list[SpeechSegment] = Field(min_length=1, max_length=64)
+
+
+class AudioRecord(BaseModel):
+    original: AudioTranscript
+    audio: AudioTranscript
+    revision: int
+    sound_clues: dict | None = None
+
+
+@router.get("/{video_id}/audio", response_model=AudioRecord, summary="读取原始与校对白（不调用模型）")
+def audio_record(video_id: VideoID, service: Annotated[VideoService, Depends(get_video_service)]):
+    try:
+        return service.audio_record(video_id)
+    except (VideoError, OSError) as exc:
+        raise safe_error(exc) from exc
+
+
+@router.put("/{video_id}/audio", response_model=AudioRecord, summary="保存校对白（不调用模型、不重写历史回复）")
+def edit_audio(video_id: VideoID, request: AudioEdit, service: Annotated[VideoService, Depends(get_video_service)]):
+    try:
+        return service.correct_audio(video_id, request.expected_revision, request.segments)
+    except (VideoError, OSError) as exc:
+        raise safe_error(exc) from exc
 
 
 @router.get("/status", response_model=VideoStatus, summary="查看视频限制与密钥填写状态（不调用模型）")

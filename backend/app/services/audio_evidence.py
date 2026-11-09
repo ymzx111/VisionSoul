@@ -29,6 +29,7 @@ class AudioTranscript(BaseModel):
     message: str = "旧视频尚未处理音频，重新上传可启用。"
     language: str | None = None
     segments: list[SpeechSegment] = Field(default_factory=list, max_length=64)
+    source: Literal["automatic", "corrected"] = "automatic"
 
     @model_validator(mode="after")
     def coherent(self):
@@ -89,7 +90,8 @@ def audio_prompt(transcript: AudioTranscript, frames):
         candidates = frame_candidates(segment, frames)
         labels = lambda window: ",".join(f"{row['frame_index']}@{row['frame_time']:g}" for row in candidates if row["window"] == window)
         rows.append(f"S{segment.id}@{segment.start:g}-{segment.end:g} {segment.text}\n近:{labels('primary')}；补:{labels('secondary')}")
-    return "自动转写（可能有误，均为原视频秒数；近±1.5秒，补±3秒，仅为时间候选）：\n" + "\n".join(rows)
+    label = "用户校对白（优先于旧转写与历史回复，仍需按画面核对）" if transcript.source == "corrected" else "自动转写（可能有误）"
+    return label + "（原视频秒数；近±1.5秒，补±3秒，仅为时间候选）：\n" + "\n".join(rows)
 
 
 def add_time_citations(reply: str, question: str, transcript: AudioTranscript, links) -> str:
@@ -115,4 +117,36 @@ def add_time_citations(reply: str, question: str, transcript: AudioTranscript, l
         if link and link.frame_time is not None:
             line += f"；画面{link.frame_time:g}秒（{labels[link.relation]}）"
         references.append(line)
-    return reply + "\n\n时间依据（自动转写，可能有误）：\n" + "\n".join(references)
+    label = "用户校对白" if transcript.source == "corrected" else "自动转写，可能有误"
+    return reply + f"\n\n时间依据（{label}）：\n" + "\n".join(references)
+
+
+def current_context(context, audio, revision, sound_clues=None):
+    """保留原分析快照；新校对单独附加，读取操作不改写历史。"""
+    if context is None:
+        return None
+    result = dict(context)
+    stale = context.get("analysis_audio_revision", 0) != revision
+    result["analysis_stale"] = stale
+    if stale:
+        result["current_audio"] = audio.model_dump()
+        result["current_audio_revision"] = revision
+        result["current_sound_clues"] = sound_clues
+    else:
+        result.pop("current_audio", None)
+        result.pop("current_audio_revision", None)
+        result.pop("current_sound_clues", None)
+        result["sound_clues"] = sound_clues
+    return result
+
+
+def model_context(context):
+    """旧综合报告可能建立在错字上；模型只读取最新校对和视觉观察。"""
+    result = dict(context)
+    if result.get("analysis_stale"):
+        result["audio"] = result.pop("current_audio")
+        result["sound_clues"] = result.pop("current_sound_clues", None)
+        result["audio_links"] = []
+        result["summary"] = "旧综合报告基于旧对白，待用户主动重新分析；不得沿用其推断。"
+        result["comparison"] = None
+    return result

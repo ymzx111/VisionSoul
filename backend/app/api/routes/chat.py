@@ -12,6 +12,8 @@ from app.services.role_store import RoleStore
 from app.services.chat import ChatService
 from app.services.chat_store import ChatStore
 from app.services.deepseek import DeepSeekError, TokenUsage, has_api_key
+from app.services.videos import VideoService, VideoError
+from app.services.audio_evidence import current_context
 
 router = APIRouter(prefix="/api/chat", tags=["伙伴对话"])
 Identifier = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
@@ -102,8 +104,14 @@ def conversation(
             raise HTTPException(404, "话题不存在，请新建话题。")
         messages = store.messages(conversation_id)
         video_context = item.pop("video_context", None)
-        return {**item, "video_context": json.loads(video_context) if video_context else None,
+        context = json.loads(video_context) if video_context else None
+        if context and item.get("video_id"):
+            record = VideoService(settings).audio_record(item["video_id"])
+            context = current_context(context, record["audio"], record["revision"], record["sound_clues"])
+        return {**item, "video_context": context,
                 "messages": messages, "has_older": item["revision"] * 2 > len(messages)}
+    except VideoError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
     except (OSError, sqlite3.Error, json.JSONDecodeError) as exc:
         raise HTTPException(503, "暂时无法读取本机话题。") from exc
 
