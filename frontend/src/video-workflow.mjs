@@ -53,7 +53,7 @@ function validatedVideo(data, maxFrames) {
 
 export function createVideoWorkflow({ fetcher = globalThis.fetch, storage = globalThis.localStorage } = {}) {
   let state = { video: null, filename: '', uploading: false, loadingVideo: false, analyzing: false, result: null,
-    error: '', configError: '', configured: null, maxBytes: 50 * 1024 * 1024, maxSeconds: 30, maxFrames: 30 };
+    error: '', configError: '', configured: null, maxBytes: 50 * 1024 * 1024, maxSeconds: 30, maxFrames: 61, sampleInterval: 0.5 };
   let disposed = false;
   let initialized = false;
   let version = 0;
@@ -80,7 +80,7 @@ export function createVideoWorkflow({ fetcher = globalThis.fetch, storage = glob
       try {
         const info = await call('/api/videos/status');
         publish({ configured: info.configured === true, maxBytes: info.max_bytes,
-          maxSeconds: info.max_seconds, maxFrames: info.max_frames, configError: '' });
+          maxSeconds: info.max_seconds, maxFrames: info.max_frames, sampleInterval: info.sample_interval_seconds || 0.5, configError: '' });
       } catch (error) { if (error.name !== 'AbortError') publish({ configError: errorMessage(error) }); }
     };
     const restore = async () => {

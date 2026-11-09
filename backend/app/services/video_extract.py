@@ -6,10 +6,10 @@ from pathlib import Path
 import sys
 
 import av
-if __package__:
-    from .video_comparison import clarity_score, DETAIL_VERSION
-else:
-    from video_comparison import clarity_score, DETAIL_VERSION
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from app.core.video_policy import SAMPLE_INTERVAL_SECONDS
+from app.services.video_comparison import clarity_score, DETAIL_VERSION
 
 
 def extract(directory: Path, max_seconds: float, max_frames: int) -> dict:
@@ -36,17 +36,39 @@ def extract(directory: Path, max_seconds: float, max_frames: int) -> dict:
         if not math.isfinite(fps) or not 0 < fps <= 60.1:
             raise ValueError("第一版支持每秒不超过 60 帧的视频。")
         stream.codec_context.thread_count = 2
-        # 首尾均覆盖。普通定帧率视频固定取 30 个不重复的源帧；不足则取实际帧数。
-        available = stream.frames or max(1, math.ceil(duration * fps))
-        target_count = min(max_frames, available)
-        end_time = max(0.0, duration - 1 / fps)
-        interval = end_time / (target_count - 1) if target_count > 1 else 0.0
+        interval = SAMPLE_INTERVAL_SECONDS
         target = 0.0
         frames = []
         sampled = 0
-        previous_digest = None
+        hashes = {}
+        last_sample_time = -1.0
         origin = float((stream.start_time or 0) * stream.time_base)
         previous_time = -1.0
+        last_frame = None
+
+        def keep(frame, timestamp):
+            nonlocal sampled, last_sample_time
+            if sampled >= max_frames:
+                raise ValueError("采样数量超过配置上限，请将 VIDEO_MAX_FRAMES 设置为61。")
+            sampled += 1
+            last_sample_time = timestamp
+            factor = min(1.0, 1280 / max(frame.width, frame.height))
+            image = frame.reformat(width=max(1, round(frame.width * factor)),
+                                   height=max(1, round(frame.height * factor)), format="rgb24").to_image()
+            if frame.rotation:
+                image = image.rotate(frame.rotation, expand=True)
+            digest = hashlib.sha256(image.tobytes()).hexdigest()
+            timestamp = round(max(0, timestamp), 3)
+            if digest in hashes:
+                frames[hashes[digest]]["seen_at"].append(timestamp)
+                return
+            index = len(frames)
+            hashes[digest] = index
+            image.save(directory / f"detail-{index}.jpg", "JPEG", quality=90)
+            image.thumbnail((768, 768))
+            image.save(directory / f"frame-{index}.jpg", "JPEG", quality=82)
+            frames.append({"index": index, "time_seconds": timestamp, "seen_at": [timestamp], "clarity": clarity_score(image)})
+
         for decoded_count, frame in enumerate(container.decode(stream), 1):
             if decoded_count > 1860:
                 raise ValueError("视频帧数异常，请重新导出短视频。")
@@ -58,33 +80,19 @@ def extract(directory: Path, max_seconds: float, max_frames: int) -> dict:
             if not math.isfinite(timestamp) or timestamp < -0.1 or timestamp < previous_time:
                 raise ValueError("视频时间戳异常，请重新导出。")
             previous_time = timestamp
+            last_frame = frame
             if timestamp > max_seconds + 0.1 or timestamp > duration + 0.2:
                 raise ValueError("视频实际时长超过声明时长或上传限制。")
-            if timestamp + 0.001 < target or sampled >= target_count:
+            if timestamp + 0.001 < target:
                 continue
-            sampled += 1
-            target += interval
-            factor = min(1.0, 1280 / max(frame.width, frame.height))
-            image = frame.reformat(width=max(1, round(frame.width * factor)),
-                                   height=max(1, round(frame.height * factor)), format="rgb24").to_image()
-            rotation = frame.rotation
-            if rotation:
-                image = image.rotate(rotation, expand=True)
-            # 只合并像素完全相同的相邻采样，避免近似去重漏掉小主体。
-            digest = hashlib.sha256(image.tobytes()).hexdigest()
-            timestamp = round(max(0, timestamp), 3)
-            if digest == previous_digest:
-                frames[-1]["seen_at"].append(timestamp)
-                continue
-            index = len(frames)
-            image.save(directory / f"detail-{index}.jpg", "JPEG", quality=90)
-            preview = image.copy()
-            preview.thumbnail((768, 768))
-            preview.save(directory / f"frame-{index}.jpg", "JPEG", quality=82)
-            frames.append({"index": index, "time_seconds": timestamp, "seen_at": [timestamp], "clarity": clarity_score(preview)})
-            previous_digest = digest
+            keep(frame, timestamp)
+            # 低帧率或可变帧率不重复同一源帧凑数。
+            while target <= timestamp + 0.001:
+                target += interval
         if not frames or previous_time + max(0.25, 2 / fps) < duration:
             raise ValueError("视频为空、已损坏或未能完整解码，请重新导出。")
+        if last_frame is not None and previous_time > last_sample_time + 0.001:
+            keep(last_frame, previous_time)
         return {"duration_seconds": round(duration, 3), "width": width, "height": height,
                 "sample_interval_seconds": interval, "sample_count": sampled, "frames": frames,
                 "detail_version": DETAIL_VERSION}

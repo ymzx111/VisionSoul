@@ -2,6 +2,7 @@
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from PIL import ImageFilter, ImageStat
+from app.core.video_policy import MAX_SAMPLES
 
 DETAIL_VERSION = "detail-v1-1280"
 
@@ -26,7 +27,7 @@ def choose_detail_frames(frames, available, limit=4):
 
 class Feature(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    frame_index: int = Field(ge=0, le=29)
+    frame_index: int = Field(ge=0, le=MAX_SAMPLES-1)
     detail: str = Field(min_length=1, max_length=120)
 
 
@@ -59,3 +60,15 @@ class Comparison(BaseModel):
             raise ValueError("likely without candidate")
         if any(not text.strip() or len(text) > 120 for text in self.missing_features):
             raise ValueError("invalid missing feature")
+
+
+def compact_times(values):
+    """压缩连续半秒采样点；不把间断复现的画面误写成连续一段。"""
+    groups = []
+    for value in values:
+        # 24/25fps等源帧时间会量化到半秒目标附近，不要求恰好0.500秒。
+        if groups and abs(value - groups[-1][-1] - 0.5) < 0.052:
+            groups[-1].append(value)
+        else:
+            groups.append([value])
+    return ";".join(f"{group[0]:g}-{group[-1]:g}" if len(group)>2 else ",".join(f"{value:g}" for value in group) for group in groups)

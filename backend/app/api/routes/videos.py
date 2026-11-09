@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import Settings, get_settings
+from app.core.video_policy import MAX_SAMPLES, SAMPLE_INTERVAL_SECONDS
 from app.services.deepseek import DeepSeekError, has_api_key
 from app.services.videos import VideoAnswer, VideoError, VideoInfo, VideoService, video_directory
 
@@ -24,6 +25,7 @@ class VideoStatus(BaseModel):
     max_bytes: int = Field(title="视频大小上限")
     max_seconds: float = Field(title="时长上限")
     max_frames: int = Field(title="采样上限")
+    sample_interval_seconds: float = Field(default=SAMPLE_INTERVAL_SECONDS,title="采样间隔秒")
 
 
 class AnalyzeRequest(BaseModel):
@@ -45,7 +47,7 @@ def safe_error(error):
 
 
 @router.post("", response_model=VideoInfo, status_code=201, summary="上传 MP4 并本地抽帧（不调用模型）")
-def upload(file: Annotated[UploadFile, File(description="H.264 MP4，不超过 30 秒、50 MB；整段均匀采样 30 次，不足 30 帧则取实际画面。")],
+def upload(file: Annotated[UploadFile, File(description="H.264 MP4，不超过30秒、50 MB；每0.5秒采样并补末帧，最多61次，不重复低帧率源帧。")],
            service: Annotated[VideoService, Depends(get_video_service)]):
     try:
         return service.upload(file.file)
@@ -84,7 +86,7 @@ def video_file(video_id: VideoID, settings: Annotated[Settings, Depends(get_sett
 
 
 @router.get("/{video_id}/frames/{index}", summary="查看对应时间的采样截图", response_class=FileResponse)
-def frame_file(video_id: VideoID, index: Annotated[int, Path(ge=0, le=29)],
+def frame_file(video_id: VideoID, index: Annotated[int, Path(ge=0, le=MAX_SAMPLES-1)],
                settings: Annotated[Settings, Depends(get_settings)]):
     try:
         path = video_directory(video_id, settings) / f"frame-{index}.jpg"
@@ -96,7 +98,7 @@ def frame_file(video_id: VideoID, index: Annotated[int, Path(ge=0, le=29)],
 
 
 @router.get("/{video_id}/frames/{index}/detail", summary="查看较清晰的采样图", response_class=FileResponse)
-def detail_frame(video_id: VideoID,index: Annotated[int,Path(ge=0,le=29)],settings: Annotated[Settings,Depends(get_settings)]):
+def detail_frame(video_id: VideoID,index: Annotated[int,Path(ge=0,le=MAX_SAMPLES-1)],settings: Annotated[Settings,Depends(get_settings)]):
     try:
         path=video_directory(video_id,settings)/f"detail-{index}.jpg"
         if not path.is_file():

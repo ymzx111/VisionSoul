@@ -48,7 +48,7 @@ export default function VideoWorkspace({ workflow, state, chatWorkflow, chatStat
             {state.uploading || state.loadingVideo ? <span className="video-processing" role="status">本地处理中，请稍等…</span>
               : <button className="button button-primary" disabled={busy} onClick={() => input.current?.click()}>选择视频</button>}
             <span className="format-note">H.264 MP4 · 最长 {state.maxSeconds} 秒 · 最大 {Math.round(state.maxBytes / 1024 / 1024)} MB</span>
-            <span className="format-note">整段均匀采样 {state.maxFrames} 次，短视频也采用相同采样数量</span>
+            <span className="format-note">每 {state.sampleInterval} 秒采样，补上末帧 · 最多 {state.maxFrames} 次</span>
           </div>}
       </div>
       {playbackError && <div className="notice notice-error" role="alert">{playbackError}</div>}
@@ -58,7 +58,7 @@ export default function VideoWorkspace({ workflow, state, chatWorkflow, chatStat
         {video && <button className="button button-secondary" disabled={busy} onClick={() => input.current?.click()}>更换视频</button>}</div>
       {video && <div className="video-sample-strip" aria-label="本地采样画面">{video.frames.map(frame => <button key={frame.index} className="sample-button" onClick={() => jump(frame)} aria-label={`查看 ${formatTime(frame.time_seconds)} 画面`}>
         <img src={frame.url} alt={`${formatTime(frame.time_seconds)} 采样截图`}/><span>{formatTime(frame.time_seconds)}</span></button>)}</div>}
-      <div className="video-note" role="status">{position || (video ? `采样 ${video.sample_count} 次，合并为 ${video.frames.length} 张画面。点击截图可定位。` : '上传后不会自动调用模型。')}</div>
+      <div className="video-note" role="status">{position || (video ? `${video.sampling_policy === 'legacy_uniform' ? '旧版采样，重新上传可用半秒采样。' : '每0.5秒采样并保留末帧。'}采样 ${video.sample_count} 次，合并为 ${video.frames.length} 张画面。` : '上传后不会自动调用模型。')}</div>
       {(state.error || state.configError) && <div className="notice notice-error" role="alert">{state.error || state.configError}</div>}
       {video && result && <details className="video-evidence"><summary>观察依据 · 点击展开</summary>
         <div className="video-keywords" aria-label="识别到的主要事物">{keywords.map(word => <span key={word}>{word}</span>)}</div>

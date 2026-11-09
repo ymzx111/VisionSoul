@@ -59,6 +59,7 @@
     "supporting_features": "supporting_features（特征依据编号）", "differences": "differences（区别与未确定点）",
     "missing_features": "missing_features（缺少的线索）", "next_shot": "next_shot（补拍建议）",
     "basis": "basis（依据来源）", "detail_url": "detail_url（细节图地址）", "clarity": "clarity（本地清晰度排序值）",
+    "sampling_policy": "sampling_policy（采样策略）",
     "conversation_id": "conversation_id（话题编号）", "request_id": "request_id（消息请求编号）",
     "message": "message（你的消息）", "content": "content（消息内容）", "role": "role（发言者）",
     "created_at": "created_at（创建时间）", "persona_id": "persona_id（固定人格编号）",

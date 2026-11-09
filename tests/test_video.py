@@ -22,15 +22,17 @@ from app.services.deepseek import DeepSeekClient, DeepSeekError
 from app.services.videos import ANALYSIS_LOCK, VideoError, VideoService
 
 
-def make_video(path, *, seconds=6, static=False, rotation=0, fps=10, varying=False):
+def make_video(path, *, seconds=6, static=False, rotation=0, fps=10, varying=False, revisit=False):
     with av.open(str(path), "w", format="mp4") as output:
         stream = output.add_stream("libx264", rate=fps)
         stream.width, stream.height, stream.pix_fmt = 96, 64, "yuv420p"
-        stream.options = {"crf": "18", "preset": "ultrafast"}
+        stream.options = {"crf": "0" if revisit else "18", "preset": "ultrafast"}
         if rotation:
             stream.set_display_rotation(rotation)
         for index in range(seconds * fps):
-            color = (index % 240, 50, 255 - index % 240) if varying else "red" if static or index < seconds * fps / 2 else "blue"
+            color = (index % 200, 50 + (index // 200) * 20, 255 - index % 200) if varying else "red" if static or index < seconds * fps / 2 else "blue"
+            if revisit:
+                color = "red" if (index // fps) % 2 == 0 else "blue"
             image = Image.new("RGB", (96, 64), color)
             for packet in stream.encode(av.VideoFrame.from_image(image)):
                 output.mux(packet)
@@ -78,7 +80,7 @@ class VideoTests(unittest.TestCase):
     def test_real_decode_order_and_read_only_does_not_call_model(self):
         video = self.uploaded()
         self.assertEqual(video.duration_seconds, 6)
-        self.assertEqual(video.sample_count, 30)
+        self.assertEqual(video.sample_count, 13)
         self.assertEqual(video.frames[0].time_seconds, 0)
         self.assertAlmostEqual(video.frames[1].time_seconds, 3, delta=0.2)
         self.assertEqual(len(self.calls), 0)
@@ -88,31 +90,23 @@ class VideoTests(unittest.TestCase):
                 self.assertGreater(image.getpixel((20, 20))[channel], 220)
 
     def test_static_exact_duplicates_are_merged_with_times(self):
-        path = Path(self.temp.name) / "static.mp4"
-        make_video(path, seconds=12, static=True)
-        video = self.service.upload(BytesIO(path.read_bytes()))
-        self.assertEqual(video.sample_count, 30)
-        self.assertEqual(len(video.frames), 1)
-        self.assertEqual(len(video.frames[0].seen_at), 30)
-        self.assertEqual(video.frames[0].seen_at[0], 0)
-        self.assertEqual(video.frames[0].seen_at[-1], 11.9)
+        path=Path(self.temp.name)/'static.mp4';make_video(path,seconds=12,static=True)
+        video=self.service.upload(BytesIO(path.read_bytes()))
+        self.assertEqual(video.sample_count,25)
+        self.assertEqual(len(video.frames),1)
+        self.assertEqual(len(video.frames[0].seen_at),25)
+        self.assertEqual(video.frames[0].seen_at[-1],11.9)
 
-    def test_ten_and_thirty_seconds_both_get_30_distinct_uniform_samples_including_end(self):
-        for seconds in [10, 30]:
+    def test_half_second_samples_and_actual_tail_for_10_20_30_seconds(self):
+        for seconds in [10,20,30]:
             with self.subTest(seconds=seconds):
-                path = Path(self.temp.name) / f"{seconds}-seconds.mp4"
-                make_video(path, seconds=seconds, varying=True)
-                video = self.service.upload(BytesIO(path.read_bytes()))
-                self.assertEqual(video.sample_count, 30)
-                self.assertEqual(len(video.frames), 30)
-                times = [frame.time_seconds for frame in video.frames]
-                self.assertEqual(times[0], 0)
-                self.assertEqual(times[-1], seconds - 0.1)
-                self.assertEqual(len(set(times)), 30)
-                for index, timestamp in enumerate(times):
-                    expected = index * (seconds - 0.1) / 29
-                    self.assertGreaterEqual(timestamp + 0.001, expected)
-                    self.assertLessEqual(timestamp - expected, 0.101)
+                path=Path(self.temp.name)/f'{seconds}-seconds.mp4';make_video(path,seconds=seconds,varying=True)
+                video=self.service.upload(BytesIO(path.read_bytes()))
+                self.assertEqual(video.sample_count,seconds*2+1)
+                self.assertEqual(len(video.frames),seconds*2+1)
+                times=[frame.time_seconds for frame in video.frames]
+                self.assertEqual(times[:-1],[i*.5 for i in range(seconds*2)])
+                self.assertEqual(times[-1],seconds-.1)
                 self.assertFalse(self.calls)
 
     def test_fewer_than_30_source_frames_are_not_duplicated(self):
@@ -121,6 +115,35 @@ class VideoTests(unittest.TestCase):
         video = self.service.upload(BytesIO(path.read_bytes()))
         self.assertEqual(video.sample_count, 6)
         self.assertEqual([frame.time_seconds for frame in video.frames], [0, 0.5, 1, 1.5, 2, 2.5])
+
+    def test_identical_reappearing_picture_is_sent_once_with_all_occurrences(self):
+        path=Path(self.temp.name)/'revisit.mp4';make_video(path,seconds=3,revisit=True)
+        video=self.service.upload(BytesIO(path.read_bytes()))
+        self.assertEqual(video.sample_count,7)
+        self.assertEqual(len(video.frames),2)
+        self.assertEqual(video.frames[0].seen_at,[0,.5,2,2.5,2.9])
+        self.assertEqual(video.frames[1].seen_at,[1,1.5])
+        self.assertFalse(self.calls)
+
+    def test_one_fps_never_duplicates_source_frames_to_fill_half_second_targets(self):
+        path=Path(self.temp.name)/'one-fps.mp4';make_video(path,seconds=3,fps=1,varying=True)
+        video=self.service.upload(BytesIO(path.read_bytes()))
+        self.assertEqual(video.sample_count,3)
+        self.assertEqual([frame.time_seconds for frame in video.frames],[0,1,2])
+
+    def test_old_thirty_frame_env_limit_upgrades_and_custom_small_limit_never_truncates(self):
+        self.assertEqual(Settings(_env_file=None,video_max_frames=30).video_max_frames,61)
+        limited=VideoService(self.settings.model_copy(update={'video_max_frames':2}),self.client)
+        with self.assertRaisesRegex(VideoError,'上限'):
+            limited.upload(BytesIO(self.data))
+        self.assertFalse(list(self.settings.video_storage_dir.iterdir()))
+
+    def test_previous_uniform_pipeline_still_restores_without_model_call(self):
+        video=self.uploaded();path=self.settings.video_storage_dir/video.video_id/'manifest.json'
+        data=json.loads(path.read_text(encoding='utf-8'));data['pipeline_version']='video-v2-uniform-30-exact-dedup'
+        path.write_text(json.dumps(data),encoding='utf-8')
+        self.assertEqual(self.service.info(video.video_id).sampling_policy,'legacy_uniform')
+        self.assertFalse(self.calls)
 
     def test_over_30_seconds_is_rejected_before_model_use(self):
         path = Path(self.temp.name) / "too-long.mp4"
@@ -146,9 +169,9 @@ class VideoTests(unittest.TestCase):
     def test_rotation_and_frame_budget(self):
         path = Path(self.temp.name) / "rotated.mp4"
         make_video(path, seconds=12, rotation=90)
-        settings = self.settings.model_copy(update={"video_max_frames": 2})
+        settings = self.settings
         video = VideoService(settings).upload(BytesIO(path.read_bytes()))
-        self.assertEqual(video.sample_count, 2)
+        self.assertEqual(video.sample_count, 25)
         with Image.open(settings.video_storage_dir / video.video_id / "frame-0.jpg") as image:
             self.assertEqual(image.size, (64, 96))
 
@@ -281,21 +304,21 @@ class VideoTests(unittest.TestCase):
             self.assertTrue(restored["result"]["cached"])
             self.assertEqual(len(self.calls), 1)
 
-    def test_last_of_30_frames_is_served_and_valid_model_evidence(self):
+    def test_last_of_61_frames_is_served_and_valid_model_evidence(self):
         path = Path(self.temp.name) / "30-distinct.mp4"
-        make_video(path, seconds=10, varying=True)
+        make_video(path, seconds=30, varying=True)
         video = self.service.upload(BytesIO(path.read_bytes()))
-        self.payload = result_payload(29)
+        self.payload = result_payload(60)
         app.dependency_overrides[get_settings] = lambda: self.settings
         app.dependency_overrides[get_video_service] = lambda: self.service
         self.addCleanup(app.dependency_overrides.clear)
         with TestClient(app) as client:
-            self.assertEqual(client.get(video.frames[29].url).status_code, 200)
+            self.assertEqual(client.get(video.frames[60].url).status_code, 200)
             response = client.post("/api/videos/analyze", json={"video_id": video.video_id})
             self.assertEqual(response.status_code, 200, response.text)
-            self.assertEqual(response.json()["observations"][-1]["frame_index"], 29)
+            self.assertEqual(response.json()["observations"][-1]["frame_index"], 60)
             images = [part for part in self.calls[0]["messages"][1]["content"] if part["type"] == "image_url"]
-            self.assertEqual(len(images), 30)
+            self.assertEqual(len(images), 61)
             self.assertEqual(len(self.calls), 1)
 
     def test_video_request_body_limit_before_multipart(self):

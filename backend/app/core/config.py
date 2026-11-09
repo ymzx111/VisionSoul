@@ -8,8 +8,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from app.core.video_policy import MAX_SAMPLES
 
 
 class Settings(BaseSettings):
@@ -46,7 +47,7 @@ class Settings(BaseSettings):
     video_storage_dir: Path = Path(__file__).resolve().parents[2] / "storage" / "videos"
     video_max_bytes: int = Field(default=50 * 1024 * 1024, ge=1024, le=100 * 1024 * 1024)
     video_max_seconds: float = Field(default=30.0, ge=1, le=30)
-    video_max_frames: int = Field(default=30, ge=2, le=30)
+    video_max_frames: int = Field(default=MAX_SAMPLES, ge=2, le=MAX_SAMPLES)
     video_decode_timeout_seconds: float = Field(default=45.0, ge=5, le=90)
     video_max_tokens: int = Field(default=1600, ge=512, le=2048)
 
@@ -62,6 +63,12 @@ class Settings(BaseSettings):
     chat_context_turns: int = Field(default=6, ge=1, le=12)
     chat_context_chars: int = Field(default=12000, ge=2000, le=24000)
     role_database_path: Path | None = None
+
+    @field_validator("video_max_frames", mode="before")
+    @classmethod
+    def upgrade_old_sampling_limit(cls, value):
+        # 兼容旧 .env 中的30张配置，防止半秒采样被旧上限截断。
+        return MAX_SAMPLES if str(value) == "30" else value
 
     @property
     def roles_path(self) -> Path:

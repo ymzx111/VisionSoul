@@ -152,3 +152,18 @@ test('index and timestamp errors have distinct messages without any paid request
     assert.equal(calls, 2);
   }
 });
+
+test('half-second 61-frame result and final frame evidence work even before status completes',async()=>{
+  const video={...info(),duration_seconds:30,sample_count:61,sampling_policy:'half_second',frames:Array.from({length:61},(_,index)=>({index,time_seconds:index===60?29.9:index*.5,seen_at:[index===60?29.9:index*.5]}))};
+  const result={...answer(),observations:[{...answer().observations[0],frame_index:60}]};
+  const gate=deferred();
+  const workflow=createVideoWorkflow({storage:null,fetcher:async url=>url.endsWith('status')?gate.promise:response(url.endsWith('analyze')?result:video)});
+  const initializing=workflow.initialize();
+  assert.equal(await workflow.selectFiles([file()]),true);
+  gate.resolve(response({...config,max_frames:61,sample_interval_seconds:.5}));await initializing;
+  assert.equal(workflow.getState().maxFrames,61);
+  assert.equal(workflow.getState().sampleInterval,.5);
+  assert.equal(workflow.getState().video.frames[60].index,60);
+  assert.equal(await workflow.analyze(),true);
+  assert.equal(workflow.getState().result.observations[0].frame_index,60);
+});

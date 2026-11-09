@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.routes import chat, docs, health, images, roles, videos, vision, workspace
+from app.api.routes import billing, chat, docs, health, images, roles, videos, vision, workspace
 from app.core.config import get_settings
 from app.core.upload_limits import ImageUploadBodyLimit
 
@@ -27,6 +27,7 @@ app = FastAPI(
 
 # 路由集中注册：以后新增模块，只需在这里 app.include_router(...)
 app.include_router(health.router)
+app.include_router(billing.router)
 app.include_router(images.router)
 app.include_router(vision.router)
 app.include_router(chat.router)

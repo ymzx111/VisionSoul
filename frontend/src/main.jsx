@@ -7,6 +7,7 @@ import VideoWorkspace from './VideoWorkspace.jsx';
 import { createVideoWorkflow } from './video-workflow.mjs';
 import { createRoleWorkflow } from './role-workflow.mjs';
 import RoleSettings from './RoleSettings.jsx';
+import BillingBadge from './BillingBadge.jsx';
 import './style.css';
 
 function Icon({ name, size = 20, className = '' }) {
@@ -76,6 +77,7 @@ function App() {
     <header className="topbar">
       <a href="/app/" className="brand" aria-label="VisionSoul 工作台"><span className="brand-mark"><Icon name="leaf" size={22}/></span><span>VisionSoul<span className="brand-caption">画面 · 发现 · 陪伴</span></span></a>
       <div className="flex items-center gap-5">
+        <BillingBadge/>
         <span className="model-state"><span className={`status-dot ${state.configured ? 'is-ready' : ''}`}/>{state.configured ? 'DeepSeek Flash · 已配置' : state.configError ? '后端连接待检查' : state.configured === false ? '模型待配置' : '正在检查配置'}</span>
         <button className="role-entry" disabled={busy} onClick={() => { location.hash = page === 'roles' ? '' : '/roles'; }}>{page === 'roles' ? '← 返回对话' : '角色与记忆'}</button>
         <a className="docs-link" href="/docs" target="_blank" rel="noreferrer">接口文档 <span aria-hidden="true">↗</span></a>

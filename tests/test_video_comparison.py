@@ -11,7 +11,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'backend'))
 from app.core.config import Settings
 from app.services.chat import ChatService
 from app.services.deepseek import DeepSeekClient,DeepSeekError
-from app.services.video_comparison import clarity_score,choose_detail_frames
+from app.services.video_comparison import clarity_score,choose_detail_frames,compact_times
 from app.services.videos import VideoService,SampleFrame
 from test_video import make_video,result_payload
 
@@ -50,6 +50,21 @@ class ComparisonTests(unittest.TestCase):
         self.assertGreater(clarity_score(image),flat)
         frames=[SampleFrame(index=i,time_seconds=i,seen_at=[i],url='',clarity=100 if i%2 else 0) for i in range(8)]
         self.assertEqual(choose_detail_frames(frames,set(range(8))),[1,3,5,7])
+
+    def test_compact_timestamps_never_connect_separated_occurrences(self):
+        self.assertEqual(compact_times([0,.5,1,3,3.5,4,4.4]),'0-1;3-4;4.4')
+        self.assertEqual(compact_times([0,.52,1,1.52,2,3]),'0-2;3')
+
+    def test_comparison_schema_only_in_inspection_and_high_images_stay_at_four(self):
+        self.service._observe(self.video)
+        self.assertNotIn('supporting_features',self.calls[-1]['messages'][0]['content'])
+        path=Path(self.temp.name)/'distinct.mp4';make_video(path,seconds=5,varying=True)
+        video=self.service.upload(BytesIO(path.read_bytes()))
+        self.service.inspect(video.video_id,'比对',[])
+        self.assertIn('supporting_features',self.calls[-1]['messages'][0]['content'])
+        images=[part for part in self.calls[-1]['messages'][-1]['content'] if part['type']=='image_url']
+        self.assertEqual(len(images),11)
+        self.assertEqual(sum(part['image_url']['detail']=='high' for part in images),4)
 
     def test_enhanced_single_request_uses_bounded_detail_and_returns_grounded_candidates(self):
         snapshot,reply=self.service.inspect(self.video.video_id,'辨识并比较两个候选。',[])

@@ -17,14 +17,15 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.config import Settings
+from app.core.video_policy import MAX_SAMPLES, PIPELINE_VERSION, LEGACY_PIPELINE
 from app.core.persona import PERSONA_CORE, load_persona
 from app.services.deepseek import DeepSeekClient, DeepSeekError, ModelReply, TokenUsage, has_api_key
-from app.services.video_comparison import Comparison, DETAIL_VERSION, choose_detail_frames
+from app.services.video_comparison import Comparison, DETAIL_VERSION, choose_detail_frames, compact_times
 
 logger = logging.getLogger(__name__)
 VIDEO_TASK = (Path(__file__).resolve().parents[1] / "prompts" / "video.md").read_text(encoding="utf-8").strip()
 VIDEO_PROMPT = PERSONA_CORE + "\n\n" + VIDEO_TASK
-PIPELINE_VERSION = "video-v2-uniform-30-exact-dedup"
+COMPARISON_TASK = (Path(__file__).resolve().parents[1] / "prompts" / "video_comparison.md").read_text(encoding="utf-8").strip()
 UPLOAD_LOCK = threading.Lock()
 ANALYSIS_LOCK = threading.Lock()
 
@@ -54,9 +55,9 @@ class VideoError(ValueError):
 
 
 class SampleFrame(BaseModel):
-    index: int = Field(ge=0, le=29, title="采样编号")
+    index: int = Field(ge=0, le=MAX_SAMPLES-1, title="采样编号")
     time_seconds: float = Field(ge=0, le=30, title="采样时间")
-    seen_at: list[float] = Field(min_length=1, max_length=30, title="相同画面的采样时间")
+    seen_at: list[float] = Field(min_length=1, max_length=MAX_SAMPLES, title="相同画面的采样时间")
     url: str = Field(title="截图地址")
     clarity: float | None = Field(default=None, ge=0, le=255, title="本地清晰度排序值")
     detail_url: str | None = Field(default=None, title="较清晰的采样图地址")
@@ -64,7 +65,7 @@ class SampleFrame(BaseModel):
 
 class Observation(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    frame_index: int = Field(ge=0, le=29, title="依据采样编号")
+    frame_index: int = Field(ge=0, le=MAX_SAMPLES-1, title="依据采样编号")
     keywords: list[str] = Field(min_length=1, max_length=4, title="主要事物")
     description: str = Field(min_length=1, max_length=120, title="画面描述")
     uncertain: bool = Field(title="是否待确认")
@@ -94,8 +95,9 @@ class VideoInfo(BaseModel):
     width: int = Field(gt=0, title="画面宽度")
     height: int = Field(gt=0, title="画面高度")
     sample_interval_seconds: float = Field(ge=0, title="目标采样间隔")
-    sample_count: int = Field(ge=1, le=30, title="采样次数")
-    frames: list[SampleFrame] = Field(min_length=1, max_length=30, title="去重后的画面")
+    sample_count: int = Field(ge=1, le=MAX_SAMPLES, title="采样次数")
+    frames: list[SampleFrame] = Field(min_length=1, max_length=MAX_SAMPLES, title="去重后的画面")
+    sampling_policy: str = Field(default="half_second",title="采样策略")
     video_url: str = Field(title="播放地址")
     result: VideoAnswer | None = Field(default=None, title="已有分析结果")
 
@@ -118,21 +120,20 @@ class VideoService:
 
     def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None, memory_text: str = "", inspect: bool = False) -> VideoAnswer:
         directory = video_directory(info.video_id, self.settings)
-        parts = [{"type": "text", "text": "请按上述 json 格式分析以下有序视频采样。只观察画面，不包含音频。"}]
+        parts = [{"type": "text", "text": "视频截图不含音频。图号@采样秒，区间是重复图的半秒采样点，不代表连续动作。"}]
         available = {frame.index for frame in info.frames if (directory / f"detail-{frame.index}.jpg").is_file()}
         detailed = set(choose_detail_frames(info.frames, available)) if inspect else set()
         for frame in info.frames:
             high = frame.index in detailed
-            parts.append({"type": "text", "text": f"帧编号 {frame.index}；采样秒数 {frame.seen_at}" + ("；重点细节图" if high else "")})
+            parts.append({"type": "text", "text": f"{frame.index}@{compact_times(frame.seen_at)}"})
             filename = f"detail-{frame.index}.jpg" if high else f"frame-{frame.index}.jpg"
             encoded = base64.b64encode((directory / filename).read_bytes()).decode("ascii")
             parts.append({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + encoded, "detail": "high" if high else "low"}})
         prompt = self.prompt
         if caption:
-            prompt += "\n本次是用户带文字分享视频。reply必须直接回应用户这句话并结合已有对话；observations和summary只记录画面可见事实，不把用户提供的地名、日期、心情写成视觉识别结论。"
-            parts.append({"type": "text", "text": "用户这次想说：" + caption})
+            parts.append({"type": "text", "text": caption})
         if inspect:
-            prompt += "\n本次用户选择细看并比对：必须返回comparison。按用户问题挑选目标，联合不同角度的可见特征比较候选；没有独特特征时返回insufficient，不勉强填写具体物种、品种或地点。"
+            prompt += "\n" + COMPARISON_TASK
             if not detailed:
                 prompt += "\n此视频只有旧版概览图，没有额外细节图；不要声称看到了叶脉、小字等缺失细节。必要时提示重新上传原视频。"
         reply = self.client.complete([{"role": "system", "content": prompt},
@@ -261,8 +262,9 @@ class VideoService:
         directory = video_directory(video_id, self.settings)
         try:
             data = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
-            if data.get("pipeline_version") != PIPELINE_VERSION:
+            if data.get("pipeline_version") not in {PIPELINE_VERSION, LEGACY_PIPELINE}:
                 raise VideoError("采样策略已更新，请重新选择原视频，生成整段均匀采样的画面。旧视频和结果仍保存在本机。", 409)
+            data["sampling_policy"] = "half_second" if data["pipeline_version"] == PIPELINE_VERSION else "legacy_uniform"
             for frame in data["frames"]:
                 frame["url"] = f"/api/videos/{video_id}/frames/{frame['index']}"
                 frame["detail_url"] = f"/api/videos/{video_id}/frames/{frame['index']}/detail" if (directory / f"detail-{frame['index']}.jpg").is_file() else None
