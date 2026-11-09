@@ -11,8 +11,8 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'backend'))
 from app.core.config import Settings
 from app.services.chat import ChatService
 from app.services.deepseek import DeepSeekClient,DeepSeekError
-from app.services.video_comparison import clarity_score,choose_detail_frames,compact_times
-from app.services.videos import VideoService,SampleFrame
+from app.services.video_comparison import clarity_score,compact_times
+from app.services.videos import VideoService
 from test_video import make_video,result_payload
 
 
@@ -43,13 +43,11 @@ class ComparisonTests(unittest.TestCase):
         self.service=VideoService(self.settings,self.client)
         self.video=self.service.upload(BytesIO(self.data))
 
-    def test_local_clarity_and_selection_choose_sharp_frames_across_time_groups(self):
+    def test_local_clarity_remains_compatible_with_saved_manifests(self):
         image=Image.new('RGB',(160,160),'gray')
         flat=clarity_score(image);draw=ImageDraw.Draw(image)
         for x in range(0,160,8):draw.line((x,0,x,160),fill='white',width=3)
         self.assertGreater(clarity_score(image),flat)
-        frames=[SampleFrame(index=i,time_seconds=i,seen_at=[i],url='',clarity=100 if i%2 else 0) for i in range(8)]
-        self.assertEqual(choose_detail_frames(frames,set(range(8))),[1,3,5,7])
 
     def test_compact_timestamps_never_connect_separated_occurrences(self):
         self.assertEqual(compact_times([0,.5,1,3,3.5,4,4.4]),'0-1;3-4;4.4')
@@ -64,7 +62,8 @@ class ComparisonTests(unittest.TestCase):
         self.assertIn('supporting_features',self.calls[-1]['messages'][0]['content'])
         images=[part for part in self.calls[-1]['messages'][-1]['content'] if part['type']=='image_url']
         self.assertEqual(len(images),11)
-        self.assertEqual(sum(part['image_url']['detail']=='high' for part in images),4)
+        self.assertGreater(sum(part['image_url']['detail']=='high' for part in images),0)
+        self.assertLessEqual(sum(part['image_url']['detail']=='high' for part in images),4)
 
     def test_enhanced_single_request_uses_bounded_detail_and_returns_grounded_candidates(self):
         snapshot,reply=self.service.inspect(self.video.video_id,'辨识并比较两个候选。',[])

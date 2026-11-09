@@ -10,6 +10,7 @@ from app.core.config import Settings, get_settings
 from app.core.video_policy import MAX_SAMPLES, SAMPLE_INTERVAL_SECONDS
 from app.services.deepseek import DeepSeekError, has_api_key
 from app.services.videos import VideoAnswer, VideoError, VideoInfo, VideoService, video_directory
+from app.services.video_details import detail_path
 
 router = APIRouter(prefix="/api/videos", tags=["短视频观察"])
 logger = logging.getLogger(__name__)
@@ -100,7 +101,10 @@ def frame_file(video_id: VideoID, index: Annotated[int, Path(ge=0, le=MAX_SAMPLE
 @router.get("/{video_id}/frames/{index}/detail", summary="查看较清晰的采样图", response_class=FileResponse)
 def detail_frame(video_id: VideoID,index: Annotated[int,Path(ge=0,le=MAX_SAMPLES-1)],settings: Annotated[Settings,Depends(get_settings)]):
     try:
-        path=video_directory(video_id,settings)/f"detail-{index}.jpg"
+        directory=video_directory(video_id,settings)
+        path=detail_path(directory,index)
+        if not path.is_file():
+            path=directory/f"detail-{index}.jpg"
         if not path.is_file():
             raise VideoError("这个视频没有细节图，可重新选择原视频生成。",404)
         return FileResponse(path,media_type="image/jpeg",headers={"X-Content-Type-Options":"nosniff","Cache-Control":"private, no-store"})

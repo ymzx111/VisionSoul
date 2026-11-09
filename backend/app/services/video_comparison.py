@@ -1,4 +1,4 @@
-"""多视角比对的数据契约与本地细节帧选择，不访问模型或网络。"""
+"""多视角比对的数据契约及旧版清晰度字段兼容，不访问模型或网络。"""
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from PIL import ImageFilter, ImageStat
@@ -11,18 +11,6 @@ def clarity_score(image) -> float:
     small = image.convert("L").resize((160, 160))
     edges = small.filter(ImageFilter.FIND_EDGES).crop((2, 2, 158, 158))
     return round(ImageStat.Stat(edges).mean[0], 4)
-
-
-def choose_detail_frames(frames, available, limit=4):
-    """分散在时间段内选清晰图；原30张概览均保留，不用近似去重删视角。"""
-    eligible = [frame for frame in frames if frame.index in available]
-    count = min(limit, len(eligible))
-    selected = []
-    for index in range(count):
-        group = eligible[index * len(eligible) // count:(index + 1) * len(eligible) // count]
-        best = max(group, key=lambda frame: (frame.clarity or 0, -frame.index))
-        selected.append(best.index)
-    return selected
 
 
 class Feature(BaseModel):

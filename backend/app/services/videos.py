@@ -20,7 +20,9 @@ from app.core.config import Settings
 from app.core.video_policy import MAX_SAMPLES, PIPELINE_VERSION, LEGACY_PIPELINE
 from app.core.persona import PERSONA_CORE, load_persona
 from app.services.deepseek import DeepSeekClient, DeepSeekError, ModelReply, TokenUsage, has_api_key
-from app.services.video_comparison import Comparison, DETAIL_VERSION, choose_detail_frames, compact_times
+from app.services.video_comparison import Comparison, DETAIL_VERSION, compact_times
+from app.services.video_selection import select_from_directory
+from app.services.video_details import detail_path
 
 logger = logging.getLogger(__name__)
 VIDEO_TASK = (Path(__file__).resolve().parents[1] / "prompts" / "video.md").read_text(encoding="utf-8").strip()
@@ -118,16 +120,41 @@ class VideoService:
         self.client = client or DeepSeekClient(settings)
         self.prompt = load_persona(settings)[0] + "\n\n" + VIDEO_TASK
 
+    def _detail_frames(self, info: VideoInfo, directory: Path) -> dict[int, Path]:
+        selected = select_from_directory(info.frames, directory)
+        paths = {index: directory / f"detail-{index}.jpg" for index in selected}
+        missing = [frame for frame in info.frames if frame.index in paths and not detail_path(directory, frame.index).is_file()]
+        if missing and (directory / "source.mp4").is_file():
+            # 一个隔离子进程单遍读取，只保存选中帧；普通观察、上传和恢复不触发。
+            with upload_workspace(directory) as workspace:
+                (workspace / "targets.json").write_text(json.dumps([
+                    {"index": frame.index, "time_seconds": frame.time_seconds} for frame in missing
+                ]), encoding="utf-8")
+                command = [sys.executable, "-B", "-X", "utf8", str(Path(__file__).with_name("video_details.py")),
+                           str(directory), str(workspace)]
+                try:
+                    process = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL, timeout=self.settings.video_decode_timeout_seconds,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                    if process.returncode == 0 and all(detail_path(workspace, frame.index).is_file() for frame in missing):
+                        for frame in missing:
+                            os.replace(detail_path(workspace, frame.index), detail_path(directory, frame.index))
+                    else:
+                        logger.warning("原视频高清提取未完成，本次使用已有细节图")
+                except subprocess.TimeoutExpired:
+                    logger.warning("原视频高清提取超时，本次使用已有细节图")
+        return {index: detail_path(directory, index) if detail_path(directory, index).is_file() else path
+                for index, path in paths.items()}
+
     def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None, memory_text: str = "", inspect: bool = False) -> VideoAnswer:
         directory = video_directory(info.video_id, self.settings)
         parts = [{"type": "text", "text": "视频截图不含音频。图号@采样秒，区间是重复图的半秒采样点，不代表连续动作。"}]
-        available = {frame.index for frame in info.frames if (directory / f"detail-{frame.index}.jpg").is_file()}
-        detailed = set(choose_detail_frames(info.frames, available)) if inspect else set()
+        detailed = self._detail_frames(info, directory) if inspect else {}
         for frame in info.frames:
             high = frame.index in detailed
             parts.append({"type": "text", "text": f"{frame.index}@{compact_times(frame.seen_at)}"})
-            filename = f"detail-{frame.index}.jpg" if high else f"frame-{frame.index}.jpg"
-            encoded = base64.b64encode((directory / filename).read_bytes()).decode("ascii")
+            path = detailed[frame.index] if high else directory / f"frame-{frame.index}.jpg"
+            encoded = base64.b64encode(path.read_bytes()).decode("ascii")
             parts.append({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + encoded, "detail": "high" if high else "low"}})
         prompt = self.prompt
         if caption:

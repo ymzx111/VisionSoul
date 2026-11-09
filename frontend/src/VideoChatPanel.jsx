@@ -44,7 +44,7 @@ export default function VideoChatPanel({ workflow, state, videoState, draft, set
       <textarea id="video-message" maxLength={2000} disabled={busy} value={draft} onChange={event => setDraft(event.target.value)}
         placeholder={state.videoId ? '接着聊这段视频，也可以问问刚才说过的事…' : '嘿，我今天去了西湖玩，你看看这湖水怎么样…'}/>
       <div className="question-actions"><span className="cost-note">发送才调用模型{state.usage ? state.replayed ? ' · 已恢复原回复，未重复调用' : ` · 本次 ${state.usage.total_tokens} token` : ''}</span>
-        <button className="button button-secondary" disabled={!canSend} title="重新读取视频画面，并重点查看少量细节图；可能增加模型用量。" onClick={() => void send(true)}>细看并比对</button>
+        <button className="button button-secondary" disabled={!canSend} title="根据清晰度、曝光和画面差异，自动挑选最多4张高清图；本地选图不调用AI，分析仍可能产生模型用量。" onClick={() => void send(true)}>细看并比对</button>
         <button className="button button-primary" disabled={!canSend} onClick={() => void send()}>{state.sending ? '正在回复…' : state.videoId && !changed ? '发送消息 →' : '分享并对话 →'}</button></div>
     </div>
     <div className="analysis-footer video-limit-note"><span className="subtle-dot"/><span>保存首次分享＋最近 {state.persona.context_turns} 轮 · 本机记录可恢复</span></div>
