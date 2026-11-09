@@ -1,0 +1,122 @@
+{
+  "id": "trees_ready_street",
+  "question": "请细看并比对画面主体，列出能看到的特征和时间依据；不能仅凭远景断言树种、地名或人物身份。",
+  "elapsed_seconds": 7.426,
+  "answer": {
+    "observations": [
+      {
+        "frame_index": 0,
+        "keywords": [
+          "棕榈树",
+          "黄色围墙",
+          "人行道"
+        ],
+        "description": "路侧一排高大棕榈树，左侧黄色围墙，旁有盆栽。",
+        "uncertain": false
+      },
+      {
+        "frame_index": 1,
+        "keywords": [
+          "树干纹理",
+          "交叉环纹"
+        ],
+        "description": "近景树干粗壮，表面可见横向环状纹理。",
+        "uncertain": false
+      },
+      {
+        "frame_index": 3,
+        "keywords": [
+          "马路",
+          "行驶车辆"
+        ],
+        "description": "人行道右侧为马路，远处有车辆行驶。",
+        "uncertain": false
+      },
+      {
+        "frame_index": 4,
+        "keywords": [
+          "电线杆",
+          "电线"
+        ],
+        "description": "树列后方立有电线杆，顶部横跨数条电线。",
+        "uncertain": false
+      },
+      {
+        "frame_index": 6,
+        "keywords": [
+          "人造草坪",
+          "盆栽"
+        ],
+        "description": "树池铺有绿色草皮，旁边放置黑色花盆。",
+        "uncertain": false
+      },
+      {
+        "frame_index": 11,
+        "keywords": [
+          "树干包裹物",
+          "帆布"
+        ],
+        "description": "部分树干中段缠绕浅色布条或防护材料。",
+        "uncertain": true
+      }
+    ],
+    "summary": "沿街人行道旁列植高大棕榈树，树干现环状纹理，局部有包裹物；左侧黄色围墙、盆栽与草皮，右侧马路上有车辆，天空晴朗。",
+    "comparison": {
+      "target": "沿街棕榈树",
+      "category": "plant",
+      "verdict": "insufficient",
+      "conclusion": "仅见树干环纹与羽状叶冠，难以精确定种，暂视为棕榈科乔木，需近景叶片与花果佐证。",
+      "features": [
+        {
+          "frame_index": 1,
+          "detail": "树干粗壮，表面具明显横向环状纹理。"
+        },
+        {
+          "frame_index": 0,
+          "detail": "顶部叶冠呈羽状，叶片长而下垂。"
+        },
+        {
+          "frame_index": 11,
+          "detail": "部分树干中段缠绕浅色布状包裹物。"
+        }
+      ],
+      "candidates": [
+        {
+          "name": "王棕（大王椰子）",
+          "supporting_features": [
+            0,
+            1
+          ],
+          "differences": "缺乏近景叶鞘与果实细节，无法确认是否具明显绿色冠茎。"
+        },
+        {
+          "name": "假槟榔",
+          "supporting_features": [
+            0,
+            1
+          ],
+          "differences": "树干环纹相似，但未看清叶轴与羽片排列，不能排除。"
+        }
+      ],
+      "missing_features": [
+        "叶片近景",
+        "果实或花序",
+        "叶鞘形态"
+      ],
+      "next_shot": "靠近拍摄一片完整羽叶和树干顶部叶鞘。",
+      "basis": "visual_inference"
+    },
+    "audio_links": [],
+    "reply": "这一排棕榈树像列队站岗，树干的环纹挺有年头感。树干上缠的浅色布条，估摸着是防虫或防晒的。",
+    "video_id": "e9abec3d933aa3ecf55d9cbce7b9d30f2bb539f1e93ce3b0d91b216a89729308",
+    "model": "deepseek-flash",
+    "usage": {
+      "prompt_tokens": 4916,
+      "completion_tokens": 756,
+      "total_tokens": 5672
+    },
+    "cached": false,
+    "audio_revision": 0
+  },
+  "review_status": "needs_review"
+}

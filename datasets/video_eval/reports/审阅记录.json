@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "reviewed_date": "2026-11-10",
+  "reviewer": "Codex本轮助手，未独立人工复核",
+  "basis": ["作品来源的粗粒度内容说明", "实际抽帧及选中细节图", "受控延迟、静音、模糊与混音参数", "保存的原始API回执"],
+  "limitations": ["没有中文逐字人工真值", "没有计算CER/WER、目标漏检率或普遍语义准确率", "基础模型是否预训练见过素材未知"],
+  "cases": [
+    {"id":"trees_ready_street","split":"dev","report":"dev_api_trees_ready_street.json","pipeline":"accepted","semantic_review":"partial","expected_visual":["树木","道路","黄色围墙"],"notes":["粗粒度目标相符，具体树种未确认","包裹材料用途为推测"]},
+    {"id":"tao_mandarin","split":"dev","report":"dev_api_tao_mandarin.json","pipeline":"accepted_on_offline_receipt_replay","semantic_review":"partial","expected_visual":["室内讲话者","眼镜","纸张"],"notes":["回复把第三方讲话者称为你，身份归属错误","方言姓名地名转写不可靠","重放报告显示的question是重放器当前问题，不保证等于原付费请求的完整问题；原始完整请求未记录","重放仅验证解析，不证明新提示已在该样例真实运行"]},
+    {"id":"lake_closeup_editor_speech_mismatch","split":"dev","report":"dev_api_lake_closeup_editor_speech_mismatch.json","pipeline":"accepted","semantic_review":"negative_control_preserved","expected_relation":"uncertain_or_audio_only","notes":["4条音画关系均为uncertain，没有将方言身份认作湖面事实"]},
+    {"id":"tree_harvester","split":"test","report":"test_api_tree_harvester.json","pipeline":"accepted","semantic_review":"coarse_visual_supported","expected_visual":["黄黑色机械","树木","原木","吊臂"],"notes":["选中的7秒细节图可核对PONSSE字样及驾驶室内人物","具体设备型号未确认；没有专业轮数和设备结构真值"]},
+    {"id":"ying_henan","split":"test","report":"test_api_ying_henan.json","receipt":"test_receipt_ying_henan.json","pipeline":"rejected","semantic_review":"not_end_to_end_pass","failure":"VideoContent.audio_links返回5条，上限4条","notes":["画面中讲话者及深色弦乐器粗略相符","转写的人名地名等明显有误，不能作为正确标签","原始文本的内容分离提醒不能抵消结构失败"]},
+    {"id":"skaha_lake_speech_mismatch","split":"test","report":"test_api_skaha_lake_speech_mismatch.json","receipt":"test_receipt_skaha_lake_speech_mismatch.json","pipeline":"rejected","semantic_review":"not_end_to_end_pass","failure":"audio_only同时附带candidate_id，违反纯音频不得绑定画面的规则","notes":["原文没有将方言籍贯当作画面地点，但结构失败导致无可用结果"]}
+  ],
+  "usage": {"actual_paid_requests":7,"known_usage_requests":6,"known_input_tokens":31230,"known_output_tokens":3554,"known_total_tokens":34784,"additional_unknown_requests":1,"unknown_record":"dev_initial_failed_tao_mandarin.json","offline_replay_additional_requests":0}
+}

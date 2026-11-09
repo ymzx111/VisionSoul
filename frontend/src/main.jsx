@@ -131,7 +131,17 @@ function App() {
         </section>}
       </div>}
     </main>}
-    <footer className="page-footer"><span>VisionSoul <span className="footer-separator">/</span> 从看见，到理解</span><span>轻量体验，逐步生长。</span></footer>
+    <footer className="page-footer">
+      <span>VisionSoul <span className="footer-separator">/</span> 从看见，到理解</span>
+      <details className="model-disclosure">
+        <summary>模型与数据说明 · AI辅助生成</summary>
+        <div className="model-disclosure-content">
+          <p><strong>DeepSeek Flash（云端API）</strong>：用于图片、视频画面理解及角色对话。请求会发送相关图片或视频抽帧、对白文字，以及本次对话所需的提问、上下文、角色设定和已启用记忆；模型调用会产生API用量。</p>
+          <p><strong>Whisper-small（本机模型）</strong>：通过faster-whisper识别视频对白，使用SYSTRAN提供的转换权重。原模型由OpenAI提供；本机转写不上传原始音轨，转写文字可用于上述云端分析。</p>
+          <p>上述模型均为第三方组件，非本项目自行训练。VisionSoul实现上传、抽帧与选帧、音画候选关联、引用校验、角色与记忆管理及交互界面。AI结果可能有误，重要名称和时间请回看、回听核对。</p>
+        </div>
+      </details>
+    </footer>
   </div>;
 }
 

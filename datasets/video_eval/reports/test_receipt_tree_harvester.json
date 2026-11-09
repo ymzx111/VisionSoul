@@ -1,0 +1,14 @@
+{
+  "id": "tree_harvester",
+  "reply": {
+    "answer": "{\"observations\":[{\"frame_index\":0,\"keywords\":[\"林业机械\",\"黄黑涂装\"],\"description\":\"黄黑涂装六轮林业机械停在采伐迹地，右侧有起重臂\",\"uncertain\":false},{\"frame_index\":0,\"keywords\":[\"驾驶室\",\"驾驶员\"],\"description\":\"驾驶室内可见一人，坐于操作位\",\"uncertain\":false},{\"frame_index\":0,\"keywords\":[\"原木堆\",\"林间\"],\"description\":\"车左侧地面堆放多根截断原木\",\"uncertain\":false},{\"frame_index\":7,\"keywords\":[\"PONSSE\",\"车身标识\"],\"description\":\"车身侧面可见PONSSE字样\",\"uncertain\":false},{\"frame_index\":7,\"keywords\":[\"采伐头\",\"起重臂\"],\"description\":\"起重臂末端悬挂深色采伐头，靠近立木\",\"uncertain\":false},{\"frame_index\":12,\"keywords\":[\"六轮\",\"大花纹胎\"],\"description\":\"六个大花纹轮胎着地，车体倾斜停在坡地\",\"uncertain\":false},{\"frame_index\":12,\"keywords\":[\"前挡泥板\",\"护栏\"],\"description\":\"车头装有黑色挡泥板和防护栏\",\"uncertain\":false},{\"frame_index\":18,\"keywords\":[\"细线\",\"跨过画面\"],\"description\":\"画面有细线斜跨，可能是绳索或电缆\",\"uncertain\":true}],\"summary\":\"林间坡地停着一台黄黑色六轮林业机械，带起重臂和采伐头，驾驶室内有人；地面散落截断原木和枝条，车辆位置在多帧中有轻微变化。\",\"reply\":\"这台黄色大块头像在树林里“剪枝收料”，六只大脚踩得挺稳。细看标识像PONSSE，不过具体型号我还没法确认。\",\"comparison\":{\"target\":\"画面中的林业机械\",\"category\":\"object\",\"verdict\":\"insufficient\",\"conclusion\":\"可确认为六轮黄黑色林业采伐机械，车身有PONSSE字样；具体型号需清晰近景才能判断。\",\"features\":[{\"frame_index\":7,\"detail\":\"车身侧面黄底黑字PONSSE标识\"},{\"frame_index\":12,\"detail\":\"六个大花纹轮胎，前四后二布局\"},{\"frame_index\":7,\"detail\":\"后部黑色起重臂末端带采伐头\"},{\"frame_index\":12,\"detail\":\"驾驶室黄顶灰身，前有黑色防护栏\"},{\"frame_index\":0,\"detail\":\"驾驶室内可见一人坐于操作位\"}],\"candidates\":[{\"name\":\"PONSSE采伐机（轮式）\",\"supporting_features\":[0,1,2,3],\"differences\":\"PONSSE有多款六轮机型，标识仅证明品牌，型号文字与臂架结构未清晰可比。\"}],\"missing_features\":[\"型号铭牌近景\",\"采伐头正面细节\"],\"next_shot\":\"补拍车身型号铭牌及采伐头正面近景。\",\"basis\":\"visual_inference\"}}",
+    "model": "deepseek-flash",
+    "usage": {
+      "prompt_tokens": 5998,
+      "completion_tokens": 635,
+      "total_tokens": 6633
+    },
+    "truncated": false
+  },
+  "validation": "pending"
+}

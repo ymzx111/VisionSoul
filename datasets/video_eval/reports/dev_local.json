@@ -1,0 +1,360 @@
+{
+  "split": "dev",
+  "clips": [
+    {
+      "id": "trees_ready_street",
+      "file": "dev/trees_ready_street.mp4",
+      "video_id": "e9abec3d933aa3ecf55d9cbce7b9d30f2bb539f1e93ce3b0d91b216a89729308",
+      "seconds": 12.0,
+      "sample_count": 13,
+      "unique_frames": 13,
+      "high_frames": [
+        {
+          "index": 1,
+          "time": 1.0
+        },
+        {
+          "index": 3,
+          "time": 3.0
+        },
+        {
+          "index": 5,
+          "time": 5.0
+        },
+        {
+          "index": 11,
+          "time": 11.0
+        }
+      ],
+      "upload_asr_seconds": 3.046,
+      "selection_seconds": 0.122,
+      "audio": {
+        "version": "whisper-small-int8-timeline-v1",
+        "status": "no_speech",
+        "message": "未识别到可靠对白，仅分析画面。",
+        "language": "zh",
+        "segments": [],
+        "source": "automatic"
+      },
+      "checks": {
+        "source_checksum": true,
+        "max_31_samples": true,
+        "one_second_coverage": true,
+        "covers_start_and_tail": true,
+        "max_4_high_frames": true,
+        "speech_candidates_exist": true
+      },
+      "engineering_pass": true
+    },
+    {
+      "id": "lake_closeup_editor",
+      "file": "dev/lake_closeup_editor.mp4",
+      "video_id": "afdc1a262c89479ce7f0a0c4e3afa1c3cb8f4adc3aa269aa6fe7af518f75b598",
+      "seconds": 12.0,
+      "sample_count": 13,
+      "unique_frames": 13,
+      "high_frames": [
+        {
+          "index": 0,
+          "time": 0.0
+        },
+        {
+          "index": 5,
+          "time": 5.0
+        },
+        {
+          "index": 8,
+          "time": 8.0
+        },
+        {
+          "index": 12,
+          "time": 11.96
+        }
+      ],
+      "upload_asr_seconds": 3.713,
+      "selection_seconds": 0.126,
+      "audio": {
+        "version": "whisper-small-int8-timeline-v1",
+        "status": "no_speech",
+        "message": "未识别到可靠对白，仅分析画面。",
+        "language": "zh",
+        "segments": [],
+        "source": "automatic"
+      },
+      "checks": {
+        "source_checksum": true,
+        "max_31_samples": true,
+        "one_second_coverage": true,
+        "covers_start_and_tail": true,
+        "max_4_high_frames": true,
+        "speech_candidates_exist": true
+      },
+      "engineering_pass": true
+    },
+    {
+      "id": "tao_mandarin",
+      "file": "dev/tao_mandarin.mp4",
+      "video_id": "2f970251909f21f2f7d0d6ce375917939be86e3a6a708283960f54b4c731e27b",
+      "seconds": 20.0,
+      "sample_count": 21,
+      "unique_frames": 21,
+      "high_frames": [
+        {
+          "index": 18,
+          "time": 18.0
+        }
+      ],
+      "upload_asr_seconds": 4.98,
+      "selection_seconds": 0.136,
+      "audio": {
+        "version": "whisper-small-int8-timeline-v1",
+        "status": "ready",
+        "message": "本机自动转写，关键数字、名称和时间请回听确认。",
+        "language": "zh",
+        "segments": [
+          {
+            "id": 0,
+            "start": 0.18,
+            "end": 4.94,
+            "text": "大家現在我要用雲南話來看"
+          },
+          {
+            "id": 1,
+            "start": 4.94,
+            "end": 5.98,
+            "text": "給大家聽"
+          },
+          {
+            "id": 2,
+            "start": 5.98,
+            "end": 8.22,
+            "text": "我叫做主導"
+          },
+          {
+            "id": 3,
+            "start": 9.2,
+            "end": 13.32,
+            "text": "我是在台國清白出生"
+          },
+          {
+            "id": 4,
+            "start": 13.9,
+            "end": 15.12,
+            "text": "算是話人"
+          },
+          {
+            "id": 5,
+            "start": 15.12,
+            "end": 19.24,
+            "text": "我爸我媽都是從雲南國可島遼遼"
+          }
+        ],
+        "source": "automatic"
+      },
+      "checks": {
+        "source_checksum": true,
+        "max_31_samples": true,
+        "one_second_coverage": true,
+        "covers_start_and_tail": true,
+        "max_4_high_frames": true,
+        "speech_candidates_exist": true,
+        "expected_audio_state": true
+      },
+      "engineering_pass": true
+    },
+    {
+      "id": "tao_mandarin_delay",
+      "file": "dev/tao_mandarin_delay.mp4",
+      "video_id": "e1cc1ea87505895fb387ea584280ac73d3e4055f75db9c601468f3f19e16271c",
+      "seconds": 20.0,
+      "sample_count": 21,
+      "unique_frames": 21,
+      "high_frames": [
+        {
+          "index": 18,
+          "time": 18.0
+        }
+      ],
+      "upload_asr_seconds": 4.862,
+      "selection_seconds": 0.136,
+      "audio": {
+        "version": "whisper-small-int8-timeline-v1",
+        "status": "ready",
+        "message": "本机自动转写，关键数字、名称和时间请回听确认。",
+        "language": "zh",
+        "segments": [
+          {
+            "id": 0,
+            "start": 1.17,
+            "end": 5.93,
+            "text": "大家現在我要用雲南話來看"
+          },
+          {
+            "id": 1,
+            "start": 5.93,
+            "end": 6.99,
+            "text": "給大家聽"
+          },
+          {
+            "id": 2,
+            "start": 6.99,
+            "end": 9.23,
+            "text": "我叫做主導"
+          },
+          {
+            "id": 3,
+            "start": 10.17,
+            "end": 14.33,
+            "text": "我是在台國清白出生"
+          },
+          {
+            "id": 4,
+            "start": 14.33,
+            "end": 16.19,
+            "text": "算是話的"
+          },
+          {
+            "id": 5,
+            "start": 16.19,
+            "end": 19.43,
+            "text": "我爸我媽都是從雲南國科導"
+          }
+        ],
+        "source": "automatic"
+      },
+      "checks": {
+        "source_checksum": true,
+        "max_31_samples": true,
+        "one_second_coverage": true,
+        "covers_start_and_tail": true,
+        "max_4_high_frames": true,
+        "speech_candidates_exist": true,
+        "expected_audio_state": true,
+        "waveform_delay_preserved": true
+      },
+      "known_audio_delay": 1,
+      "measured_waveform_delay": 1.0,
+      "engineering_pass": true
+    },
+    {
+      "id": "lake_closeup_editor_speech_mismatch",
+      "file": "dev/lake_closeup_editor_speech_mismatch.mp4",
+      "video_id": "4717567da0c311a6d0e8e563bde60e320ed5433da2c9012c01315161f2385977",
+      "seconds": 12.0,
+      "sample_count": 13,
+      "unique_frames": 13,
+      "high_frames": [
+        {
+          "index": 0,
+          "time": 0.0
+        },
+        {
+          "index": 5,
+          "time": 5.0
+        },
+        {
+          "index": 8,
+          "time": 8.0
+        },
+        {
+          "index": 12,
+          "time": 11.96
+        }
+      ],
+      "upload_asr_seconds": 5.183,
+      "selection_seconds": 0.127,
+      "audio": {
+        "version": "whisper-small-int8-timeline-v1",
+        "status": "ready",
+        "message": "本机自动转写，关键数字、名称和时间请回听确认。",
+        "language": "zh",
+        "segments": [
+          {
+            "id": 0,
+            "start": 0.18,
+            "end": 4.94,
+            "text": "大家現在我要用韻南話來框"
+          },
+          {
+            "id": 1,
+            "start": 4.94,
+            "end": 5.94,
+            "text": "給大家聽"
+          },
+          {
+            "id": 2,
+            "start": 5.94,
+            "end": 8.22,
+            "text": "我叫做主導"
+          },
+          {
+            "id": 3,
+            "start": 9.18,
+            "end": 11.7,
+            "text": "我是在台國"
+          }
+        ],
+        "source": "automatic"
+      },
+      "checks": {
+        "source_checksum": true,
+        "max_31_samples": true,
+        "one_second_coverage": true,
+        "covers_start_and_tail": true,
+        "max_4_high_frames": true,
+        "speech_candidates_exist": true,
+        "expected_audio_state": true
+      },
+      "engineering_pass": true
+    },
+    {
+      "id": "trees_ready_street_blur",
+      "file": "dev/trees_ready_street_blur.mp4",
+      "video_id": "0f172b9b72c0186f191317e0584ec816857f30a3fd40802a6db8ca9d9bf55c73",
+      "seconds": 12.0,
+      "sample_count": 13,
+      "unique_frames": 13,
+      "high_frames": [
+        {
+          "index": 0,
+          "time": 0.0
+        },
+        {
+          "index": 1,
+          "time": 1.0
+        },
+        {
+          "index": 6,
+          "time": 6.0
+        },
+        {
+          "index": 11,
+          "time": 11.0
+        }
+      ],
+      "upload_asr_seconds": 2.928,
+      "selection_seconds": 0.114,
+      "audio": {
+        "version": "whisper-small-int8-timeline-v1",
+        "status": "no_speech",
+        "message": "未识别到可靠对白，仅分析画面。",
+        "language": "zh",
+        "segments": [],
+        "source": "automatic"
+      },
+      "checks": {
+        "source_checksum": true,
+        "max_31_samples": true,
+        "one_second_coverage": true,
+        "covers_start_and_tail": true,
+        "max_4_high_frames": true,
+        "speech_candidates_exist": true,
+        "prefers_clear_frames": true
+      },
+      "high_frames_in_known_blur": [],
+      "engineering_pass": true
+    }
+  ],
+  "note": "工程评测，不是语义准确率；unknown音轨不预设无讲话；转写不可当成真值标签。",
+  "paid_api_calls": 0
+}

@@ -71,9 +71,9 @@ export default function VideoWorkspace({ workflow, state, chatWorkflow, chatStat
         <div className="video-keywords" aria-label="识别到的主要事物">{keywords.map(word => <span key={word}>{word}</span>)}</div>
         <p className="video-summary">{result.summary}</p>
         <p className="chat-history-note">画面时间为采样点；对白和对应画面的时间分别保留。</p>
-        {result.observations.map(item => {
+        {result.observations.map((item, observationIndex) => {
           const frame = video.frames.find(candidate => candidate.index === item.frame_index);
-          return frame && <button className="observation-card" key={item.frame_index} onClick={() => jump(frame)} aria-label={`回看 ${formatTime(frame.time_seconds)} ${item.keywords.join('、')}`}>
+          return frame && <button className="observation-card" key={`${item.frame_index}-${observationIndex}`} onClick={() => jump(frame)} aria-label={`回看 ${formatTime(frame.time_seconds)} ${item.keywords.join('、')}`}>
             <img src={frame.url} alt={item.keywords.join('、')}/><span className="observation-copy"><span className="observation-time">{formatTime(frame.time_seconds)}{item.uncertain && <em>待确认</em>}</span><strong>{item.keywords.join(' · ')}</strong><span>{item.description}</span></span>
           </button>;
         })}</details>}

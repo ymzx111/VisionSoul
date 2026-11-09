@@ -1,0 +1,14 @@
+{
+  "id": "tao_mandarin",
+  "reply": {
+    "answer": "{\"observations\":[{\"frame_index\":0,\"keywords\":[\"黑屏\"],\"description\":\"画面全黑，无可见内容\",\"uncertain\":false},{\"frame_index\":1,\"keywords\":[\"男子\",\"眼镜\",\"浅蓝T恤\"],\"description\":\"短发男子戴眼镜穿浅蓝T恤坐沙发，手拿纸张\",\"uncertain\":false},{\"frame_index\":1,\"keywords\":[\"墙面\",\"画作\",\"照片\"],\"description\":\"白墙贴多幅画：人物像、田园风景、金塔夜景\",\"uncertain\":false},{\"frame_index\":1,\"keywords\":[\"室内\",\"柜架\",\"装饰灯\"],\"description\":\"左侧木架堆物，上方挂红色串状装饰灯\",\"uncertain\":false},{\"frame_index\":2,\"keywords\":[\"男子\",\"张口\",\"纸张\"],\"description\":\"男子口微张似在说话，手中纸张位置不变\",\"uncertain\":false},{\"frame_index\":7,\"keywords\":[\"男子\",\"低头\",\"看纸\"],\"description\":\"男子略低头，视线偏向手中纸张\",\"uncertain\":false},{\"frame_index\":8,\"keywords\":[\"男子\",\"抬头\",\"讲话\"],\"description\":\"男子抬头口张，面向镜头方向说话\",\"uncertain\":false},{\"frame_index\":14,\"keywords\":[\"男子\",\"看向镜头\"],\"description\":\"男子目光对上镜头，姿势基本未变\",\"uncertain\":false}],\"summary\":\"除首帧黑屏外，均为室内固定机位：短发戴眼镜男子穿浅蓝T恤坐黑沙发上，手拿纸张，时而低头看纸、时而对镜头说话；墙面贴多幅画与照片，左侧有木架和红色装饰灯。\",\"reply\":\"画面像固定机位的一次自述。你说要用云南话来讲，我这边画面可没法验证口音，只能看到你在沙发上看纸、抬头讲话。声音转写里“台国清白”“云南国可岛辽辽”这类词挺可能听岔了，姓名和地名建议回听确认。\",\"audio_links\":[{\"segment_id\":0,\"candidate_id\":3,\"relation\":\"supports\",\"detail\":\"画面从1秒起男子对镜头开口，与开讲时间吻合\"},{\"segment_id\":2,\"candidate_id\":0,\"relation\":\"uncertain\",\"detail\":\"男子抬头说话，但画面无法确认自称内容\"},{\"segment_id\":4,\"candidate_id\":0,\"relation\":\"uncertain\",\"detail\":\"男子看镜头，无法从画面验证称呼与身份表述\"},{\"segment_id\":5,\"candidate_id\":0,\"relation\":\"uncertain\",\"detail\":\"画面无家庭信息，仅能确认持续讲话\"}]}",
+    "model": "deepseek-flash",
+    "usage": {
+      "prompt_tokens": 5489,
+      "completion_tokens": 544,
+      "total_tokens": 6033
+    },
+    "truncated": false
+  },
+  "validation": "pending"
+}

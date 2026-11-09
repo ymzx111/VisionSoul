@@ -1,0 +1,14 @@
+{
+  "id": "skaha_lake_speech_mismatch",
+  "reply": {
+    "answer": "{\"observations\":[{\"frame_index\":0,\"keywords\":[\"湖面\",\"山丘\",\"云层\"],\"description\":\"宽阔灰蓝水面，左侧低矮山丘，远处云层压低天边。\",\"uncertain\":false},{\"frame_index\":2,\"keywords\":[\"岛树\",\"倒影\",\"右岸\"],\"description\":\"右侧水面浮起一丛枯枝矮树，树影碎碎映在波纹里。\",\"uncertain\":false},{\"frame_index\":5,\"keywords\":[\"水波\",\"反光\",\"云影\"],\"description\":\"水面横向细波层层推开，云影被拉成条状亮带。\",\"uncertain\":false},{\"frame_index\":8,\"keywords\":[\"前景\",\"灰滩\",\"暗影\"],\"description\":\"近景露出灰褐滩面，像浅水边或岸脚，具体材质不确定。\",\"uncertain\":true},{\"frame_index\":12,\"keywords\":[\"山脊\",\"林带\",\"远景\"],\"description\":\"右岸山脊起伏，山坡散着暗色林带，轮廓偏柔。\",\"uncertain\":false},{\"frame_index\":18,\"keywords\":[\"枯树\",\"水痕\",\"平静\"],\"description\":\"右侧枯树仍立在水中央，周围水纹比先前更平缓。\",\"uncertain\":false}],\"summary\":\"连续画面为同一片湖面：左侧低丘、右侧小山与水中枯树丛，水面有横向波纹和云影，近处露出灰褐滩面；未见人物或建筑。\",\"reply\":\"画面是一片挺安静的水域，右边那丛枯树像插在水里的旧毛笔。对白在介绍“家乡”和某处“方言”，但姓名地名只能当讲话者自述，画面对不上。转写里“WikiTons、贺南生、汤贺县”等词有误，建议回听0至19秒核对。\",\"audio_links\":[{\"segment_id\":0,\"candidate_id\":0,\"relation\":\"uncertain\",\"detail\":\"画面只有湖景，无人物，无法印证自我介绍。\"},{\"segment_id\":1,\"candidate_id\":0,\"relation\":\"audio_only\",\"detail\":\"“分享家乡”为对白内容，画面未出现相关地点。\"},{\"segment_id\":2,\"candidate_id\":0,\"relation\":\"audio_only\",\"detail\":\"讲述籍贯，画面仅水域山丘，无地名标识。\"},{\"segment_id\":3,\"candidate_id\":0,\"relation\":\"audio_only\",\"detail\":\"介绍方言地理位置，属讲话者说法，画面无法验证。\"}]}",
+    "model": "deepseek-flash",
+    "usage": {
+      "prompt_tokens": 5547,
+      "completion_tokens": 528,
+      "total_tokens": 6075
+    },
+    "truncated": false
+  },
+  "validation": "pending"
+}

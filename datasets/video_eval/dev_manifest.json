@@ -1,0 +1,158 @@
+{
+  "version": "v1",
+  "created_at": "2026-11-09T16:17:26.311336+00:00",
+  "clips": [
+    {
+      "id": "trees_ready_street",
+      "split": "dev",
+      "title": "Video of trees",
+      "author": "Ready Street",
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "page": "https://commons.wikimedia.org/wiki/File:Video_of_trees.webm",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/0/00/Video_of_trees.webm",
+      "seconds": 12,
+      "category": "trees",
+      "speech": "unknown",
+      "expected_visual": [
+        "树木",
+        "枝叶"
+      ],
+      "file": "dev/trees_ready_street.mp4",
+      "source_ids": [
+        "trees_ready_street"
+      ],
+      "variant": "original_excerpt",
+      "sha256": "56a984b8320c2f3647a64a9ac7585978d0dc3fb75b6f166f4972e2642ff53436",
+      "raw_sha256": "a44bd47158af517c50262ec80d5f55c431d7b794a0eca1eb615ae3c5867c9cd2",
+      "changes": "前段截取、最长边1280、不放大、25fps H.264 MP4/AAC；原音轨按视频共同起点映射。"
+    },
+    {
+      "id": "lake_closeup_editor",
+      "split": "dev",
+      "title": "Close up of lake",
+      "author": "Editor.",
+      "license": "CC-BY-3.0",
+      "license_url": "https://creativecommons.org/licenses/by/3.0/",
+      "page": "https://commons.wikimedia.org/wiki/File:Close_up_of_lake.webm",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/6/67/Close_up_of_lake.webm",
+      "seconds": 12,
+      "category": "water",
+      "speech": "unknown",
+      "expected_visual": [
+        "水面",
+        "波纹"
+      ],
+      "file": "dev/lake_closeup_editor.mp4",
+      "source_ids": [
+        "lake_closeup_editor"
+      ],
+      "variant": "original_excerpt",
+      "sha256": "e5f33aec9956a325d6c22fd36085801f66c035c9c81be41f8be6da6d32f74752",
+      "raw_sha256": "5fee43d6f131b53c23901271a43798c0f77e038aa420853d6071ed0b8e46593a",
+      "changes": "前段截取、最长边1280、不放大、25fps H.264 MP4/AAC；原音轨按视频共同起点映射。"
+    },
+    {
+      "id": "tao_mandarin",
+      "split": "dev",
+      "title": "WIKITONGUES- Tao speaking Yunnan Mandarin with Thai and Taiwanese accent",
+      "author": "Wikitongues; Teddy Nee",
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "page": "https://commons.wikimedia.org/wiki/File:WIKITONGUES-_Tao_speaking_Yunnan_Mandarin_with_Thai_and_Taiwanese_accent.webm",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/9/9d/WIKITONGUES-_Tao_speaking_Yunnan_Mandarin_with_Thai_and_Taiwanese_accent.webm",
+      "seconds": 20,
+      "category": "speaker",
+      "speech": "yes",
+      "expected_visual": [
+        "讲话的人"
+      ],
+      "file": "dev/tao_mandarin.mp4",
+      "source_ids": [
+        "tao_mandarin"
+      ],
+      "variant": "original_excerpt",
+      "sha256": "532c761ce08473beb0ef569bde7de7220c6825b7d712ac5150101d3d4f90ca1f",
+      "raw_sha256": "190036ad53a695417e590b4ceacd3758299d2c6b5c5de688724bd0b9f89531ea",
+      "changes": "前段截取、最长边1280、不放大、25fps H.264 MP4/AAC；原音轨按视频共同起点映射。"
+    },
+    {
+      "id": "tao_mandarin_delay",
+      "split": "dev",
+      "source_ids": [
+        "tao_mandarin"
+      ],
+      "file": "dev/tao_mandarin_delay.mp4",
+      "seconds": 20,
+      "category": "speaker",
+      "variant": "delay",
+      "sha256": "5fd999f15045f747c639578a547da4b5ba0f4d04f1fb06db3a132a07973d6fac",
+      "audio_delay": 1,
+      "blur_windows": [],
+      "silent": false,
+      "changes": "已知受控变体；音轨延迟/静音/替换或部分画面模糊，详见字段，不能当成自然实拍原片。",
+      "expected_visual": [
+        "讲话的人"
+      ],
+      "speech": "yes",
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    {
+      "id": "lake_closeup_editor_speech_mismatch",
+      "split": "dev",
+      "source_ids": [
+        "lake_closeup_editor",
+        "tao_mandarin"
+      ],
+      "file": "dev/lake_closeup_editor_speech_mismatch.mp4",
+      "seconds": 12,
+      "category": "water",
+      "variant": "mismatch",
+      "sha256": "720c4b7f067129a5b7d26b95f1494541dfd1c680b2421325db40e49beea0f405",
+      "audio_delay": 0,
+      "blur_windows": [],
+      "silent": false,
+      "changes": "已知受控变体；音轨延迟/静音/替换或部分画面模糊，详见字段，不能当成自然实拍原片。",
+      "expected_visual": [
+        "水面",
+        "波纹"
+      ],
+      "speech": "yes",
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    {
+      "id": "trees_ready_street_blur",
+      "split": "dev",
+      "source_ids": [
+        "trees_ready_street"
+      ],
+      "file": "dev/trees_ready_street_blur.mp4",
+      "seconds": 12,
+      "category": "trees",
+      "variant": "blur",
+      "sha256": "bdcd10b0243e64a36f0fc04267b90d2fc1385dc8219b0b68b42bd84d99ca1b2b",
+      "audio_delay": 0,
+      "blur_windows": [
+        [
+          3,
+          6
+        ],
+        [
+          8,
+          10
+        ]
+      ],
+      "silent": false,
+      "changes": "已知受控变体；音轨延迟/静音/替换或部分画面模糊，详见字段，不能当成自然实拍原片。",
+      "expected_visual": [
+        "树木",
+        "枝叶"
+      ],
+      "speech": "unknown",
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    }
+  ]
+}

@@ -1,0 +1,394 @@
+{
+  "split": "test",
+  "clips": [
+    {
+      "id": "tree_harvester",
+      "file": "test/tree_harvester.mp4",
+      "video_id": "f427b5c6d90e63ed131b1f322ecc2ee8f3150647128a76beb30be99bdb150e6f",
+      "seconds": 20.0,
+      "sample_count": 21,
+      "unique_frames": 21,
+      "high_frames": [
+        {
+          "index": 7,
+          "time": 7.0
+        },
+        {
+          "index": 12,
+          "time": 12.0
+        },
+        {
+          "index": 18,
+          "time": 18.0
+        }
+      ],
+      "upload_asr_seconds": 2.652,
+      "selection_seconds": 0.245,
+      "reused_local_cache": false,
+      "audio": {
+        "version": "whisper-small-int8-timeline-v1",
+        "status": "no_audio",
+        "message": "视频没有音轨，仅分析画面。",
+        "language": null,
+        "segments": [],
+        "source": "automatic"
+      },
+      "checks": {
+        "source_checksum": true,
+        "max_31_samples": true,
+        "one_second_coverage": true,
+        "covers_start_and_tail": true,
+        "max_4_high_frames": true,
+        "speech_candidates_exist": true,
+        "expected_audio_state": true
+      },
+      "engineering_pass": true
+    },
+    {
+      "id": "skaha_lake",
+      "file": "test/skaha_lake.mp4",
+      "video_id": "782a7a7362b9beb9f1172eccca51ede25616ff00ac4138c33fe6e67c5bef20a8",
+      "seconds": 20.0,
+      "sample_count": 21,
+      "unique_frames": 21,
+      "high_frames": [
+        {
+          "index": 16,
+          "time": 16.0
+        }
+      ],
+      "upload_asr_seconds": 3.582,
+      "selection_seconds": 0.181,
+      "reused_local_cache": false,
+      "audio": {
+        "version": "whisper-small-int8-timeline-v1",
+        "status": "no_speech",
+        "message": "未识别到可靠对白，仅分析画面。",
+        "language": "zh",
+        "segments": [],
+        "source": "automatic"
+      },
+      "checks": {
+        "source_checksum": true,
+        "max_31_samples": true,
+        "one_second_coverage": true,
+        "covers_start_and_tail": true,
+        "max_4_high_frames": true,
+        "speech_candidates_exist": true
+      },
+      "engineering_pass": true
+    },
+    {
+      "id": "ying_henan",
+      "file": "test/ying_henan.mp4",
+      "video_id": "2e1795bbf1ea21f3b1c99513a497446b5d9199660d2d6080f31f8e0f3d9c775d",
+      "seconds": 20.0,
+      "sample_count": 21,
+      "unique_frames": 21,
+      "high_frames": [
+        {
+          "index": 3,
+          "time": 3.0
+        },
+        {
+          "index": 6,
+          "time": 6.0
+        },
+        {
+          "index": 15,
+          "time": 15.0
+        },
+        {
+          "index": 20,
+          "time": 19.96
+        }
+      ],
+      "upload_asr_seconds": 5.987,
+      "selection_seconds": 0.17,
+      "reused_local_cache": false,
+      "audio": {
+        "version": "whisper-small-int8-timeline-v1",
+        "status": "ready",
+        "message": "本机自动转写，关键数字、名称和时间请回听确认。",
+        "language": "zh",
+        "segments": [
+          {
+            "id": 0,
+            "start": 0.24,
+            "end": 4.54,
+            "text": "大家好,我叫林,很高兴在WikiTons上面跟大家一起"
+          },
+          {
+            "id": 1,
+            "start": 4.54,
+            "end": 6.16,
+            "text": "分享我的假相房宴"
+          },
+          {
+            "id": 2,
+            "start": 6.16,
+            "end": 9.3,
+            "text": "我类似于贺南生纳扬市汤贺县"
+          },
+          {
+            "id": 3,
+            "start": 9.3,
+            "end": 12.88,
+            "text": "汤贺县位于贺南生跟户北生的交接处"
+          },
+          {
+            "id": 4,
+            "start": 12.88,
+            "end": 16.12,
+            "text": "我今天跟大家展示的是贺南生的房宴"
+          },
+          {
+            "id": 5,
+            "start": 16.12,
+            "end": 19.78,
+            "text": "其实贺南生的房宴它属于是中院管华"
+          }
+        ],
+        "source": "automatic"
+      },
+      "checks": {
+        "source_checksum": true,
+        "max_31_samples": true,
+        "one_second_coverage": true,
+        "covers_start_and_tail": true,
+        "max_4_high_frames": true,
+        "speech_candidates_exist": true,
+        "expected_audio_state": true
+      },
+      "engineering_pass": true
+    },
+    {
+      "id": "ying_henan_delay",
+      "file": "test/ying_henan_delay.mp4",
+      "video_id": "e4cd3712b3b093c71566286aaf544a340163a31d3b69dbe921a4d695050f44d5",
+      "seconds": 20.0,
+      "sample_count": 21,
+      "unique_frames": 21,
+      "high_frames": [
+        {
+          "index": 2,
+          "time": 2.0
+        },
+        {
+          "index": 6,
+          "time": 6.0
+        }
+      ],
+      "upload_asr_seconds": 5.82,
+      "selection_seconds": 0.169,
+      "reused_local_cache": false,
+      "audio": {
+        "version": "whisper-small-int8-timeline-v1",
+        "status": "ready",
+        "message": "本机自动转写，关键数字、名称和时间请回听确认。",
+        "language": "zh",
+        "segments": [
+          {
+            "id": 0,
+            "start": 2.6,
+            "end": 6.76,
+            "text": "大家好,我叫琳,很高兴在Wikitons上面跟大家一起分享"
+          },
+          {
+            "id": 1,
+            "start": 6.76,
+            "end": 8.16,
+            "text": "我的假相房宴。"
+          },
+          {
+            "id": 2,
+            "start": 8.5,
+            "end": 11.3,
+            "text": "我类似于贺南生那样时汤贺县。"
+          },
+          {
+            "id": 3,
+            "start": 11.56,
+            "end": 14.8,
+            "text": "汤贺县位于贺南生跟湖北生的交接处。"
+          },
+          {
+            "id": 4,
+            "start": 15.24,
+            "end": 18.08,
+            "text": "我今天跟大家展示的是贺南生的房宴。"
+          },
+          {
+            "id": 5,
+            "start": 18.52,
+            "end": 19.98,
+            "text": "其实贺南生的房宴,"
+          }
+        ],
+        "source": "automatic"
+      },
+      "checks": {
+        "source_checksum": true,
+        "max_31_samples": true,
+        "one_second_coverage": true,
+        "covers_start_and_tail": true,
+        "max_4_high_frames": true,
+        "speech_candidates_exist": true,
+        "expected_audio_state": true,
+        "waveform_delay_preserved": true
+      },
+      "known_audio_delay": 2,
+      "measured_waveform_delay": 2.0,
+      "engineering_pass": true
+    },
+    {
+      "id": "skaha_lake_speech_mismatch",
+      "file": "test/skaha_lake_speech_mismatch.mp4",
+      "video_id": "63a69788571731402fcb82580daa77d7ddfd804bb93b870965e0ce301cf8f64b",
+      "seconds": 20.0,
+      "sample_count": 21,
+      "unique_frames": 21,
+      "high_frames": [
+        {
+          "index": 16,
+          "time": 16.0
+        }
+      ],
+      "upload_asr_seconds": 6.168,
+      "selection_seconds": 0.181,
+      "reused_local_cache": false,
+      "audio": {
+        "version": "whisper-small-int8-timeline-v1",
+        "status": "ready",
+        "message": "本机自动转写，关键数字、名称和时间请回听确认。",
+        "language": "zh",
+        "segments": [
+          {
+            "id": 0,
+            "start": 0.24,
+            "end": 4.54,
+            "text": "大家好,我叫琳,很高兴在WikiTons上面跟大家一起"
+          },
+          {
+            "id": 1,
+            "start": 4.54,
+            "end": 6.16,
+            "text": "分享我的假相房宴"
+          },
+          {
+            "id": 2,
+            "start": 6.16,
+            "end": 9.34,
+            "text": "我类似于贺南生那样是汤贺县"
+          },
+          {
+            "id": 3,
+            "start": 9.34,
+            "end": 12.88,
+            "text": "汤贺县位于贺南生跟户北生的交接处"
+          },
+          {
+            "id": 4,
+            "start": 12.88,
+            "end": 16.12,
+            "text": "我今天跟大家展示的是贺南生的房宴"
+          },
+          {
+            "id": 5,
+            "start": 16.12,
+            "end": 19.76,
+            "text": "其实贺南生的房宴它属于是中院管华"
+          }
+        ],
+        "source": "automatic"
+      },
+      "checks": {
+        "source_checksum": true,
+        "max_31_samples": true,
+        "one_second_coverage": true,
+        "covers_start_and_tail": true,
+        "max_4_high_frames": true,
+        "speech_candidates_exist": true,
+        "expected_audio_state": true
+      },
+      "engineering_pass": true
+    },
+    {
+      "id": "skaha_lake_blur",
+      "file": "test/skaha_lake_blur.mp4",
+      "video_id": "dd4fc4deee203778adbc53b4ab02bad63cea162598c9885589731ca7d04e0810",
+      "seconds": 20.0,
+      "sample_count": 21,
+      "unique_frames": 21,
+      "high_frames": [
+        {
+          "index": 16,
+          "time": 16.0
+        }
+      ],
+      "upload_asr_seconds": 3.436,
+      "selection_seconds": 0.167,
+      "reused_local_cache": false,
+      "audio": {
+        "version": "whisper-small-int8-timeline-v1",
+        "status": "no_speech",
+        "message": "未识别到可靠对白，仅分析画面。",
+        "language": "zh",
+        "segments": [],
+        "source": "automatic"
+      },
+      "checks": {
+        "source_checksum": true,
+        "max_31_samples": true,
+        "one_second_coverage": true,
+        "covers_start_and_tail": true,
+        "max_4_high_frames": true,
+        "speech_candidates_exist": true,
+        "prefers_clear_frames": true
+      },
+      "high_frames_in_known_blur": [],
+      "engineering_pass": true
+    },
+    {
+      "id": "ying_henan_silent",
+      "file": "test/ying_henan_silent.mp4",
+      "video_id": "16aa10c03e68a9b961ef03a6eefe9ef6283f1fdbf3ad95075cfe4465388c5ff5",
+      "seconds": 20.0,
+      "sample_count": 21,
+      "unique_frames": 21,
+      "high_frames": [
+        {
+          "index": 2,
+          "time": 2.0
+        },
+        {
+          "index": 6,
+          "time": 6.0
+        }
+      ],
+      "upload_asr_seconds": 1.895,
+      "selection_seconds": 0.17,
+      "reused_local_cache": false,
+      "audio": {
+        "version": "whisper-small-int8-timeline-v1",
+        "status": "no_speech",
+        "message": "音轨接近静音，没有可用对白。",
+        "language": null,
+        "segments": [],
+        "source": "automatic"
+      },
+      "checks": {
+        "source_checksum": true,
+        "max_31_samples": true,
+        "one_second_coverage": true,
+        "covers_start_and_tail": true,
+        "max_4_high_frames": true,
+        "speech_candidates_exist": true,
+        "expected_audio_state": true
+      },
+      "engineering_pass": true
+    }
+  ],
+  "note": "工程评测，不是语义准确率；unknown音轨不预设无讲话；转写不可当成真值标签。",
+  "paid_api_calls": 0
+}

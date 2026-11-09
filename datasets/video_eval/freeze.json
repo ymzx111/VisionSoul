@@ -1,0 +1,25 @@
+{
+  "version": "v1",
+  "frozen_at": "2026-11-09T16:26:34.476361+00:00",
+  "sources_sha256": "1f99ce1202b25a60ff40acd99dc748740ed7e0ad6116e6bd01919ac2b2feb3c2",
+  "dev_manifest_sha256": "6b64a5ec23b16b777e56dcea8deb4d553da3add9c5ed354d9bc4b49e61f7a260",
+  "code_sha256": {
+    "backend/app/services/video_selection.py": "b517722ddf605880269a81a11f132a85d647a2856e9a8ea8c5c8048bff2ebcad",
+    "backend/app/services/video_extract.py": "dcc1b8499a6a7a79dca108acd8b6eee27cb1456fe43e95cc4127db66f84acb1a",
+    "backend/app/services/video_details.py": "678a33d1c21eeeb9ccb4f8abd6e4bb1cfe6b3d1fd5cdffc2c5804bbea13de523",
+    "backend/app/services/audio_extract.py": "aa7e9af153863aa26282be9db00c7d86a2c3faa22a2b42424ed340937f32accc",
+    "backend/app/services/audio_evidence.py": "af67c5f9e9202967d6898f32bbcbab44a39b378553d9884c119a1523018932ba",
+    "backend/app/core/video_policy.py": "618f52df0683f6bd2c6a4b68b8042b4372935866b8d52ff0b3b7675954e102cf",
+    "backend/app/services/videos.py": "1c9c564167bafeae881b29402808702fc54376645d9ebdf322ae474726087c1b",
+    "backend/app/prompts/audio.md": "d9c5301205fc478bf317839893be4aea3847858d72d42d460ff40281b95f7595",
+    "backend/app/prompts/video.md": "85fbf9ec7d381a059aa30b4538d76cad21eaf2591c409c26192001ca818ce79f",
+    "backend/app/services/deepseek.py": "914452c362a00888c7e0d0e466d77ba10b7aa203ce98ac70c997737c9a7c9bb1",
+    "backend/app/core/config.py": "9c916f72990fb070947a9726fb3e8c5d0237f62671f6d84fa927e6e7edbf4f48",
+    "backend/requirements.txt": "871f414845c4f9e556c1325fa5f615181c6c25921a8ef60bac6ebfb8bbc1ca36",
+    "backend/requirements-audio-lock.txt": "af67f4aa74d71599ccb3fd5b03ecd7e29c8326fc0673474fd55bb15af46d4cdb",
+    "frontend/src/VideoWorkspace.jsx": "a8e59912fb2e089f32bf05758df12bc7801c3b09cbeb224c766357aab65f149a",
+    "tools/prepare_video_eval.py": "c4e8583645cc8cd816043b038ce07382ab2812b9e31d50eeb5aa50812014cf19",
+    "tools/evaluate_video_corpus.py": "9d7a7982868287428a22a8eb81fbefc4dc929158fdff40d56a0da2462fc9f83a"
+  },
+  "policy": "同一原视频的所有变体只属于同一split；测试集运行后不据此反向调参，后续改动使用新版本独立测试。"
+}

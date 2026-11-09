@@ -1,0 +1,7 @@
+{
+  "split": "dev",
+  "cases": 3,
+  "input_tokens": 14137,
+  "output_tokens": 1803,
+  "note": "单次小样例观察；需按独立标注审阅，不直接汇报准确率。"
+}

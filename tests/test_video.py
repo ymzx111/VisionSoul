@@ -199,7 +199,7 @@ class VideoTests(unittest.TestCase):
 
     def test_bad_structure_or_unknown_evidence_never_cached_or_auto_retried(self):
         video = self.uploaded()
-        for payload in [result_payload(19), result_payload(0), {"reply": "不完整"},
+        for payload in [result_payload(19), {"reply": "不完整"},
                         {**result_payload(), "observations": [{**result_payload()["observations"][0], "keywords": [""]}]}]:
             self.payload = payload
             count = len(self.calls)
@@ -208,6 +208,16 @@ class VideoTests(unittest.TestCase):
             self.assertEqual(error.exception.status_code, 502)
             self.assertEqual(len(self.calls), count + 1)
             self.assertIsNone(self.service.info(video.video_id).result)
+
+    def test_same_frame_can_keep_distinct_foreground_and_background_observations(self):
+        video = self.uploaded()
+        self.payload = {**result_payload(), "observations": [
+            {"frame_index": 0, "keywords": ["红色区域"], "description": "画面为红色。", "uncertain": False},
+            {"frame_index": 0, "keywords": ["中心区域"], "description": "中心区域颜色均匀。", "uncertain": False}]}
+        result = self.service.analyze(video.video_id)
+        self.assertEqual(len(result.observations), 2)
+        self.assertEqual([row.frame_index for row in result.observations], [0, 0])
+        self.assertEqual(len(self.calls), 1)
 
     def test_provider_failure_does_not_cache_or_retry(self):
         video = self.uploaded()

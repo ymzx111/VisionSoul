@@ -47,6 +47,7 @@ class AudioTranscript(BaseModel):
 class AudioLink(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     segment_id: int = Field(ge=0, le=63)
+    candidate_id: int | None = Field(default=None, ge=0, le=11)
     frame_index: int | None = Field(default=None, ge=0, le=60)
     frame_time: float | None = Field(default=None, ge=0, le=30)
     relation: Literal["supports", "contradicts", "uncertain", "audio_only"]
@@ -64,8 +65,9 @@ def frame_candidates(segment: SpeechSegment, frames):
                     "window": "primary" if gap <= PRIMARY_SECONDS else "secondary", "gap": round(gap, 3)})
     midpoint = (segment.start + segment.end) / 2
     candidates.sort(key=lambda row: (row["gap"], abs(row["frame_time"] - midpoint), row["frame_time"]))
-    return ([row for row in candidates if row["window"] == "primary"][:8]
-            + [row for row in candidates if row["window"] == "secondary"][:4])
+    selected = ([row for row in candidates if row["window"] == "primary"][:8]
+                + [row for row in candidates if row["window"] == "secondary"][:4])
+    return [{**row, "candidate_id": index} for index, row in enumerate(selected)]
 
 
 def validate_links(links, transcript: AudioTranscript, frames):
@@ -75,11 +77,20 @@ def validate_links(links, transcript: AudioTranscript, frames):
         if link.segment_id >= len(transcript.segments):
             raise ValueError("引用了不存在的对白")
         if link.relation == "audio_only":
-            if link.frame_index is not None or link.frame_time is not None:
+            if link.frame_index is not None or link.frame_time is not None or link.candidate_id is not None:
                 raise ValueError("纯音频依据不能伪造画面")
-        elif not any(row["frame_index"] == link.frame_index and row["frame_time"] == link.frame_time
-                     for row in frame_candidates(transcript.segments[link.segment_id], frames)):
-            raise ValueError("引用画面不在音画候选窗口内")
+        else:
+            candidates = frame_candidates(transcript.segments[link.segment_id], frames)
+            if link.candidate_id is not None:
+                if link.candidate_id >= len(candidates):
+                    raise ValueError("引用了不存在的时间候选")
+                chosen = candidates[link.candidate_id]
+                if ((link.frame_index is not None and link.frame_index != chosen["frame_index"])
+                        or (link.frame_time is not None and link.frame_time != chosen["frame_time"])):
+                    raise ValueError("候选编号与附带图号或时间冲突")
+                link.frame_index, link.frame_time = chosen["frame_index"], chosen["frame_time"]
+            if not any(row["frame_index"] == link.frame_index and row["frame_time"] == link.frame_time for row in candidates):
+                raise ValueError("引用画面不在音画候选窗口内")
 
 
 def audio_prompt(transcript: AudioTranscript, frames):
@@ -88,7 +99,7 @@ def audio_prompt(transcript: AudioTranscript, frames):
     rows = []
     for segment in transcript.segments:
         candidates = frame_candidates(segment, frames)
-        labels = lambda window: ",".join(f"{row['frame_index']}@{row['frame_time']:g}" for row in candidates if row["window"] == window)
+        labels = lambda window: ",".join(f"C{row['candidate_id']}={row['frame_index']}@{row['frame_time']:g}" for row in candidates if row["window"] == window)
         rows.append(f"S{segment.id}@{segment.start:g}-{segment.end:g} {segment.text}\n近:{labels('primary')}；补:{labels('secondary')}")
     label = "用户校对白（优先于旧转写与历史回复，仍需按画面核对）" if transcript.source == "corrected" else "自动转写（可能有误）"
     return label + "（原视频秒数；近±1.5秒，补±3秒，仅为时间候选）：\n" + "\n".join(rows)

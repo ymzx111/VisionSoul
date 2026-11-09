@@ -244,7 +244,8 @@ class VideoService:
             if content.comparison:
                 content.comparison.check_references({frame.index for frame in info.frames})
             indices = [item.frame_index for item in content.observations]
-            if len(set(indices)) != len(indices) or any(index >= len(info.frames) for index in indices):
+            # 一帧可以有主体、背景等多条不同观察；只拒绝不存在的图号。
+            if any(index >= len(info.frames) for index in indices):
                 raise ValueError("unknown frame")
             for observation in content.observations:
                 if any(not keyword.strip() or len(keyword) > 24 for keyword in observation.keywords):

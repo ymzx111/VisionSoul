@@ -29,5 +29,12 @@ build/
 # 用户上传图片（运行时数据）
 /backend/storage/
 
+# 公开评测视频保留本机；来源清单、许可、标注、脚本和报告可提交。
+/datasets/video_eval/raw/
+/datasets/video_eval/dev/
+/datasets/video_eval/test/
+/datasets/video_eval/runtime/
+/datasets/video_eval/previews/
+
 # 前端开发工具的本机运行记录
 /frontend/.sites-runtime/

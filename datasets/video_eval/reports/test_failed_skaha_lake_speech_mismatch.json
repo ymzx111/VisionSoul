@@ -1,0 +1,11 @@
+{
+  "id": "skaha_lake_speech_mismatch",
+  "status": "rejected",
+  "error": "模型返回的结构化结果不完整，本次可能已有用量；不会自动重试。",
+  "usage": {
+    "prompt_tokens": 5547,
+    "completion_tokens": 528,
+    "total_tokens": 6075
+  },
+  "note": "失败可能已有用量，不自动重试；原始凭据如有在receipt中。"
+}

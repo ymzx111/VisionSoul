@@ -1,0 +1,180 @@
+{
+  "version": "v1",
+  "created_at": "2026-11-09T16:27:46.760063+00:00",
+  "clips": [
+    {
+      "id": "tree_harvester",
+      "split": "test",
+      "title": "Tree harvester",
+      "author": "Wikideas1",
+      "license": "CC0-1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "page": "https://commons.wikimedia.org/wiki/File:Tree_harvester.webm",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/4/4b/Tree_harvester.webm",
+      "seconds": 20,
+      "category": "machine",
+      "speech": "no_audio",
+      "expected_visual": [
+        "机械",
+        "树木"
+      ],
+      "file": "test/tree_harvester.mp4",
+      "source_ids": [
+        "tree_harvester"
+      ],
+      "variant": "original_excerpt",
+      "sha256": "8fc3b2667f925853f17c8e038404fd924816fd400df0ffb4e46014d80daa50e9",
+      "raw_sha256": "e5b74ff4f25221971ac219b3cee1ce584531e332ea50411f80960441fdf10ea0",
+      "changes": "前段截取、最长边1280、不放大、25fps H.264 MP4/AAC；原音轨按视频共同起点映射。"
+    },
+    {
+      "id": "skaha_lake",
+      "split": "test",
+      "title": "Lake Skaha on a Calm Winter Afternoon",
+      "author": "Extemporalist",
+      "license": "CC0-1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "page": "https://commons.wikimedia.org/wiki/File:Lake_Skaha_on_a_Calm_Winter_Afternoon.webm",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/6/64/Lake_Skaha_on_a_Calm_Winter_Afternoon.webm",
+      "seconds": 20,
+      "category": "landscape",
+      "speech": "unknown",
+      "expected_visual": [
+        "水面",
+        "岸边"
+      ],
+      "file": "test/skaha_lake.mp4",
+      "source_ids": [
+        "skaha_lake"
+      ],
+      "variant": "original_excerpt",
+      "sha256": "4f1a7fdc3305a0c4919d7e5bf47bf151ec401e9f92f2faadc71484ee6199e470",
+      "raw_sha256": "acced0dc89de5e4bdc09f4e823c748f4fcef3b613ad1a96c9eb69426e797597c",
+      "changes": "前段截取、最长边1280、不放大、25fps H.264 MP4/AAC；原音轨按视频共同起点映射。"
+    },
+    {
+      "id": "ying_henan",
+      "split": "test",
+      "title": "WIKITONGUES- Ying speaking Henan Chinese",
+      "author": "Wikitongues; Ying Li",
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "page": "https://commons.wikimedia.org/wiki/File:WIKITONGUES-_Ying_speaking_Henan_Chinese.webm",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/7/7f/WIKITONGUES-_Ying_speaking_Henan_Chinese.webm",
+      "seconds": 20,
+      "category": "speaker",
+      "speech": "yes",
+      "expected_visual": [
+        "讲话的人"
+      ],
+      "file": "test/ying_henan.mp4",
+      "source_ids": [
+        "ying_henan"
+      ],
+      "variant": "original_excerpt",
+      "sha256": "399d11a3746144b53b5fd13af75893656d207c2c009aacebd72fd3c223eb0b43",
+      "raw_sha256": "bc19430cf2a64e37ac1b0883599041989e3444697738f234a23484d620eb4ac7",
+      "changes": "前段截取、最长边1280、不放大、25fps H.264 MP4/AAC；原音轨按视频共同起点映射。"
+    },
+    {
+      "id": "ying_henan_delay",
+      "split": "test",
+      "source_ids": [
+        "ying_henan"
+      ],
+      "file": "test/ying_henan_delay.mp4",
+      "seconds": 20,
+      "category": "speaker",
+      "variant": "delay",
+      "sha256": "a85c9cca710f1c4444d7fdcead2aed9ed658f7e60c54e0afb865b7ebeb97c6b5",
+      "audio_delay": 2,
+      "blur_windows": [],
+      "silent": false,
+      "changes": "已知受控变体；音轨延迟/静音/替换或部分画面模糊，详见字段，不能当成自然实拍原片。",
+      "expected_visual": [
+        "讲话的人"
+      ],
+      "speech": "yes",
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    {
+      "id": "skaha_lake_speech_mismatch",
+      "split": "test",
+      "source_ids": [
+        "skaha_lake",
+        "ying_henan"
+      ],
+      "file": "test/skaha_lake_speech_mismatch.mp4",
+      "seconds": 20,
+      "category": "landscape",
+      "variant": "mismatch",
+      "sha256": "da5d5a1b04ee9f18444e7636fc9d169e46ed67f165fb704e37f0672daf1ff6cf",
+      "audio_delay": 0,
+      "blur_windows": [],
+      "silent": false,
+      "changes": "已知受控变体；音轨延迟/静音/替换或部分画面模糊，详见字段，不能当成自然实拍原片。",
+      "expected_visual": [
+        "水面",
+        "岸边"
+      ],
+      "speech": "yes",
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    {
+      "id": "skaha_lake_blur",
+      "split": "test",
+      "source_ids": [
+        "skaha_lake"
+      ],
+      "file": "test/skaha_lake_blur.mp4",
+      "seconds": 20,
+      "category": "landscape",
+      "variant": "blur",
+      "sha256": "9847e4af6e19e8b9d2d2fd4939c202c3bbd3815dc1b5ed66881a4de9dd182459",
+      "audio_delay": 0,
+      "blur_windows": [
+        [
+          4,
+          8
+        ],
+        [
+          12,
+          16
+        ]
+      ],
+      "silent": false,
+      "changes": "已知受控变体；音轨延迟/静音/替换或部分画面模糊，详见字段，不能当成自然实拍原片。",
+      "expected_visual": [
+        "水面",
+        "岸边"
+      ],
+      "speech": "unknown",
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    {
+      "id": "ying_henan_silent",
+      "split": "test",
+      "source_ids": [
+        "ying_henan"
+      ],
+      "file": "test/ying_henan_silent.mp4",
+      "seconds": 20,
+      "category": "speaker",
+      "variant": "silent",
+      "sha256": "abfabb3db9e331a91d4dce6658d3eea78fbda67a1794e2cbe2f5a5433606a0ff",
+      "audio_delay": 0,
+      "blur_windows": [],
+      "silent": true,
+      "changes": "已知受控变体；音轨延迟/静音/替换或部分画面模糊，详见字段，不能当成自然实拍原片。",
+      "expected_visual": [
+        "讲话的人"
+      ],
+      "speech": "no_speech",
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    }
+  ]
+}

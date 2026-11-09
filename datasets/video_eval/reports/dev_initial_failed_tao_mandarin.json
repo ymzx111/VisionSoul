@@ -1,0 +1,9 @@
+{
+  "id": "tao_mandarin",
+  "stage": "initial_dev_call_before_receipt_recording",
+  "paid_api_calls": 1,
+  "status": "rejected",
+  "reason": "模型音画引用超出候选窗口，后端拒绝；本次原始上游回执未保存。",
+  "usage": null,
+  "note": "可能已计费，不将未知token记为0；后续增加回执记录，未自动重试。"
+}
