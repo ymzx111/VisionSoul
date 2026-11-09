@@ -194,12 +194,24 @@ class VideoTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
         self.assertIsNone(self.service.info(video.video_id).result)
 
-    def test_adjacent_same_keywords_merge_but_new_subject_stays(self):
+    def test_same_keyword_new_visual_feature_is_preserved_for_comparison(self):
         video = self.uploaded()
         self.payload["observations"][1]["keywords"] = ["红色画面"]
         result = self.service.analyze(video.video_id)
-        self.assertEqual(len(result.observations), 1)
+        self.assertEqual(len(result.observations), 2)
         self.assertEqual(result.observations[0].frame_index, 0)
+
+    def test_new_upload_stores_detail_frames_and_api_serves_them(self):
+        video=self.uploaded()
+        self.assertTrue(all(frame.detail_url and frame.clarity is not None for frame in video.frames))
+        root=self.settings.video_storage_dir/video.video_id
+        self.assertTrue((root/'detail-0.jpg').is_file())
+        app.dependency_overrides[get_settings]=lambda:self.settings
+        self.addCleanup(app.dependency_overrides.clear)
+        with TestClient(app) as client:
+            self.assertEqual(client.get(video.frames[0].detail_url).status_code,200)
+            self.assertEqual(client.get(f'/api/videos/{video.video_id}/frames/29/detail').status_code,404)
+        self.assertFalse(self.calls)
 
     def test_concurrent_analysis_is_blocked_but_cache_is_readable(self):
         video = self.uploaded()

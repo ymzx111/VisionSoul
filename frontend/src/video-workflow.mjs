@@ -1,3 +1,4 @@
+import { validateComparison } from './video-comparison.mjs';
 const VIDEO_ID = /^[0-9a-f]{64}$/;
 const STORAGE_KEY = 'visionsoul.currentVideo';
 
@@ -14,6 +15,7 @@ async function request(fetcher, url, options) {
 }
 
 function validatedResult(result, video) {
+  validateComparison(result.comparison,video.frames);
   if (result.video_id !== video.video_id || !Array.isArray(result.observations) || !result.observations.length
       || typeof result.summary !== 'string' || typeof result.reply !== 'string') {
     throw new Error('视频分析结果不完整，请检查后端记录；不会自动重新分析。');
@@ -42,7 +44,8 @@ function validatedVideo(data, maxFrames) {
     if (!Number.isFinite(frame.time_seconds) || frame.time_seconds < 0 || frame.time_seconds > data.duration_seconds) {
       throw new Error('视频采样时间超出时长或格式无效，请重新选择视频。');
     }
-    return { ...frame, url: `/api/videos/${data.video_id}/frames/${frame.index}` };
+    return { ...frame, url: `/api/videos/${data.video_id}/frames/${frame.index}`,
+      detail_url: frame.detail_url ? `/api/videos/${data.video_id}/frames/${frame.index}/detail` : null };
   }) };
   if (data.result) video.result = validatedResult(data.result, video);
   return video;

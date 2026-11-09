@@ -77,3 +77,16 @@ test('explicit retry keeps request id and a double send does not duplicate paid 
   assert.equal(ids.length, 2);
   assert.equal(ids[0], ids[1]);
 });
+
+test('only explicit video inspection requests new visual comparison and keeps it on retry',async()=>{
+  const sent=[];let fail=false;
+  const workflow=createChatWorkflow({mode:'video',storage:null,makeId:()=>String(sent.length+1).repeat(32),fetcher:async(url,options)=>{
+    if(url.endsWith('/messages')){const body=JSON.parse(options.body);sent.push(body);if(fail)throw new TypeError('offline');return response(result(body,sent.length*2));}
+    return response(url.endsWith('/status')?{configured:true}:[]);
+  }});
+  await workflow.initialize();await workflow.send('分享',null,{videoId:video});
+  assert.equal(Object.hasOwn(sent[0],'inspect_video'),false);
+  fail=true;await workflow.send('比对',null,{inspectVideo:true});fail=false;
+  await workflow.send('比对',null,{inspectVideo:true});
+  assert.equal(sent[1].inspect_video,true);assert.equal(sent[1].request_id,sent[2].request_id);
+});

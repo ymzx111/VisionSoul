@@ -9,8 +9,8 @@ export default function VideoChatPanel({ workflow, state, videoState, draft, set
   const canSend = state.persona.configured && !busy && ready && (selected || state.videoId) && draft.trim();
   const messages = state.pending ? [...state.messages, { ...state.pending, id: 'pending' }] : state.messages;
   useEffect(() => { if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, [state.messages, state.pending]);
-  const send = async () => {
-    const sent = await workflow.send(draft, null, { videoId: selected, uploadReady: ready });
+  const send = async (inspectVideo = false) => {
+    const sent = await workflow.send(draft, null, { videoId: selected, uploadReady: ready, inspectVideo });
     if (sent) setDraft(current => current === draft ? '' : current);
   };
   return <section className="panel chat-panel video-chat-panel" aria-labelledby="video-chat-heading">
@@ -44,6 +44,7 @@ export default function VideoChatPanel({ workflow, state, videoState, draft, set
       <textarea id="video-message" maxLength={2000} disabled={busy} value={draft} onChange={event => setDraft(event.target.value)}
         placeholder={state.videoId ? '接着聊这段视频，也可以问问刚才说过的事…' : '嘿，我今天去了西湖玩，你看看这湖水怎么样…'}/>
       <div className="question-actions"><span className="cost-note">发送才调用模型{state.usage ? state.replayed ? ' · 已恢复原回复，未重复调用' : ` · 本次 ${state.usage.total_tokens} token` : ''}</span>
+        <button className="button button-secondary" disabled={!canSend} title="重新读取视频画面，并重点查看少量细节图；可能增加模型用量。" onClick={() => void send(true)}>细看并比对</button>
         <button className="button button-primary" disabled={!canSend} onClick={() => void send()}>{state.sending ? '正在回复…' : state.videoId && !changed ? '发送消息 →' : '分享并对话 →'}</button></div>
     </div>
     <div className="analysis-footer video-limit-note"><span className="subtle-dot"/><span>保存首次分享＋最近 {state.persona.context_turns} 轮 · 本机记录可恢复</span></div>

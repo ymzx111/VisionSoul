@@ -94,7 +94,7 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
       usage: null, truncated: false, replayed: false, error: '', hasOlder: false });
     return true;
   }
-  async function send(message, imageId = null, { imageCount = imageId ? 1 : 0, uploadReady = true, videoId = null } = {}) {
+  async function send(message, imageId = null, { imageCount = imageId ? 1 : 0, uploadReady = true, videoId = null, inspectVideo = false } = {}) {
     if (state.sending || state.loading || disposed) return false;
     if (mode === 'video' && (!uploadReady || (!videoId && !state.videoId))) {
       publish({ error: uploadReady ? '请先选择并上传一个视频。' : '请等待视频上传完成，或清空未上传成功的选择后继续原话题。' }); return false;
@@ -108,6 +108,7 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
     if (changedImage || changedVideo) newConversation();
     const body = { conversation_id: state.conversationId, message: content, image_id: imageId };
     if (mode === 'video') body.video_id = videoId || state.videoId;
+    if (mode === 'video' && inspectVideo) body.inspect_video = true;
     const fingerprint = JSON.stringify(body);
     if (!retry || retry.fingerprint !== fingerprint) retry = { fingerprint, request_id: makeId() };
     const current = epoch;

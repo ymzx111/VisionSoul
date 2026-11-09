@@ -6,6 +6,10 @@ from pathlib import Path
 import sys
 
 import av
+if __package__:
+    from .video_comparison import clarity_score, DETAIL_VERSION
+else:
+    from video_comparison import clarity_score, DETAIL_VERSION
 
 
 def extract(directory: Path, max_seconds: float, max_frames: int) -> dict:
@@ -60,7 +64,7 @@ def extract(directory: Path, max_seconds: float, max_frames: int) -> dict:
                 continue
             sampled += 1
             target += interval
-            factor = min(1.0, 768 / max(frame.width, frame.height))
+            factor = min(1.0, 1280 / max(frame.width, frame.height))
             image = frame.reformat(width=max(1, round(frame.width * factor)),
                                    height=max(1, round(frame.height * factor)), format="rgb24").to_image()
             rotation = frame.rotation
@@ -73,13 +77,17 @@ def extract(directory: Path, max_seconds: float, max_frames: int) -> dict:
                 frames[-1]["seen_at"].append(timestamp)
                 continue
             index = len(frames)
-            image.save(directory / f"frame-{index}.jpg", "JPEG", quality=82)
-            frames.append({"index": index, "time_seconds": timestamp, "seen_at": [timestamp]})
+            image.save(directory / f"detail-{index}.jpg", "JPEG", quality=90)
+            preview = image.copy()
+            preview.thumbnail((768, 768))
+            preview.save(directory / f"frame-{index}.jpg", "JPEG", quality=82)
+            frames.append({"index": index, "time_seconds": timestamp, "seen_at": [timestamp], "clarity": clarity_score(preview)})
             previous_digest = digest
         if not frames or previous_time + max(0.25, 2 / fps) < duration:
             raise ValueError("视频为空、已损坏或未能完整解码，请重新导出。")
         return {"duration_seconds": round(duration, 3), "width": width, "height": height,
-                "sample_interval_seconds": interval, "sample_count": sampled, "frames": frames}
+                "sample_interval_seconds": interval, "sample_count": sampled, "frames": frames,
+                "detail_version": DETAIL_VERSION}
 
 
 if __name__ == "__main__":

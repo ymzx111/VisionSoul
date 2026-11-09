@@ -66,12 +66,14 @@ class ChatService:
         self.videos = video_service or VideoService(settings, self.client)
 
     def send(self, *, conversation_id: str | None, request_id: str, message: str, image_id: str | None,
-             video_id: str | None = None) -> dict:
+             video_id: str | None = None, inspect_video: bool = False) -> dict:
         try:
             self.store.initialize()
             body = {"conversation_id": conversation_id, "message": message, "image_id": image_id}
             if video_id:
                 body["video_id"] = video_id
+            if inspect_video:
+                body["inspect_video"] = True
             fingerprint = hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
             prefix = str(self.store.path)
             with LOCKS.hold(prefix + ":request:" + request_id):
@@ -101,7 +103,15 @@ class ChatService:
                     _, persona_prompt, persona_version = load_persona(self.settings, roles)
                     memory_text = roles.memory_context(target,message)
                     result = None
-                    if attached_video and video_context is None:
+                    if inspect_video:
+                        if not attached_video:
+                            raise DeepSeekError("细看并比对需要先分享一个视频。",422)
+                        prior = context_messages(history,self.settings,message,len(memory_text),persona_prompt)
+                        opening = (video_context or {}).get("opening_message",message)
+                        video_context,result = self.videos.inspect(attached_video,message,prior[1:],memory_text)
+                        video_context["opening_message"] = opening
+                        video_context["comparison_question"] = message
+                    elif attached_video and video_context is None:
                         prior = context_messages(history,self.settings,message,len(memory_text),persona_prompt)
                         video_context, result = self.videos.start_conversation(attached_video,message,prior[1:],memory_text=memory_text)
                         video_context["opening_message"] = message

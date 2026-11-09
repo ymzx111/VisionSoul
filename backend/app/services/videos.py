@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from app.core.config import Settings
 from app.core.persona import PERSONA_CORE, load_persona
 from app.services.deepseek import DeepSeekClient, DeepSeekError, ModelReply, TokenUsage, has_api_key
+from app.services.video_comparison import Comparison, DETAIL_VERSION, choose_detail_frames
 
 logger = logging.getLogger(__name__)
 VIDEO_TASK = (Path(__file__).resolve().parents[1] / "prompts" / "video.md").read_text(encoding="utf-8").strip()
@@ -57,6 +58,8 @@ class SampleFrame(BaseModel):
     time_seconds: float = Field(ge=0, le=30, title="采样时间")
     seen_at: list[float] = Field(min_length=1, max_length=30, title="相同画面的采样时间")
     url: str = Field(title="截图地址")
+    clarity: float | None = Field(default=None, ge=0, le=255, title="本地清晰度排序值")
+    detail_url: str | None = Field(default=None, title="较清晰的采样图地址")
 
 
 class Observation(BaseModel):
@@ -71,6 +74,7 @@ class VideoEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     observations: list[Observation] = Field(min_length=1, max_length=8, title="观察记录")
     summary: str = Field(min_length=1, max_length=240, title="视频概述")
+    comparison: Comparison | None = Field(default=None, title="多视角辨识与候选比对")
 
 
 class VideoContent(VideoEvidence):
@@ -112,17 +116,25 @@ class VideoService:
         self.client = client or DeepSeekClient(settings)
         self.prompt = load_persona(settings)[0] + "\n\n" + VIDEO_TASK
 
-    def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None, memory_text: str = "") -> VideoAnswer:
+    def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None, memory_text: str = "", inspect: bool = False) -> VideoAnswer:
         directory = video_directory(info.video_id, self.settings)
         parts = [{"type": "text", "text": "请按上述 json 格式分析以下有序视频采样。只观察画面，不包含音频。"}]
+        available = {frame.index for frame in info.frames if (directory / f"detail-{frame.index}.jpg").is_file()}
+        detailed = set(choose_detail_frames(info.frames, available)) if inspect else set()
         for frame in info.frames:
-            parts.append({"type": "text", "text": f"帧编号 {frame.index}；采样秒数 {frame.seen_at}"})
-            encoded = base64.b64encode((directory / f"frame-{frame.index}.jpg").read_bytes()).decode("ascii")
-            parts.append({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + encoded, "detail": "low"}})
+            high = frame.index in detailed
+            parts.append({"type": "text", "text": f"帧编号 {frame.index}；采样秒数 {frame.seen_at}" + ("；重点细节图" if high else "")})
+            filename = f"detail-{frame.index}.jpg" if high else f"frame-{frame.index}.jpg"
+            encoded = base64.b64encode((directory / filename).read_bytes()).decode("ascii")
+            parts.append({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + encoded, "detail": "high" if high else "low"}})
         prompt = self.prompt
         if caption:
             prompt += "\n本次是用户带文字分享视频。reply必须直接回应用户这句话并结合已有对话；observations和summary只记录画面可见事实，不把用户提供的地名、日期、心情写成视觉识别结论。"
             parts.append({"type": "text", "text": "用户这次想说：" + caption})
+        if inspect:
+            prompt += "\n本次用户选择细看并比对：必须返回comparison。按用户问题挑选目标，联合不同角度的可见特征比较候选；没有独特特征时返回insufficient，不勉强填写具体物种、品种或地点。"
+            if not detailed:
+                prompt += "\n此视频只有旧版概览图，没有额外细节图；不要声称看到了叶脉、小字等缺失细节。必要时提示重新上传原视频。"
         reply = self.client.complete([{"role": "system", "content": prompt},
             *([{"role":"user","content":memory_text}] if memory_text else []), *(history or []),
             {"role": "user", "content": parts}], json_mode=True, max_tokens=self.settings.video_max_tokens)
@@ -130,6 +142,10 @@ class VideoService:
             if reply.truncated:
                 raise ValueError("truncated")
             content = VideoContent.model_validate_json(reply.answer)
+            if inspect and content.comparison is None:
+                raise ValueError("missing comparison")
+            if content.comparison:
+                content.comparison.check_references({frame.index for frame in info.frames})
             indices = [item.frame_index for item in content.observations]
             if len(set(indices)) != len(indices) or any(index >= len(info.frames) for index in indices):
                 raise ValueError("unknown frame")
@@ -139,8 +155,8 @@ class VideoService:
             content.observations.sort(key=lambda item: item.frame_index)
             merged = []
             for observation in content.observations:
-                signature = (set(observation.keywords), observation.uncertain)
-                if merged and signature == (set(merged[-1].keywords), merged[-1].uncertain):
+                signature = (set(observation.keywords), observation.description, observation.uncertain)
+                if merged and signature == (set(merged[-1].keywords), merged[-1].description, merged[-1].uncertain):
                     continue
                 merged.append(observation)
             content.observations = merged
@@ -153,7 +169,19 @@ class VideoService:
         frames = {frame.index: frame for frame in info.frames}
         return {"video_id": info.video_id, "duration_seconds": info.duration_seconds, "summary": result.summary,
                 "observations": [{**row.model_dump(), "time_seconds": frames[row.frame_index].time_seconds}
-                                 for row in result.observations]}
+                                 for row in result.observations],
+                "comparison": result.comparison.model_dump() if result.comparison else None}
+
+    def inspect(self, video_id: str, message: str, history: list[dict], memory_text: str = ""):
+        """显式重新读画面，一次请求完成辨识、比对和接话；结果只随当前话题保存。"""
+        if not ANALYSIS_LOCK.acquire(blocking=False):
+            raise VideoError("已有视频正在观察，请稍等后再发送。",409)
+        try:
+            info = self.info(video_id)
+            answer = self._observe(info,message,history,memory_text,inspect=True)
+            return self._snapshot(info,answer), ModelReply(answer=answer.reply,model=answer.model,usage=answer.usage)
+        finally:
+            ANALYSIS_LOCK.release()
 
     def start_conversation(self, video_id: str, message: str, history: list[dict], memory_text: str = "") -> tuple[dict, ModelReply | None]:
         """首次无观察时一次请求同时看图和接话；已有观察时让聊天服务仅用文字接话。"""
@@ -220,7 +248,11 @@ class VideoService:
         if not path.is_file():
             return None
         try:
-            return VideoAnswer.model_validate_json(path.read_text(encoding="utf-8")).model_copy(update={"cached": True})
+            answer = VideoAnswer.model_validate_json(path.read_text(encoding="utf-8"))
+            if answer.comparison:
+                manifest=json.loads((directory/"manifest.json").read_text(encoding="utf-8"))
+                answer.comparison.check_references({frame['index'] for frame in manifest['frames']})
+            return answer.model_copy(update={"cached": True})
         except (ValueError, OSError) as exc:
             # 缓存损坏时不静默重新付费，要求人工处理。
             raise VideoError("已保存的分析结果无法读取，请检查本机存储。", 500) from exc
@@ -233,6 +265,7 @@ class VideoService:
                 raise VideoError("采样策略已更新，请重新选择原视频，生成整段均匀采样的画面。旧视频和结果仍保存在本机。", 409)
             for frame in data["frames"]:
                 frame["url"] = f"/api/videos/{video_id}/frames/{frame['index']}"
+                frame["detail_url"] = f"/api/videos/{video_id}/frames/{frame['index']}/detail" if (directory / f"detail-{frame['index']}.jpg").is_file() else None
             return VideoInfo(**data, video_id=video_id, video_url=f"/api/videos/{video_id}/file", result=self._cached(directory))
         except (KeyError, ValidationError, json.JSONDecodeError) as exc:
             raise VideoError("本机视频记录无法读取，请重新上传。", 500) from exc
@@ -246,7 +279,7 @@ class VideoService:
             with upload_workspace(root) as directory:
                 if directory.parent != root:
                     raise VideoError("视频存储位置异常。", 500)
-                digest = hashlib.sha256((PIPELINE_VERSION + str(self.settings.video_max_frames)
+                digest = hashlib.sha256((PIPELINE_VERSION + DETAIL_VERSION + str(self.settings.video_max_frames)
                     + str(self.settings.video_max_seconds)).encode())
                 total = 0
                 with (directory / "source.mp4").open("wb") as output:

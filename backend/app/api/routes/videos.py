@@ -55,7 +55,7 @@ def upload(file: Annotated[UploadFile, File(description="H.264 MP4，不超过 3
         file.file.close()
 
 
-@router.post("/analyze", response_model=VideoAnswer, summary="识别主要事物并生成小灵回应（可能产生 API 用量）",
+@router.post("/analyze", response_model=VideoAnswer, summary="识别主要事物并生成角色回应（可能产生 API 用量）",
              description="首次分析合并采样画面为一次模型请求；成功后保存结果，同视频同配置直接复用，不自动重试。")
 def analyze(request: AnalyzeRequest, service: Annotated[VideoService, Depends(get_video_service)]):
     try:
@@ -92,4 +92,15 @@ def frame_file(video_id: VideoID, index: Annotated[int, Path(ge=0, le=29)],
             raise VideoError("采样画面不存在。", 404)
         return FileResponse(path, media_type="image/jpeg", headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store"})
     except (VideoError, OSError) as exc:
+        raise safe_error(exc) from exc
+
+
+@router.get("/{video_id}/frames/{index}/detail", summary="查看较清晰的采样图", response_class=FileResponse)
+def detail_frame(video_id: VideoID,index: Annotated[int,Path(ge=0,le=29)],settings: Annotated[Settings,Depends(get_settings)]):
+    try:
+        path=video_directory(video_id,settings)/f"detail-{index}.jpg"
+        if not path.is_file():
+            raise VideoError("这个视频没有细节图，可重新选择原视频生成。",404)
+        return FileResponse(path,media_type="image/jpeg",headers={"X-Content-Type-Options":"nosniff","Cache-Control":"private, no-store"})
+    except (VideoError,OSError) as exc:
         raise safe_error(exc) from exc
