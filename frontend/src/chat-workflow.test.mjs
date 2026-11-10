@@ -43,7 +43,7 @@ test('multiple or unfinished uploads never send model requests', async () => {
   let calls = 0;
   const flow = createChatWorkflow({ storage: storage(), fetcher: async () => { calls++; } });
   await flow.send('看图', imageA, { imageCount: 2 });
-  assert.match(flow.getState().error, /目前只能分析单个图像/);
+  assert.equal(flow.getState().error, '目前只支持单张图片上传');
   await flow.send('看图', null, { imageCount: 1, uploadReady: false });
   await flow.send(' ');
   assert.equal(calls, 0);

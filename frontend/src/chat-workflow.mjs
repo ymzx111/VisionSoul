@@ -19,8 +19,8 @@ async function read(fetcher, url, options = {}) {
 }
 
 export function createChatWorkflow({ fetcher = globalThis.fetch, storage = browserStorage(), makeId = uuid, mode = 'image' } = {}) {
-  const key = mode === 'video' ? 'visionsoul.current-video-conversation' : KEY;
-  const recentUrl = mode === 'video' ? '/api/chat/conversations?kind=video' : '/api/chat/conversations';
+  const key = mode === 'media' ? 'visionsoul.current-media-conversation' : mode === 'video' ? 'visionsoul.current-video-conversation' : KEY;
+  const recentUrl = mode === 'media' ? '/api/chat/conversations?kind=all' : mode === 'video' ? '/api/chat/conversations?kind=video' : '/api/chat/conversations';
   let state = { conversationId: null, imageId: null, messages: [], recent: [], sending: false,
     videoId: null, videoContext: null,
     loading: false, error: '', pending: null, usage: null, truncated: false, replayed: false,
@@ -44,6 +44,8 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
       throw new Error('话题记录格式异常，请新建话题。');
     }
     if (mode === 'video' && !/^[0-9a-f]{64}$/.test(data.video_id || '')) throw new Error('这不是视频话题，请选择视频话题或新建。');
+    if (mode === 'media' && ((data.image_id && !ID.test(data.image_id)) || (data.video_id && !/^[0-9a-f]{64}$/.test(data.video_id))
+        || (data.image_id && data.video_id))) throw new Error('话题素材关联异常，请检查本机记录。');
     remember(data.id);
     publish({ conversationId: data.id, imageId: data.image_id || null, videoId: data.video_id || null, videoContext: data.video_context || null, messages: data.messages,
       usage: null, truncated: false, replayed: false, error: '', hasOlder: data.has_older === true });
@@ -61,7 +63,13 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
       if (current !== epoch || disposed) return;
       publish({ persona, recent });
       let saved;
-      try { saved = storage?.getItem(key); } catch { /* 当前页内仍可使用。 */ }
+      try {
+        saved = storage?.getItem(key);
+        if (!saved && mode === 'media') {
+          const candidates = [storage?.getItem('visionsoul.current-video-conversation'), storage?.getItem(KEY)].filter(Boolean);
+          saved = recent.find(row => candidates.includes(row.id))?.id || candidates[0];
+        }
+      } catch { /* 当前页内仍可使用。 */ }
       if (saved && ID.test(saved)) {
         try {
           const data = await read(fetcher, `/api/chat/conversations/${saved}`, { signal: controller.signal });
@@ -97,20 +105,21 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
   async function send(message, imageId = null, { imageCount = imageId ? 1 : 0, uploadReady = true, videoId = null, inspectVideo = false, debugCode = false } = {}) {
     if (state.sending || state.loading || disposed) return false;
     if (inspectVideo && debugCode) { publish({ error: '一次请选择一种视频分析任务。' }); return false; }
-    if (mode === 'video' && (!uploadReady || (!videoId && !state.videoId))) {
+    if ((mode === 'video' || (mode === 'media' && !imageId && (videoId || state.videoId))) && (!uploadReady || (!videoId && !state.videoId))) {
       publish({ error: uploadReady ? '请先选择并上传一个视频。' : '请等待视频上传完成，或清空未上传成功的选择后继续原话题。' }); return false;
     }
-    if (imageCount > 1) { publish({ error: '目前只能分析单个图像，请仅保留一张或清空图片后聊文字。' }); return false; }
+    if (imageCount > 1) { publish({ error: '目前只支持单张图片上传' }); return false; }
     if (imageCount === 1 && (!imageId || !uploadReady)) { publish({ error: '请等待图片上传成功，或清空图片后聊文字。' }); return false; }
     const content = message.trim();
     if (!content || content.length > 2000) { publish({ error: '请填写 1 至 2000 个字符的消息。' }); return false; }
     const changedImage = state.imageId && imageId && state.imageId !== imageId;
-    const changedVideo = mode === 'video' && state.videoId && videoId && state.videoId !== videoId;
-    if (changedImage || changedVideo) newConversation();
+    const changedVideo = mode !== 'image' && state.videoId && videoId && state.videoId !== videoId;
+    const changedKind = mode === 'media' && ((imageId && state.videoId) || (videoId && state.imageId));
+    if (changedImage || changedVideo || changedKind) newConversation();
     const body = { conversation_id: state.conversationId, message: content, image_id: imageId };
-    if (mode === 'video') body.video_id = videoId || state.videoId;
-    if (mode === 'video' && inspectVideo) body.inspect_video = true;
-    if (mode === 'video' && debugCode) body.debug_code = true;
+    if (mode === 'video' || (mode === 'media' && (videoId || state.videoId))) body.video_id = videoId || state.videoId;
+    if (body.video_id && inspectVideo) body.inspect_video = true;
+    if (body.video_id && debugCode) body.debug_code = true;
     const fingerprint = JSON.stringify(body);
     if (!retry || retry.fingerprint !== fingerprint) retry = { fingerprint, request_id: makeId() };
     const current = epoch;
@@ -125,6 +134,8 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
         throw new Error('回复内容不完整，请重试以恢复这条消息。');
       }
       if (mode === 'video' && data.video_id !== body.video_id) throw new Error('视频关联结果不一致，请重试恢复原消息。');
+      if (mode === 'media' && ((data.video_id || null) !== (body.video_id || null)
+          || (data.image_id || null) !== (body.image_id || state.imageId || null))) throw new Error('素材关联结果不一致，请重试恢复原消息。');
       const existing = new Set(state.messages.map(item => item.id));
       const additions = [data.user_message, data.assistant_message].filter(item => !existing.has(item.id));
       remember(data.conversation_id); retry = null;

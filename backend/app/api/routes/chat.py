@@ -88,7 +88,7 @@ def chat_status(settings: Annotated[Settings, Depends(get_settings)]) -> dict:
 
 
 @router.get("/conversations", summary="查看本机最近二十个话题")
-def conversations(settings: Annotated[Settings, Depends(get_settings)], kind: Literal["image", "video"] = "image") -> list[dict]:
+def conversations(settings: Annotated[Settings, Depends(get_settings)], kind: Literal["image", "video", "all"] = "image") -> list[dict]:
     try:
         return open_store(settings).recent(kind)
     except (OSError, sqlite3.Error, json.JSONDecodeError) as exc:

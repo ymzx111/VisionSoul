@@ -353,3 +353,8 @@ textarea:disabled { opacity: .7; }
 .code-debug-report h3 { margin-top: 0; }
 .code-debug-report article { margin: 12px 0; border-top: 1px solid #d9e3db; padding-top: 10px; }
 .code-debug-report pre { background: #f0f3ee; border: 1px solid #d9e3db; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 Consolas, monospace; }
+.media-error { flex-shrink: 0; justify-content: space-between; margin-bottom: 12px; }
+.media-progress { margin: 0 0 8px; font-size: 12px; color: #52684e; }
+.media-upload-note { padding: 4px 20px 12px; font-size: 11px; color: #657a60; line-height: 1.7; }
+.unified-video-grid .video-panel > .panel-heading { height: auto; min-height: 64px; gap: 8px; flex-wrap: wrap; padding-top: 12px; padding-bottom: 12px; }
+.chat-image-link img[width="160"] { width: 160px; height: 110px; object-fit: contain; }

@@ -25,19 +25,19 @@ test('single upload is linked automatically, and only explicit analysis calls th
   assert.equal(workflow.getState().result.answer, '这是测试回复。');
 });
 
-test('multiple files are preview only, cannot call model, and removing to one uploads that exact file', async () => {
+test('multiple images are rejected before upload, then a single replacement uploads normally', async () => {
   const calls = [];
   const workflow = createImageWorkflow({ initialConfigured: true, fetcher: async (url, options) => {
     calls.push({ url, options }); return reply(uploaded(secondId));
   } });
   await workflow.selectFiles([file('one.png'), file('two.png')]);
-  assert.equal(workflow.getState().files.length, 2);
-  assert.equal(workflow.getState().uploadStage, 'multiple');
+  assert.equal(workflow.getState().files.length, 0);
+  assert.equal(workflow.getState().uploadStage, 'error');
+  assert.equal(workflow.getState().selectionError, '目前只支持单张图片上传');
   assert.equal(calls.length, 0);
   assert.equal(await workflow.analyze('描述图片'), false);
-  assert.match(workflow.getState().analysisError, /目前只能分析单个图像/);
   assert.equal(calls.length, 0);
-  await workflow.removeFile(workflow.getState().files[0].id);
+  await workflow.selectFiles([file('two.png')]);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].options.body.get('file').name, 'two.png');
   assert.equal(workflow.getState().upload.image_id, secondId);

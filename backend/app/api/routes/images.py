@@ -35,11 +35,13 @@ class ImageUploaded(BaseModel):
                500: {"description": "图片保存失败"}},
 )
 def upload_image(
-    file: Annotated[UploadFile, File(title="图片文件", description="选择 JPG、PNG 或 WebP 静态图片；默认不超过 10 MB。")],
+    file: Annotated[list[UploadFile], File(title="图片文件", description="仅上传一张 JPG、PNG 或 WebP 静态图片；默认不超过 10 MB。")],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> ImageUploaded:
     try:
-        data = file.file.read(settings.upload_max_bytes + 1)
+        if len(file) != 1:
+            raise HTTPException(status_code=400, detail='目前只支持单张图片上传')
+        data = file[0].file.read(settings.upload_max_bytes + 1)
         saved = save_image(data, settings)
     except ImageUploadError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
@@ -47,7 +49,8 @@ def upload_image(
         logger.exception("无法保存上传图片")
         raise HTTPException(status_code=500, detail="图片暂时无法保存，请稍后重试。") from exc
     finally:
-        file.file.close()
+        for uploaded in file:
+            uploaded.file.close()
     return ImageUploaded(**asdict(saved), url=f"/api/images/{saved.image_id}")
 
 

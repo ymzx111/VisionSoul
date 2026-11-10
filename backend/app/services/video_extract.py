@@ -30,8 +30,10 @@ def extract(directory: Path, max_seconds: float, max_frames: int) -> dict:
         if min(width, height) < 16 or max(width, height) > 4096 or width * height > 3840 * 2160:
             raise ValueError("视频分辨率过大或无效，请使用不超过 4K 的视频。")
         duration = float(stream.duration * stream.time_base) if stream.duration is not None else 0
-        if not math.isfinite(duration) or not 0 < duration <= max_seconds:
-            raise ValueError(f"请使用时长不超过 {max_seconds:g} 秒、具有有效时长的短视频。")
+        if not math.isfinite(duration) or duration <= 0:
+            raise ValueError('视频时长无效，请重新导出视频。')
+        if duration > max_seconds:
+            raise ValueError(f'超过视频时长上限，上限为{max_seconds:g}秒')
         fps = float(stream.average_rate or 0)
         if not math.isfinite(fps) or not 0 < fps <= 60.1:
             raise ValueError("第一版支持每秒不超过 60 帧的视频。")
@@ -81,7 +83,9 @@ def extract(directory: Path, max_seconds: float, max_frames: int) -> dict:
                 raise ValueError("视频时间戳异常，请重新导出。")
             previous_time = timestamp
             last_frame = frame
-            if timestamp > max_seconds + 0.1 or timestamp > duration + 0.2:
+            if timestamp > max_seconds + 0.1:
+                raise ValueError(f'超过视频时长上限，上限为{max_seconds:g}秒')
+            if timestamp > duration + 0.2:
                 raise ValueError("视频实际时长超过声明时长或上传限制。")
             if timestamp + 0.001 < target:
                 continue

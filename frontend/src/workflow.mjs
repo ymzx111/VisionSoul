@@ -18,6 +18,7 @@ async function jsonResponse(fetcher, url, options) {
 }
 
 export function validateFiles(files) {
+  if (files.length > 1) return '目前只支持单张图片上传';
   for (const file of files) {
     if (!/\.(jpe?g|png|webp)$/i.test(file.name)) return '请选择 JPG、PNG 或 WebP 静态图片。';
     if (!file.size) return '图片内容为空，请重新选择。';
@@ -88,7 +89,7 @@ export function createImageWorkflow({ fetcher = globalThis.fetch, initialConfigu
   async function analyze(question) {
     if (disposed || state.analyzing) return false;
     let invalid;
-    if (state.files.length > 1) invalid = '目前只能分析单个图像，请仅保留一张图片。';
+    if (state.files.length > 1) invalid = '目前只支持单张图片上传';
     else if (!state.files.length) invalid = '请先选择一张图片。';
     else if (state.uploadStage !== 'ready' || !state.upload) invalid = '请等待图片上传成功后再分析。';
     else if (state.configured !== true) invalid = state.configError || '模型尚未配置，请先完成后端密钥设置。';
