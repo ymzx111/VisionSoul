@@ -76,6 +76,8 @@ class RoleService:
         history = self.chats.messages(conversation_id,24)
         if not conversation or not history:
             raise RoleConflict("这个话题不存在或没有消息。")
+        if conversation["space"] != "companion":
+            raise RoleConflict("只能整理角色对话的记忆；工作话题不进入角色记忆，旧话题需先明确分类。")
         covered = history[-1]["id"]
         def action(rid,kind,fp):
             with self.store.connection() as conn:

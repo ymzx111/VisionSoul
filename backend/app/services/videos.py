@@ -131,10 +131,11 @@ def video_directory(video_id: str, settings: Settings) -> Path:
 
 
 class VideoService:
-    def __init__(self, settings: Settings, client: DeepSeekClient | None = None):
+    def __init__(self, settings: Settings, client: DeepSeekClient | None = None, *, system_prompt: str | None = None, isolated: bool = False):
         self.settings = settings
         self.client = client or DeepSeekClient(settings)
-        self.prompt = load_persona(settings)[0] + "\n\n" + VIDEO_TASK
+        self.prompt = (load_persona(settings)[0] if system_prompt is None else system_prompt) + "\n\n" + VIDEO_TASK
+        self.isolated = isolated
 
     def audio_record(self, video_id):
         try:
@@ -305,6 +306,15 @@ class VideoService:
     def start_conversation(self, video_id: str, message: str, history: list[dict], memory_text: str = "") -> tuple[dict, ModelReply | None]:
         """首次无观察时一次请求同时看图和接话；已有观察时让聊天服务仅用文字接话。"""
         info = self.info(video_id)
+        if self.isolated:
+            # 新空间的分析只随当前话题保存，不跨话题复用可能混入配文/角色记忆的综合观察。
+            if not ANALYSIS_LOCK.acquire(blocking=False):
+                raise VideoError("已有视频正在观察，请稍等后再发送。", 409)
+            try:
+                answer = self._observe(info, message, history, memory_text)
+                return self._snapshot(info, answer), ModelReply(answer=answer.reply, model=answer.model, usage=answer.usage)
+            finally:
+                ANALYSIS_LOCK.release()
         directory = video_directory(video_id, self.settings)
         evidence_path = self._cache_path(directory).with_suffix(".evidence.json")
 
@@ -423,7 +433,7 @@ class VideoService:
             for frame in data["frames"]:
                 frame["url"] = f"/api/videos/{video_id}/frames/{frame['index']}"
                 frame["detail_url"] = f"/api/videos/{video_id}/frames/{frame['index']}/detail" if (directory / f"detail-{frame['index']}.jpg").is_file() else None
-            return VideoInfo(**data, video_id=video_id, video_url=f"/api/videos/{video_id}/file", result=self._cached(directory))
+            return VideoInfo(**data, video_id=video_id, video_url=f"/api/videos/{video_id}/file", result=None if self.isolated else self._cached(directory))
         except (KeyError, ValidationError, json.JSONDecodeError) as exc:
             raise VideoError("本机视频记录无法读取，请重新上传。", 500) from exc
 

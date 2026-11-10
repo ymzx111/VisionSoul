@@ -27,7 +27,7 @@ class WorkspaceTests(unittest.TestCase):
         with TestClient(app) as client:
             response = client.get("/app")
             self.assertEqual(response.status_code, 200)
-            self.assertIn("图片工作台", response.text)
+            self.assertIn("图片与视频工作台", response.text)
             assets = re.findall(r'(?:src|href)="(/app/assets/[^\"]+)"', response.text)
             self.assertTrue(assets)
             for asset in assets:

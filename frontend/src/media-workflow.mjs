@@ -27,11 +27,11 @@ export function readVideoDuration(file, { signal } = {}) {
 }
 
 /** 单一入口协调素材、话题和旧记录；原上传/分析服务仍分别复用。 */
-export function createMediaWorkflow({ fetcher = globalThis.fetch, storage = globalThis.localStorage, durationReader = readVideoDuration, makeId } = {}) {
+export function createMediaWorkflow({ fetcher = globalThis.fetch, storage = globalThis.localStorage, durationReader = readVideoDuration, makeId, space } = {}) {
   const image = createImageWorkflow({ fetcher });
   const video = createVideoWorkflow({ fetcher, storage: null });
-  const chat = createChatWorkflow({ fetcher, storage, makeId, mode: 'media' });
-  let own = { kind: null, file: null, restoredImageId: null, selecting: false, error: '', externalBusy: false };
+  const chat = createChatWorkflow({ fetcher, storage, makeId, mode: 'media', space });
+  let own = { space, kind: null, file: null, restoredImageId: null, selecting: false, error: '', externalBusy: false };
   let snapshot;
   let disposed = false, reconciling = false, version = 0, syncedConversation = '';
   let durationController;

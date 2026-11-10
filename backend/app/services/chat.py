@@ -7,6 +7,7 @@ import threading
 from uuid import uuid4
 
 from app.core.config import Settings
+from app.core.chat_space import WORK_PROMPT, ChatSpace
 from app.core.persona import PERSONA_ID, PERSONA_PROMPT, load_persona
 from app.services.chat_store import ChatConflict, ChatStore
 from app.services.deepseek import DeepSeekClient, DeepSeekError, image_part
@@ -64,13 +65,19 @@ class ChatService:
         self.settings = settings
         self.store = ChatStore(settings.chat_database_path)
         self.client = client or DeepSeekClient(settings)
-        self.videos = video_service or VideoService(settings, self.client)
+        self._provided_videos = video_service
+        self.videos = video_service or VideoService(settings, self.client, system_prompt=WORK_PROMPT, isolated=True)
 
     def send(self, *, conversation_id: str | None, request_id: str, message: str, image_id: str | None,
-             video_id: str | None = None, inspect_video: bool = False, debug_code: bool = False) -> dict:
+             video_id: str | None = None, inspect_video: bool = False, debug_code: bool = False, space: ChatSpace | None = None) -> dict:
         try:
+            effective_space = space or "companion"
+            if effective_space not in {"work", "companion"}:
+                raise DeepSeekError("请选择工作解析或角色对话。", 422)
             self.store.initialize()
             body = {"conversation_id": conversation_id, "message": message, "image_id": image_id}
+            if space is not None:
+                body["space"] = space
             if video_id:
                 body["video_id"] = video_id
             if inspect_video:
@@ -84,9 +91,14 @@ class ChatService:
             with LOCKS.hold(prefix + ":request:" + request_id):
                 cached = self.store.cached(request_id)
                 if cached:
+                    owner = self.store.get(cached["conversation_id"])
+                    if not owner or owner["space"] != effective_space:
+                        raise DeepSeekError("该请求属于其他空间或未分类旧话题，请新建消息。", 409)
                     if cached["fingerprint"] != fingerprint:
                         raise DeepSeekError("该消息编号已用于其他内容，请重新发送。", 409)
                     response = json.loads(cached["response_json"])
+                    if response.get("space", "companion") != effective_space:
+                        raise DeepSeekError("原请求与当前空间不一致，请新建消息。", 409)
                     if response.get("video_id") and response.get("video_context"):
                         record = self.videos.audio_record(response["video_id"])
                         response["video_context"] = current_context(response["video_context"], record["audio"], record["revision"], record["sound_clues"])
@@ -96,6 +108,8 @@ class ChatService:
                     conversation = self.store.get(target) if conversation_id else None
                     if conversation_id and conversation is None:
                         raise DeepSeekError("话题不存在，请新建话题。", 404)
+                    if conversation and conversation["space"] != effective_space:
+                        raise DeepSeekError("话题不属于当前空间；旧话题需先分类，不能跨空间继续。", 409)
                     attached = (conversation or {}).get("image_id")
                     attached_video = (conversation or {}).get("video_id")
                     if (attached or image_id) and (attached_video or video_id):
@@ -111,21 +125,26 @@ class ChatService:
                     if attached_video and video_context:
                         audio_record = self.videos.audio_record(attached_video)
                         video_context = current_context(video_context, audio_record["audio"], audio_record["revision"], audio_record["sound_clues"])
-                    roles = RoleStore(self.settings.roles_path)
-                    _, persona_prompt, persona_version = load_persona(self.settings, roles)
-                    memory_text = roles.memory_context(target,message)
+                    persona_prompt, persona_version, memory_text = WORK_PROMPT, "work-v1", ""
+                    video_prompt = WORK_PROMPT
+                    if effective_space == "companion":
+                        roles = RoleStore(self.settings.roles_path)
+                        video_prompt, persona_prompt, persona_version = load_persona(self.settings, roles)
+                        memory_text = roles.memory_context(target, message, allowed_conversations=self.store.companion_ids())
+                    videos = (self._provided_videos if space is None else None) or VideoService(self.settings, self.client,
+                        system_prompt=persona_prompt if space is not None else video_prompt, isolated=space is not None)
                     result = None
                     if inspect_video or debug_code:
                         if not attached_video:
                             raise DeepSeekError("视频分析需要先分享一个视频。",422)
                         prior = context_messages(history,self.settings,message,len(memory_text),persona_prompt)
                         opening = (video_context or {}).get("opening_message",message)
-                        video_context,result = self.videos.inspect(attached_video,message,prior[1:],memory_text,debug_code=debug_code)
+                        video_context,result = videos.inspect(attached_video,message,prior[1:],memory_text,debug_code=debug_code)
                         video_context["opening_message"] = opening
                         video_context["comparison_question"] = message
                     elif attached_video and video_context is None:
                         prior = context_messages(history,self.settings,message,len(memory_text),persona_prompt)
-                        video_context, result = self.videos.start_conversation(attached_video,message,prior[1:],memory_text=memory_text)
+                        video_context, result = videos.start_conversation(attached_video,message,prior[1:],memory_text=memory_text)
                         video_context["opening_message"] = message
                     if result is None:
                         effective_context = model_context(video_context) if video_context else None
@@ -157,6 +176,7 @@ class ChatService:
                         conversation=conversation, conversation_id=target, image_id=attached,
                         message=message, model_reply=result.model_dump(), request_id=request_id,
                         fingerprint=fingerprint, persona_id=persona_version, video_id=attached_video, video_context=video_context,
+                        space=effective_space,
                     )
         except ChatConflict as exc:
             raise DeepSeekError(str(exc), 409) from exc

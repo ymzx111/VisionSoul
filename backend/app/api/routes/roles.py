@@ -105,13 +105,18 @@ def preview(body: Preview,s: Annotated[RoleService,Depends(service)]):
 def sources(s: Annotated[RoleService,Depends(service)]):
     def action():
         s.chats.initialize()
-        return [{key:r[key] for key in ["id","title","updated_at","message_count"]} for r in s.chats.recent()]
+        return [{key:r[key] for key in ["id","title","updated_at","message_count"]} for r in s.chats.recent(space="companion")]
     return run(action)
 
 
 @router.get("/memories",summary="查看小灵的记忆卡（不调用模型）")
 def memories(s: Annotated[RoleService,Depends(service)]):
-    return run(s.store.memories)
+    def action():
+        s.chats.initialize()
+        allowed = s.chats.companion_ids()
+        return [{**row, "source_enabled": not row["conversation_id"] or row["conversation_id"] in allowed}
+                for row in s.store.memories()]
+    return run(action)
 
 
 @router.post("/memories",summary="手动添加明确记忆（不调用模型）")

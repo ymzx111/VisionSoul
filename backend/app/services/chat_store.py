@@ -61,6 +61,23 @@ class ChatStore:
                 for column in columns:
                     if column not in present:
                         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+            present = {row["name"] for row in conn.execute("PRAGMA table_info(conversations)")}
+            if "space" not in present:
+                conn.execute("ALTER TABLE conversations ADD COLUMN space TEXT NOT NULL DEFAULT 'legacy'")
+
+    def companion_ids(self) -> set[str]:
+        with self.connection() as conn:
+            return {row[0] for row in conn.execute("SELECT id FROM conversations WHERE space='companion'")}
+
+    def classify(self, conversation_id: str, space: str) -> dict:
+        if space not in {"work", "companion"}:
+            raise ChatConflict("请选择工作解析或角色对话。")
+        with self.connection() as conn:
+            changed = conn.execute("UPDATE conversations SET space=?,revision=revision+1 WHERE id=? AND space='legacy'",
+                                   (space, conversation_id)).rowcount
+            if not changed:
+                raise ChatConflict("话题不存在或已分类，请刷新；已分类话题不能跨空间移动。")
+        return self.get(conversation_id)
 
     def cached(self, request_id: str) -> dict | None:
         with self.connection() as conn:
@@ -79,25 +96,28 @@ class ChatStore:
             ).fetchall()
             return [dict(row) for row in reversed(rows)]
 
-    def recent(self, kind: str | None = None) -> list[dict]:
-        condition = "WHERE c.video_id IS NOT NULL" if kind == "video" else "WHERE c.video_id IS NULL" if kind == "image" else ""
+    def recent(self, kind: str | None = None, space: str | None = None) -> list[dict]:
+        filters = ["c.video_id IS NOT NULL"] if kind == "video" else ["c.video_id IS NULL"] if kind == "image" else []
+        if space is not None:
+            filters.append("c.space=?")
+        condition = "WHERE " + " AND ".join(filters) if filters else ""
         with self.connection() as conn:
             return [dict(row) for row in conn.execute(
                 "SELECT c.*, (SELECT count(*) FROM messages m WHERE m.conversation_id=c.id) AS message_count "
-                f"FROM conversations c {condition} ORDER BY updated_at DESC LIMIT 20"
+                f"FROM conversations c {condition} ORDER BY updated_at DESC LIMIT 20", (space,) if space is not None else ()
             ).fetchall()]
 
     def finish_turn(self, *, conversation: dict | None, conversation_id: str, image_id: str | None,
                     message: str, model_reply: dict, request_id: str, fingerprint: str,
-                    persona_id: str, video_id: str | None = None, video_context: dict | None = None) -> dict:
+                    persona_id: str, video_id: str | None = None, video_context: dict | None = None, space: str = "companion") -> dict:
         timestamp = now_iso()
         encoded_context = json.dumps(video_context, ensure_ascii=False) if video_context else None
         with self.connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             if conversation is None:
                 conn.execute(
-                    "INSERT INTO conversations(id,title,image_id,created_at,updated_at,revision,video_id,video_context) VALUES(?,?,?,?,?,1,?,?)",
-                    (conversation_id, message[:24], image_id, timestamp, timestamp, video_id, encoded_context),
+                    "INSERT INTO conversations(id,title,image_id,created_at,updated_at,revision,video_id,video_context,space) VALUES(?,?,?,?,?,1,?,?,?)",
+                    (conversation_id, message[:24], image_id, timestamp, timestamp, video_id, encoded_context, space),
                 )
             else:
                 changed = conn.execute(
@@ -120,7 +140,7 @@ class ChatStore:
             )
             assistant = {"id": cursor.lastrowid, "role": "assistant", "content": model_reply["answer"],
                          "image_id": None, "created_at": timestamp}
-            response = {"conversation_id": conversation_id, "image_id": image_id, "video_id": video_id, "video_context": video_context,
+            response = {"space": space, "conversation_id": conversation_id, "image_id": image_id, "video_id": video_id, "video_context": video_context,
                         "user_message": user, "assistant_message": assistant,
                         "model": model_reply["model"], "usage": model_reply.get("usage"),
                         "truncated": model_reply.get("truncated", False), "persona_id": persona_id, "replayed": False}

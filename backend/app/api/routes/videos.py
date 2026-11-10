@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import Settings, get_settings
+from app.core.chat_space import WORK_PROMPT
 from app.core.video_policy import MAX_SAMPLES, SAMPLE_INTERVAL_SECONDS
 from app.services.deepseek import DeepSeekError, has_api_key
 from app.services.videos import VideoAnswer, VideoError, VideoInfo, VideoService, video_directory
@@ -19,7 +20,7 @@ VideoID = Annotated[str, Path(pattern=r"^[0-9a-f]{64}$", title="视频编号")]
 
 
 def get_video_service(settings: Annotated[Settings, Depends(get_settings)]) -> VideoService:
-    return VideoService(settings)
+    return VideoService(settings, system_prompt=WORK_PROMPT, isolated=True)
 
 
 class VideoStatus(BaseModel):

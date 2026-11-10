@@ -7,7 +7,8 @@ function MemoryItem({ memory, workflow, busy }) {
   const [text, setText] = useState(memory.content);
   useEffect(() => setText(memory.content), [memory.content]);
   return <article className="memory-card">
-    <div className="memory-card-title"><strong>{categoryName[memory.category]}</strong><span className={`memory-badge ${memory.status}`}>{memory.status === 'confirmed' ? '正在使用' : '待确认'}</span></div>
+    <div className="memory-card-title"><strong>{categoryName[memory.category]}</strong><span className={`memory-badge ${memory.status}`}>{memory.source_enabled === false ? '来源未启用' : memory.status === 'confirmed' ? '已确认' : '待确认'}</span></div>
+    {memory.source_enabled === false && <p className="role-form-note">原卡片已保留，当前不用于角色回复。来源为工作、未分类或已不存在的话题；旧话题需先归入角色对话。</p>}
     {editing ? <textarea aria-label="编辑记忆内容" value={text} maxLength={memory.category === 'summary' ? 600 : 240} disabled={busy} onChange={event => setText(event.target.value)}/> : <p className="memory-content">{memory.content}</p>}
     <details className="memory-source"><summary>{memory.source_title ? `来源：${memory.source_title}` : '来源：手动填写'}</summary>
       {memory.source_quote && <blockquote>{memory.source_quote}</blockquote>}
@@ -67,12 +68,12 @@ export default function RoleSettings({ workflow, state }) {
         </section> : state.card && tab === 'memory' ? <section className="role-memory-section">
           <div className="panel memory-tools"><div className="panel-heading"><h2>整理一段聊过的事</h2><span className="soft-label">先候选，后确认</span></div>
             <div className="memory-extract-row"><label className="sr-only" htmlFor="memory-source">选择整理的话题</label><select id="memory-source" value={source} disabled={busy} onChange={event => setSource(event.target.value)}><option value="">选择一段话题…</option>{state.sources.map(item => <option key={item.id} value={item.id}>{item.title} · {item.message_count} 条</option>)}</select><button className="button button-primary" disabled={!canModel || !source} onClick={() => void workflow.extract(source)}>整理话题记忆</button></div>
-            <p className="role-form-note">仅在点击时，把这段话题的有限聊天内容交给模型。摘要和候选记忆需要确认后才用于对话；同一段未更新的内容会复用结果。</p>
+            <p className="role-form-note">这里只列角色话题，工作解析不进入角色记忆。点击后把有限聊天内容交给模型；摘要和候选记忆需要确认后才供角色对话参考，同一段未更新内容会复用结果。</p>
             <div className="memory-manual"><label className="sr-only" htmlFor="memory-category">手动记忆类型</label><select id="memory-category" value={manualCategory} disabled={busy} onChange={event => setManualCategory(event.target.value)}><option value="preference">偏好</option><option value="fact">用户信息</option></select>
               <label className="sr-only" htmlFor="memory-content">手动记忆内容</label><input id="memory-content" value={manualText} maxLength={240} disabled={busy} onChange={event => setManualText(event.target.value)} placeholder="手动写一条你明确希望她记住的事…"/>
               <button className="button button-secondary" disabled={busy || !manualText.trim()} onClick={async () => { if (await workflow.addMemory(manualCategory,manualText)) setManualText(''); }}>添加记忆</button></div>
           </div>
-          <div className="memory-list-heading"><h2>角色记忆卡</h2><label className="sr-only" htmlFor="memory-filter">筛选记忆状态</label><select id="memory-filter" value={filter} onChange={event => setFilter(event.target.value)}><option value="all">全部条目</option><option value="pending">待确认</option><option value="confirmed">正在使用</option></select></div>
+          <div className="memory-list-heading"><h2>角色记忆卡</h2><label className="sr-only" htmlFor="memory-filter">筛选记忆状态</label><select id="memory-filter" value={filter} onChange={event => setFilter(event.target.value)}><option value="all">全部条目</option><option value="pending">待确认</option><option value="confirmed">已确认</option></select></div>
           <p className="role-form-note">记忆卡和原始聊天分别保存。暂停或移除卡片后，原聊天记录仍在；最近对话中提过的内容也可能仍被参考。</p>
           <div className="memory-list">{visible.length ? visible.map(memory => <MemoryItem key={memory.id} memory={memory} workflow={workflow} busy={busy}/>) : <div className="memory-empty">这里还没有对应的记忆。可以先手动添加，或选择一段话题整理。</div>}</div>
         </section> : null}

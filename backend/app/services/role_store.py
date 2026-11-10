@@ -151,8 +151,10 @@ class RoleStore:
                     (content if content is not None else row["content"],status or row["status"],
                      int(row["edited"] or (content is not None and content != row["content"])),now_iso(),memory_id))
 
-    def memory_context(self, conversation_id: str | None, question: str, max_chars=1000) -> str:
+    def memory_context(self, conversation_id: str | None, question: str, max_chars=1000, *, allowed_conversations: set[str] | None = None) -> str:
         records = [m for m in self.memories() if m["status"] == "confirmed"]
+        if allowed_conversations is not None:
+            records = [m for m in records if not m["conversation_id"] or m["conversation_id"] in allowed_conversations]
         summaries = [m for m in records if m["category"] == "summary" and m["conversation_id"] == conversation_id][:1]
         tokens = set(re.findall(r"[a-zA-Z0-9]+|[\u4e00-\u9fff]{2}", question.lower()))
         facts = [m for m in records if m["category"] != "summary"]

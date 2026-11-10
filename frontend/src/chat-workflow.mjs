@@ -18,13 +18,16 @@ async function read(fetcher, url, options = {}) {
   return data;
 }
 
-export function createChatWorkflow({ fetcher = globalThis.fetch, storage = browserStorage(), makeId = uuid, mode = 'image' } = {}) {
-  const key = mode === 'media' ? 'visionsoul.current-media-conversation' : mode === 'video' ? 'visionsoul.current-video-conversation' : KEY;
-  const recentUrl = mode === 'media' ? '/api/chat/conversations?kind=all' : mode === 'video' ? '/api/chat/conversations?kind=video' : '/api/chat/conversations';
+export function createChatWorkflow({ fetcher = globalThis.fetch, storage = browserStorage(), makeId = uuid, mode = 'image', space } = {}) {
+  if (space && !['work', 'companion'].includes(space)) throw new Error('未知对话空间');
+  const scoped = url => space ? `${url}${url.includes('?') ? '&' : '?'}space=${space}` : url;
+  const key = space ? `visionsoul.${space}.current-conversation` : mode === 'media' ? 'visionsoul.current-media-conversation' : mode === 'video' ? 'visionsoul.current-video-conversation' : KEY;
+  const recentUrl = scoped(mode === 'media' ? '/api/chat/conversations?kind=all' : mode === 'video' ? '/api/chat/conversations?kind=video' : '/api/chat/conversations');
   let state = { conversationId: null, imageId: null, messages: [], recent: [], sending: false,
     videoId: null, videoContext: null,
     loading: false, error: '', pending: null, usage: null, truncated: false, replayed: false,
-    persona: { name: '小灵', style: '活泼俏皮，轻度幽默', context_turns: 6 } };
+    space, legacy: [],
+    persona: { name: space === 'work' ? '解析助手' : '小灵', style: space === 'work' ? '客观、清晰、直接' : '活泼俏皮，轻度幽默', context_turns: 6 } };
   const listeners = new Set();
   let disposed = false;
   let initialized = false;
@@ -39,6 +42,7 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
     try { if (id) storage?.setItem(key, id); else storage?.removeItem(key); } catch { /* 不支持本地存储时仍可继续聊天。 */ }
   };
   const applyConversation = data => {
+    if (space && data.space !== space) throw new Error('话题不属于当前空间。');
     if (!ID.test(data.id) || !Array.isArray(data.messages)) throw new Error('话题记录不完整，请新建话题。');
     if (data.messages.some(item => !['user', 'assistant'].includes(item.role) || typeof item.content !== 'string')) {
       throw new Error('话题记录格式异常，请新建话题。');
@@ -57,25 +61,26 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
     controller = new AbortController();
     try {
       const [persona, recent] = await Promise.all([
-        read(fetcher, '/api/chat/status', { signal: controller.signal }),
+        read(fetcher, scoped('/api/chat/status'), { signal: controller.signal }),
         read(fetcher, recentUrl, { signal: controller.signal }),
       ]);
       if (current !== epoch || disposed) return;
       publish({ persona, recent });
+      if (space) await refreshLegacy();
       let saved;
       try {
         saved = storage?.getItem(key);
-        if (!saved && mode === 'media') {
+        if (!saved && mode === 'media' && !space) {
           const candidates = [storage?.getItem('visionsoul.current-video-conversation'), storage?.getItem(KEY)].filter(Boolean);
           saved = recent.find(row => candidates.includes(row.id))?.id || candidates[0];
         }
       } catch { /* 当前页内仍可使用。 */ }
       if (saved && ID.test(saved)) {
         try {
-          const data = await read(fetcher, `/api/chat/conversations/${saved}`, { signal: controller.signal });
+          const data = await read(fetcher, scoped(`/api/chat/conversations/${saved}`), { signal: controller.signal });
           if (current === epoch && !disposed) applyConversation(data);
         } catch (error) {
-          if (error.status === 404) remember(null); else throw error;
+          if ([404, 409].includes(error.status)) remember(null); else throw error;
         }
       } else if (saved) remember(null);
     } catch (error) {
@@ -87,7 +92,7 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
     const current = ++epoch; retry = null;
     publish({ loading: true, error: '' }); controller = new AbortController();
     try {
-      const data = await read(fetcher, `/api/chat/conversations/${id}`, { signal: controller.signal });
+      const data = await read(fetcher, scoped(`/api/chat/conversations/${id}`), { signal: controller.signal });
       if (current !== epoch || disposed) return false;
       applyConversation(data); return true;
     } catch (error) {
@@ -117,6 +122,7 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
     const changedKind = mode === 'media' && ((imageId && state.videoId) || (videoId && state.imageId));
     if (changedImage || changedVideo || changedKind) newConversation();
     const body = { conversation_id: state.conversationId, message: content, image_id: imageId };
+    if (space) body.space = space;
     if (mode === 'video' || (mode === 'media' && (videoId || state.videoId))) body.video_id = videoId || state.videoId;
     if (body.video_id && inspectVideo) body.inspect_video = true;
     if (body.video_id && debugCode) body.debug_code = true;
@@ -129,6 +135,7 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
       const data = await read(fetcher, '/api/chat/messages', { method: 'POST', signal: controller.signal,
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, request_id: retry.request_id }) });
       if (current !== epoch || disposed) return false;
+      if (space && data.space !== space) throw new Error('回复空间不一致，请重试恢复原消息。');
       if (!ID.test(data.conversation_id) || data.user_message?.role !== 'user'
           || data.assistant_message?.role !== 'assistant' || !data.assistant_message.content?.trim()) {
         throw new Error('回复内容不完整，请重试以恢复这条消息。');
@@ -151,8 +158,28 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
       return false;
     }
   }
+  async function refreshLegacy() {
+    if (!space || disposed) return;
+    try { const legacy = await read(fetcher, '/api/chat/conversations?kind=all&space=legacy'); publish({ legacy }); }
+    catch { publish({ error: '旧话题列表暂时无法读取，已有话题仍可使用。' }); }
+  }
+  async function classifyLegacy(id) {
+    if (!space || disposed || state.sending || state.loading || !ID.test(id)) return false;
+    publish({ loading: true, error: '' });
+    try {
+      await read(fetcher, `/api/chat/conversations/${id}/classify`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ space }) });
+      const recent = await read(fetcher, recentUrl);
+      publish({ recent });
+      await refreshLegacy();
+      const data = await read(fetcher, scoped(`/api/chat/conversations/${id}`));
+      applyConversation(data); return true;
+    } catch (error) { publish({ error: readableError(error) }); await refreshLegacy(); return false; }
+    finally { publish({ loading: false }); }
+  }
   return { getState: () => state, subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     initialize, loadConversation, newConversation, send,
-    async refreshPersona() { try { const persona = await read(fetcher,'/api/chat/status'); publish({ persona }); } catch { /* 不丢失已有对话和输入。 */ } },
+    refreshLegacy, classifyLegacy,
+    async refreshPersona() { try { const persona = await read(fetcher,scoped('/api/chat/status')); publish({ persona }); } catch { /* 不丢失已有对话和输入。 */ } },
     dispose() { disposed = true; epoch++; controller?.abort(); listeners.clear(); } };
 }
