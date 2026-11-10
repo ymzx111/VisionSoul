@@ -9,8 +9,8 @@ export default function VideoChatPanel({ workflow, state, videoState, draft, set
   const canSend = state.persona.configured && !busy && ready && (selected || state.videoId) && draft.trim();
   const messages = state.pending ? [...state.messages, { ...state.pending, id: 'pending' }] : state.messages;
   useEffect(() => { if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, [state.messages, state.pending]);
-  const send = async (inspectVideo = false) => {
-    const sent = await workflow.send(draft, null, { videoId: selected, uploadReady: ready, inspectVideo });
+  const send = async (inspectVideo = false, debugCode = false) => {
+    const sent = await workflow.send(draft, null, { videoId: selected, uploadReady: ready, inspectVideo, debugCode });
     if (sent) setDraft(current => current === draft ? '' : current);
   };
   return <section className="panel chat-panel video-chat-panel" aria-labelledby="video-chat-heading">
@@ -32,7 +32,7 @@ export default function VideoChatPanel({ workflow, state, videoState, draft, set
           <p data-testid={item.role === 'assistant' ? 'video-companion-message' : undefined}>{item.content}</p>
         </article>)}
         {state.sending && <div className="companion-thinking"><span className="thinking-dot"/><span className="thinking-dot"/><span className="thinking-dot"/>{state.persona.name}正在看、正在接话…</div>}
-      </> : <div className="chat-welcome"><span className="welcome-mark">灵</span><h3>画面之外，也听你说。</h3><p>选一个视频，再配上你想说的话。<br/>比如：今天去了西湖，看看这湖水怎么样？</p><span>接着追问，我会参考这个话题的上文。</span></div>}
+      </> : <div className="chat-welcome"><span className="welcome-mark">▷</span><h3>把问题，连同画面一起发来。</h3><p>可以分享日常片段，也可以拍代码和终端报错。<br/>写清你想实现什么，代码问题点击“代码排错”。</p><span>接着追问，会参考这个话题的上文。</span></div>}
     </div>
     <div className="chat-composer">
       {changed && <p className="chat-image-note">已换视频：发送时会开启新话题，原对话仍保留。</p>}
@@ -42,9 +42,10 @@ export default function VideoChatPanel({ workflow, state, videoState, draft, set
       {state.truncated && <p className="chat-image-note">上一条回复达到长度上限，可以继续追问。</p>}
       <label className="sr-only" htmlFor="video-message">对角色说的话</label>
       <textarea id="video-message" maxLength={2000} disabled={busy} value={draft} onChange={event => setDraft(event.target.value)}
-        placeholder={state.videoId ? '接着聊这段视频，也可以问问刚才说过的事…' : '嘿，我今天去了西湖玩，你看看这湖水怎么样…'}/>
+        placeholder={state.videoId ? '接着问原因、修改步骤，或说明你已改了什么…' : '例如：我想计算平均值，运行后报错。请结合代码和终端帮我定位。'}/>
       <div className="question-actions"><span className="cost-note">发送才调用模型{state.usage ? state.replayed ? ' · 已恢复原回复，未重复调用' : ` · 本次 ${state.usage.total_tokens} token` : ''}</span>
         <button className="button button-secondary" disabled={!canSend} title="根据清晰度、曝光和画面差异，自动挑选最多4张高清图；本地选图不调用AI，分析仍可能产生模型用量。" onClick={() => void send(true)}>细看并比对</button>
+        <button className="button button-secondary" disabled={!canSend} title="用最多4张高清图核对代码与报错，生成修改建议；调用模型，不执行代码。" onClick={() => void send(false, true)}>代码排错</button>
         <button className="button button-primary" disabled={!canSend} onClick={() => void send()}>{state.sending ? '正在回复…' : state.videoId && !changed ? '发送消息 →' : '分享并对话 →'}</button></div>
     </div>
     <div className="analysis-footer video-limit-note"><span className="subtle-dot"/><span>保存首次分享＋最近 {state.persona.context_turns} 轮 · 本机记录可恢复</span></div>

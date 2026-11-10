@@ -1,0 +1,16 @@
+{
+  "id": "test_unreadable",
+  "split": "test",
+  "code": "prices = [10, 20]\nprint(sum(price))\n",
+  "question": "代码报错了，请看这段视频帮我定位。",
+  "speech": null,
+  "expected_error": null,
+  "expected_check": "画面模糊，说明信息不足并索要清楚画面或文本",
+  "blur": true,
+  "file": "media/test_unreadable/clip.mp4",
+  "sha256": "24a27b329891e6c437f7f45d854ab8b552cf985ba7323be64d64e5d8670d6b5a",
+  "actual_stderr": "Traceback (most recent call last):\n  File \"G:\\VisionSoul\\datasets\\code_debug_eval\\media\\test_unreadable\\lesson.py\", line 2, in <module>\n    print(sum(price))\n              ^^^^^\nNameError: name 'price' is not defined. Did you mean: 'prices'?\n",
+  "speech_start": null,
+  "audio_source": null,
+  "note": "程序合成屏幕视频，不是课堂实拍；test_type混入Wikitongues Widya公开视频的无关讲话作声音负对照，未合成/声称有人朗读代码问题。"
+}

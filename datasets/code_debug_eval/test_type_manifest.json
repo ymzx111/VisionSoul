@@ -1,0 +1,22 @@
+{
+  "id": "test_type",
+  "split": "test",
+  "code": "first = \"12\"\nsecond = 8\ntotal = first + second\nprint(total)\n",
+  "question": "我希望把两个数字相加得到20，但运行报错。请看视频，说明原因、需要改哪里以及怎么验证。",
+  "speech": null,
+  "mismatch_audio": true,
+  "expected_error": "TypeError",
+  "expected_check": "字符串与整数直接相加，按求和目的先转换为整数",
+  "file": "media/test_type/clip.mp4",
+  "sha256": "c49bab66ae806384f7235b79a63574de60d5d31ae9057835b4c2fc6a2d87293c",
+  "actual_stderr": "Traceback (most recent call last):\n  File \"G:\\VisionSoul\\datasets\\code_debug_eval\\media\\test_type\\lesson.py\", line 3, in <module>\n    total = first + second\n            ~~~~~~^~~~~~~~\nTypeError: can only concatenate str (not \"int\") to str\n",
+  "speech_start": 1,
+  "audio_source": {
+    "page": "https://commons.wikimedia.org/wiki/File:Widya_20210426_nan.ogg",
+    "author": "Wikitongues",
+    "license": "CC-BY-SA-4.0",
+    "prepared_parent": "datasets/video_eval_v2/test/widya_nan.mp4",
+    "prepared_parent_sha256": "826a06beb05a1074f3892c2898bd7e0f8a33247ff39a5d45b3d54c0dd89a3895"
+  },
+  "note": "程序合成屏幕视频，不是课堂实拍；test_type混入Wikitongues Widya公开视频的无关讲话作声音负对照，未合成/声称有人朗读代码问题。"
+}

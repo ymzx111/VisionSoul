@@ -3,6 +3,7 @@ import VideoChatPanel from './VideoChatPanel.jsx';
 import VideoComparison from './VideoComparison.jsx';
 import AudioEvidence from './AudioEvidence.jsx';
 import AudioEditor from './AudioEditor.jsx';
+import VideoCodeDebug from './VideoCodeDebug.jsx';
 
 export function formatTime(seconds) {
   const tenths = Math.floor(seconds * 10 + 1e-6);
@@ -21,7 +22,7 @@ export default function VideoWorkspace({ workflow, state, chatWorkflow, chatStat
   const result = chatState.videoId === video?.video_id ? chatState.videoContext || state.result : state.result;
   const stale = !!result && (result.analysis_stale || (result.analysis_audio_revision ?? result.audio_revision ?? 0) !== (video?.audio_revision || 0));
   const keywords = result ? [...new Set(result.observations.flatMap(item => item.keywords))] : [];
-  useEffect(() => { setView(result?.comparison ? 'comparison' : 'video'); }, [result?.comparison,video?.video_id]);
+  useEffect(() => { setView(result?.code_debug ? 'debug' : result?.comparison ? 'comparison' : 'video'); }, [result?.comparison,result?.code_debug,video?.video_id]);
   const seek = seconds => {
     if (!player.current) return;
     setView('video');
@@ -37,11 +38,11 @@ export default function VideoWorkspace({ workflow, state, chatWorkflow, chatStat
   return <div className="work-grid video-grid">
     <section className="panel video-panel" aria-labelledby="video-heading">
       <div className="panel-heading"><div className="section-heading"><span className="step">01</span><h2 id="video-heading">你的视频</h2></div>
-        {video && <div className="video-view-switch" aria-label="视频查看内容"><button aria-pressed={view === 'video'} onClick={() => setView('video')}>画面</button><button aria-pressed={view === 'comparison'} disabled={!result?.comparison} onClick={() => setView('comparison')}>比对</button></div>}
+        {video && <div className="video-view-switch" aria-label="视频查看内容"><button aria-pressed={view === 'video'} onClick={() => setView('video')}>画面</button><button aria-pressed={view === 'comparison'} disabled={!result?.comparison} onClick={() => setView('comparison')}>比对</button><button aria-pressed={view === 'debug'} disabled={!result?.code_debug} onClick={() => setView('debug')}>排错</button></div>}
         {video && <button className="text-button" disabled={busy} onClick={() => { workflow.clear(); setPosition(''); setPlaybackError(''); }}>清空</button>}</div>
       <div className="video-panel-content">
       {stale && <p className="notice notice-warning" role="status">对白已校对，旧综合分析待更新。新追问优先使用校对白；点击“细看并比对”才会重新读取画面并产生 API 用量。</p>}
-      <div className="video-media" hidden={view === 'comparison'}>
+      <div className="video-media" hidden={view !== 'video'}>
       <input type="file" ref={input} className="sr-only" tabIndex={-1} accept="video/mp4,.mp4" aria-label="选择视频文件" disabled={busy}
         onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ''; if (files.length) chooseFiles(files); }}/>
       <div className={`preview-zone video-preview ${video ? '' : 'is-empty'}`}
@@ -79,11 +80,12 @@ export default function VideoWorkspace({ workflow, state, chatWorkflow, chatStat
         })}</details>}
       </div>
       {view === 'comparison' && video && result?.comparison && <VideoComparison comparison={result.comparison} frames={video.frames} onSelect={jump} formatTime={formatTime} question={chatState.videoId === video.video_id ? chatState.videoContext?.comparison_question : ''}/>}
+      {view === 'debug' && video && result?.code_debug && <VideoCodeDebug report={result.code_debug} frames={video.frames} onSelect={jump} formatTime={formatTime} stale={stale}/>}
       {video?.audio?.status === 'ready' && <AudioEditor videoId={video.video_id} duration={video.duration_seconds} disabled={busy} onBusyChange={setAudioBusy} onSaved={async () => {
         await workflow.loadVideo(video.video_id);
         if (chatState.videoId === video.video_id && chatState.conversationId) await chatWorkflow.loadConversation(chatState.conversationId);
       }}/>}
-      {video && <AudioEvidence key={`${video.video_id}-${video.audio_revision || 0}`} audio={result?.current_audio || video.audio || result?.audio} links={stale ? [] : result?.audio_links || []} frames={video.frames} duration={video.duration_seconds} onSeek={seek} formatTime={formatTime} soundClues={video.sound_clues} notes={stale ? [] : result?.evidence_notes || []}/>}
+      {video && <AudioEvidence key={`${video.video_id}-${video.audio_revision || 0}`} audio={result?.current_audio || video.audio || result?.audio} links={stale ? [] : result?.audio_links || []} frames={video.frames} duration={video.duration_seconds} onSeek={seek} formatTime={formatTime} soundClues={video.sound_clues} notes={stale ? [] : result?.evidence_notes || []} warnings={video.audio_warnings || result?.audio_warnings || []}/>}
       </div>
     </section>
     <VideoChatPanel workflow={chatWorkflow} state={chatState} videoState={{ ...state, loadingVideo: state.loadingVideo || audioBusy }} draft={draft} setDraft={setDraft}/>

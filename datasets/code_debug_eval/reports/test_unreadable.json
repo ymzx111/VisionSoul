@@ -1,0 +1,135 @@
+{
+  "id": "test_unreadable",
+  "status": "accepted",
+  "turn": {
+    "conversation_id": "408a69b3160d4aa1bc1d94f4938d4602",
+    "image_id": null,
+    "video_id": "455cc0f22a8c4752743fc9a448a100af057b160219b30ed852a489e34a68511a",
+    "video_context": {
+      "video_id": "455cc0f22a8c4752743fc9a448a100af057b160219b30ed852a489e34a68511a",
+      "duration_seconds": 16.0,
+      "summary": "画面是深色背景的终端或日志类界面，文字整体被模糊处理，没有任何一处代码或报错信息清晰可读；视频无音轨。",
+      "observations": [
+        {
+          "frame_index": 0,
+          "keywords": [
+            "深色背景",
+            "模糊文字"
+          ],
+          "description": "画面为深色背景，左上角有一块极模糊的文字痕迹，无法辨认字符。",
+          "uncertain": true,
+          "time_seconds": 0.0
+        },
+        {
+          "frame_index": 1,
+          "keywords": [
+            "左侧文字块",
+            "不可读"
+          ],
+          "description": "与图0基本相同，左侧模糊文字块位置一致，内容仍不可读。",
+          "uncertain": true,
+          "time_seconds": 1.0
+        },
+        {
+          "frame_index": 2,
+          "keywords": [
+            "日志行",
+            "模糊",
+            "暗红"
+          ],
+          "description": "出现一个暗色文本区域，像日志/终端的多行输出，字符被模糊处理，无法读取。",
+          "uncertain": true,
+          "time_seconds": 7.0
+        },
+        {
+          "frame_index": 3,
+          "keywords": [
+            "多行文本",
+            "模糊"
+          ],
+          "description": "左侧有若干行淡色文字，疑似启动或日志信息，具体字符不可辨。",
+          "uncertain": true,
+          "time_seconds": 8.0
+        }
+      ],
+      "comparison": null,
+      "audio": {
+        "version": "whisper-small-int8-timeline-v1",
+        "status": "no_audio",
+        "message": "视频没有音轨，仅分析画面。",
+        "language": null,
+        "segments": [],
+        "source": "automatic"
+      },
+      "audio_links": [],
+      "evidence_notes": [],
+      "code_debug": {
+        "status": "insufficient",
+        "visible_error": null,
+        "evidence": [
+          {
+            "frame_index": 2,
+            "kind": "context",
+            "excerpt": "（暗色多行文本区域，字符模糊不可读）",
+            "line_number": null
+          },
+          {
+            "frame_index": 3,
+            "kind": "context",
+            "excerpt": "（左侧多行淡色文字，字符模糊不可读）",
+            "line_number": null
+          }
+        ],
+        "causes": [],
+        "steps": [
+          "把报错窗口停稳在屏幕上，等画面清晰后再录，或直接截图",
+          "放大终端/源码字体，保证报错原文和行号占满画面可读区域",
+          "如果录屏仍糊，直接把错误文本和对应源码行粘贴给我"
+        ],
+        "suggested_code": null,
+        "missing": [
+          "可清晰阅读的报错原文（错误类型与消息）",
+          "报错指向的文件路径与行号",
+          "出错调用附近的源码片段"
+        ]
+      },
+      "audio_warnings": [],
+      "analysis_audio_revision": 0,
+      "analysis_stale": false,
+      "sound_clues": null,
+      "opening_message": "代码报错了，请看这段视频帮我定位。",
+      "comparison_question": "代码报错了，请看这段视频帮我定位。"
+    },
+    "user_message": {
+      "id": 5,
+      "role": "user",
+      "content": "代码报错了，请看这段视频帮我定位。",
+      "image_id": null,
+      "video_id": "455cc0f22a8c4752743fc9a448a100af057b160219b30ed852a489e34a68511a",
+      "created_at": "2026-11-10T06:15:16.805325+00:00"
+    },
+    "assistant_message": {
+      "id": 6,
+      "role": "assistant",
+      "content": "代码排错：现有画面不足以定位。\n1. 把报错窗口停稳在屏幕上，等画面清晰后再录，或直接截图\n2. 放大终端/源码字体，保证报错原文和行号占满画面可读区域\n3. 如果录屏仍糊，直接把错误文本和对应源码行粘贴给我\n需要补充：可清晰阅读的报错原文（错误类型与消息）；报错指向的文件路径与行号；出错调用附近的源码片段",
+      "image_id": null,
+      "created_at": "2026-11-10T06:15:16.805325+00:00"
+    },
+    "model": "deepseek-flash",
+    "usage": {
+      "prompt_tokens": 2369,
+      "completion_tokens": 436,
+      "total_tokens": 2805
+    },
+    "truncated": false,
+    "persona_id": "xiaoling-v2",
+    "replayed": false
+  },
+  "audio_warnings": [],
+  "usage": {
+    "prompt_tokens": 2369,
+    "completion_tokens": 436,
+    "total_tokens": 2805
+  },
+  "video_id": "455cc0f22a8c4752743fc9a448a100af057b160219b30ed852a489e34a68511a"
+}

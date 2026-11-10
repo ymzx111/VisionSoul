@@ -90,3 +90,17 @@ test('only explicit video inspection requests new visual comparison and keeps it
   await workflow.send('比对',null,{inspectVideo:true});
   assert.equal(sent[1].inspect_video,true);assert.equal(sent[1].request_id,sent[2].request_id);
 });
+
+test('explicit code debugging is separately fingerprinted and normal followup has no debug flag',async()=>{
+  const sent=[];let n=0;
+  const workflow=createChatWorkflow({mode:'video',storage:null,makeId:()=>String(++n).repeat(32),fetcher:async(url,options)=>{
+    if(url.endsWith('/messages')){const body=JSON.parse(options.body);sent.push(body);return response(result(body,sent.length*2));}
+    return response(url.endsWith('/status')?{configured:true}:[]);
+  }});
+  await workflow.initialize();
+  assert.equal(await workflow.send('代码报错',null,{videoId:video,debugCode:true}),true);
+  assert.equal(sent[0].debug_code,true);assert.equal(Object.hasOwn(sent[0],'inspect_video'),false);
+  await workflow.send('怎么改');assert.equal(Object.hasOwn(sent[1],'debug_code'),false);
+  assert.equal(await workflow.send('冲突',null,{debugCode:true,inspectVideo:true}),false);
+  assert.equal(sent.length,2);
+});

@@ -26,6 +26,9 @@ from app.services.video_details import detail_path
 from app.services.audio_evidence import AudioTranscript, AudioLink, AUDIO_VERSION, MAX_AUDIO_LINKS, audio_prompt, validate_links, normalize_model_links, add_time_citations, current_context
 from app.services.audio_corrections import read_audio, save_correction, CorrectionError
 from app.services.sound_clues import measure_sound, sound_prompt
+from app.services.transcript_quality import transcript_warnings
+from app.services.video_debug import CodeDebugReport, debug_reply
+from app.services.video_tasks import task_prompt
 
 logger = logging.getLogger(__name__)
 VIDEO_TASK = (Path(__file__).resolve().parents[1] / "prompts" / "video.md").read_text(encoding="utf-8").strip()
@@ -84,6 +87,7 @@ class VideoEvidence(BaseModel):
     comparison: Comparison | None = Field(default=None, title="多视角辨识与候选比对")
     audio_links: list[AudioLink] = Field(default_factory=list, max_length=MAX_AUDIO_LINKS, title="音画依据关系（模型判断）")
     evidence_notes: list[str] = Field(default_factory=list, max_length=4, title="依据处理说明")
+    code_debug: CodeDebugReport | None = None
 
 
 class VideoContent(VideoEvidence):
@@ -91,7 +95,7 @@ class VideoContent(VideoEvidence):
 
 
 class VideoAnswer(VideoContent):
-    reply: str = Field(min_length=1, max_length=800, title="角色回应及按需附加的原始时间依据")
+    reply: str = Field(min_length=1, max_length=6000, title="回应、排错建议及按需附加的原始时间依据")
     video_id: str = Field(title="视频编号")
     model: str = Field(title="使用模型")
     usage: TokenUsage | None = Field(default=None, title="原分析用量")
@@ -110,6 +114,7 @@ class VideoInfo(BaseModel):
     sampling_policy: str = Field(default="one_second",title="采样策略")
     audio: AudioTranscript = Field(default_factory=AudioTranscript, title="本机对白转写")
     audio_revision: int = Field(default=0, ge=0)
+    audio_warnings: list[dict] = Field(default_factory=list, max_length=64)
     video_url: str = Field(title="播放地址")
     sound_clues: dict | None = None
     result: VideoAnswer | None = Field(default=None, title="已有分析结果")
@@ -136,6 +141,7 @@ class VideoService:
             directory = video_directory(video_id, self.settings)
             record = read_audio(directory)
             record["sound_clues"] = measure_sound(directory, record["audio"])
+            record['audio_warnings'] = transcript_warnings(record['audio'])
             return record
         except VideoError:
             raise
@@ -210,10 +216,10 @@ class VideoService:
         return {index: detail_path(directory, index) if detail_path(directory, index).is_file() else path
                 for index, path in paths.items()}
 
-    def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None, memory_text: str = "", inspect: bool = False) -> VideoAnswer:
+    def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None, memory_text: str = "", inspect: bool = False, debug_code: bool = False) -> VideoAnswer:
         directory = video_directory(info.video_id, self.settings)
         parts = [{"type": "text", "text": "图号@原视频秒，区间是重复图的采样点，不代表连续动作。"}]
-        detailed = self._detail_frames(info, directory) if inspect else {}
+        detailed = self._detail_frames(info, directory) if inspect or debug_code else {}
         for frame in info.frames:
             high = frame.index in detailed
             parts.append({"type": "text", "text": f"{frame.index}@{compact_times(frame.seen_at, info.sample_interval_seconds)}"})
@@ -224,12 +230,11 @@ class VideoService:
         parts.append({"type": "text", "text": audio_prompt(info.audio, info.frames)})
         if info.sound_clues:
             parts.append({"type": "text", "text": sound_prompt(info.sound_clues)})
-        if info.audio.status == "ready":
-            prompt += "\n" + AUDIO_TASK
+        prompt = task_prompt(prompt, audio_task=AUDIO_TASK if info.audio.status == 'ready' else '',
+                             comparison_task=COMPARISON_TASK if inspect and not debug_code else '', debug_code=debug_code)
         if caption:
             parts.append({"type": "text", "text": caption})
-        if inspect:
-            prompt += "\n" + COMPARISON_TASK
+        if inspect or debug_code:
             if not detailed:
                 prompt += "\n此视频只有旧版概览图，没有额外细节图；不要声称看到了叶脉、小字等缺失细节。必要时提示重新上传原视频。"
         reply = self.client.complete([{"role": "system", "content": prompt},
@@ -240,12 +245,18 @@ class VideoService:
                 raise ValueError("truncated")
             content = VideoContent.model_validate_json(reply.answer)
             content.audio_links, content.evidence_notes = normalize_model_links(content.audio_links, info.audio, info.frames)
+            if transcript_warnings(info.audio):
+                content.evidence_notes.append('部分自动转写待校对，分析已遮蔽异常文字；可回听并校对白。')
             if len(content.audio_links) > 4:
                 content.evidence_notes.append(f"已保存{len(content.audio_links)}条音画依据，页面默认展示前4条，其余可展开。")
-            if inspect and content.comparison is None:
+            if debug_code and content.code_debug is None:
+                raise ValueError('missing code debug report')
+            if inspect and not debug_code and content.comparison is None:
                 raise ValueError("missing comparison")
             if content.comparison:
                 content.comparison.check_references({frame.index for frame in info.frames})
+            if content.code_debug:
+                content.code_debug.check_references({frame.index for frame in info.frames})
             indices = [item.frame_index for item in content.observations]
             # 一帧可以有主体、背景等多条不同观察；只拒绝不存在的图号。
             if any(index >= len(info.frames) for index in indices):
@@ -264,7 +275,7 @@ class VideoService:
         except ValueError as exc:
             raise DeepSeekError("模型返回的结构化结果不完整，本次可能已有用量；不会自动重试。", 502) from exc
         payload = content.model_dump()
-        payload["reply"] = add_time_citations(content.reply, caption, info.audio, content.audio_links)
+        payload["reply"] = add_time_citations(debug_reply(content.code_debug, info.frames) if debug_code else content.reply, caption, info.audio, content.audio_links)
         return VideoAnswer(**payload, video_id=info.video_id, model=reply.model, usage=reply.usage, audio_revision=info.audio_revision)
 
     @staticmethod
@@ -276,15 +287,17 @@ class VideoService:
                 "comparison": result.comparison.model_dump() if result.comparison else None,
                 "audio": info.audio.model_dump(), "audio_links": [row.model_dump() for row in result.audio_links],
                 "evidence_notes": result.evidence_notes,
+                "code_debug": result.code_debug.model_dump() if result.code_debug else None,
+                "audio_warnings": transcript_warnings(info.audio),
                 "analysis_audio_revision": info.audio_revision, "analysis_stale": False, "sound_clues": info.sound_clues}
 
-    def inspect(self, video_id: str, message: str, history: list[dict], memory_text: str = ""):
+    def inspect(self, video_id: str, message: str, history: list[dict], memory_text: str = "", *, debug_code: bool = False):
         """显式重新读画面，一次请求完成辨识、比对和接话；结果只随当前话题保存。"""
         if not ANALYSIS_LOCK.acquire(blocking=False):
             raise VideoError("已有视频正在观察，请稍等后再发送。",409)
         try:
             info = self.info(video_id)
-            answer = self._observe(info,message,history,memory_text,inspect=True)
+            answer = self._observe(info,message,history,memory_text,inspect=not debug_code,debug_code=debug_code)
             return self._snapshot(info,answer), ModelReply(answer=answer.reply,model=answer.model,usage=answer.usage)
         finally:
             ANALYSIS_LOCK.release()
@@ -388,6 +401,8 @@ class VideoService:
             validate_links(answer.audio_links, transcript, [SampleFrame(**{**frame, "url": ""}) for frame in manifest["frames"]])
             if answer.comparison:
                 answer.comparison.check_references({frame['index'] for frame in manifest['frames']})
+            if answer.code_debug:
+                answer.code_debug.check_references({frame['index'] for frame in manifest['frames']})
             return answer.model_copy(update={"cached": True})
         except (ValueError, OSError) as exc:
             # 缓存损坏时不静默重新付费，要求人工处理。
@@ -404,6 +419,7 @@ class VideoService:
             data["audio"] = record["audio"]
             data["audio_revision"] = record["revision"]
             data["sound_clues"] = record["sound_clues"]
+            data['audio_warnings'] = record['audio_warnings']
             for frame in data["frames"]:
                 frame["url"] = f"/api/videos/{video_id}/frames/{frame['index']}"
                 frame["detail_url"] = f"/api/videos/{video_id}/frames/{frame['index']}/detail" if (directory / f"detail-{frame['index']}.jpg").is_file() else None

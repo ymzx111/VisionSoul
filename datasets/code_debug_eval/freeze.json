@@ -1,0 +1,26 @@
+{
+  "at": "2026-11-10T06:14:39.888208+00:00",
+  "code_sha256": {
+    "backend/app/services/videos.py": "dc216e60773877d016303f381c826ece673afcc152ba51b8eb1e6d6a362eef2a",
+    "backend/app/services/chat.py": "698959965992a681283c958f281e80e2b0d53ec8ad7816202de47fe014e49789",
+    "backend/app/services/audio_evidence.py": "9c970df9b5dfac9a88e6c3388905eb0a4e5ebc27f2f35878c9f7fa64a5cf2c6f",
+    "backend/app/services/transcript_quality.py": "7a43ad1e826f560602a97a3691b8b0c1b93e409546c8f6d406188c5853d5b9d0",
+    "backend/app/services/video_debug.py": "bcd4478eb3ba7b1cfc9981aa69a4b3ad2eb0aae74bfa6124be1f89b148250748",
+    "backend/app/services/video_tasks.py": "5d0e9c92bd90f3971097a21fd45731b0d7a5961024c69efdd55e5ef5741f0b2c",
+    "backend/app/services/frame_quality.py": "8c05cc6a57b458ac726e799428d211c393f2432fbdc7f3a66cf4e025323a07f9",
+    "backend/app/services/video_selection.py": "e0fe9415a9ce930a434c54b8d4dd34edc3ea34aef0151781f0f6ddc958054d10",
+    "backend/app/prompts/video.md": "85fbf9ec7d381a059aa30b4538d76cad21eaf2591c409c26192001ca818ce79f",
+    "backend/app/prompts/audio.md": "4996d4f7d35fe8f9bcfa5e322e3112c6efe32a29b6dc01f5dfe7f885c28f3630",
+    "backend/app/prompts/video_debug.md": "abfc6a07781a23ae6bab8acd474bd709f1b8e4cbdfb4589ef2b6e9eb377879c8",
+    "frontend/src/VideoCodeDebug.jsx": "fe87ea0e5c27a7ca9493d3b936d00515d9c7f69ad31317aa67f1305e4a8a79a8",
+    "frontend/src/VideoChatPanel.jsx": "ef4a81566bee35c1d83db0e2179180ac8389507248533911b9357acb2a66b7bb",
+    "frontend/src/VideoWorkspace.jsx": "cd27449a076a9af6ae5dd1669bca220fc37bcb2e83b56eba9695423f242aa2fb",
+    "frontend/src/AudioEvidence.jsx": "ff85b4069b0d7824db18a278339745fe4b231823e69911d29090e3238f0d3501",
+    "frontend/src/code-debug.mjs": "dbd90d7b6bff14a5df60bba4db12be9a31219e812c49fc4f32adafc94bc4a7dc",
+    "frontend/src/chat-workflow.mjs": "3e241d5e2565552ed88e5a0aa27052f844e6fcc3ce7b05316bd1aa7f4f78b99d",
+    "tools/evaluate_code_video.py": "eb13e346cea95f88927aa356628afa2488b0fe3e8eb74e2712b88543661a591e",
+    "backend/app/api/routes/chat.py": "b5b3bb7dc099ae9a50764a72c8dcc1b48e907d45db5076dd64efc4cf994eeacd",
+    "backend/app/core/config.py": "9c916f72990fb070947a9726fb3e8c5d0237f62671f6d84fa927e6e7edbf4f48"
+  },
+  "policy": "dev用于调试，test为预先定义的受控检查题，冻结后生成/推理；非自然实拍、非盲测或专业标注集。"
+}

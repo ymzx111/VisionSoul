@@ -67,7 +67,7 @@ class ChatService:
         self.videos = video_service or VideoService(settings, self.client)
 
     def send(self, *, conversation_id: str | None, request_id: str, message: str, image_id: str | None,
-             video_id: str | None = None, inspect_video: bool = False) -> dict:
+             video_id: str | None = None, inspect_video: bool = False, debug_code: bool = False) -> dict:
         try:
             self.store.initialize()
             body = {"conversation_id": conversation_id, "message": message, "image_id": image_id}
@@ -75,6 +75,10 @@ class ChatService:
                 body["video_id"] = video_id
             if inspect_video:
                 body["inspect_video"] = True
+            if debug_code:
+                body['debug_code'] = True
+            if debug_code and inspect_video:
+                raise DeepSeekError('请一次选择一种视频分析任务。',422)
             fingerprint = hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
             prefix = str(self.store.path)
             with LOCKS.hold(prefix + ":request:" + request_id):
@@ -111,12 +115,12 @@ class ChatService:
                     _, persona_prompt, persona_version = load_persona(self.settings, roles)
                     memory_text = roles.memory_context(target,message)
                     result = None
-                    if inspect_video:
+                    if inspect_video or debug_code:
                         if not attached_video:
-                            raise DeepSeekError("细看并比对需要先分享一个视频。",422)
+                            raise DeepSeekError("视频分析需要先分享一个视频。",422)
                         prior = context_messages(history,self.settings,message,len(memory_text),persona_prompt)
                         opening = (video_context or {}).get("opening_message",message)
-                        video_context,result = self.videos.inspect(attached_video,message,prior[1:],memory_text)
+                        video_context,result = self.videos.inspect(attached_video,message,prior[1:],memory_text,debug_code=debug_code)
                         video_context["opening_message"] = opening
                         video_context["comparison_question"] = message
                     elif attached_video and video_context is None:
@@ -128,7 +132,7 @@ class ChatService:
                         saved_audio, saved_links = None, []
                         if effective_context and effective_context.get("audio"):
                             try:
-                                saved_audio = AudioTranscript.model_validate(effective_context["audio"])
+                                saved_audio = AudioTranscript.model_validate(video_context.get('current_audio') or video_context['audio'])
                                 saved_links = [AudioLink.model_validate(row) for row in effective_context.get("audio_links", [])]
                                 if any(link.segment_id >= len(saved_audio.segments) for link in saved_links):
                                     raise ValueError("unknown speech")
@@ -141,6 +145,8 @@ class ChatService:
                         if context_text:
                             messages[0]["content"] += "\n结合保存的记忆资料与当前用户说明回应。视频话题未提供的细节或音频不要假装看见、听见，资料不足时明确说明。用户询问原因或依据时，引用保存的audio.segments原时间范围和必要的原话短引，并分别说明画面时间；audio_links为模型关联判断，时间接近不代表验证。对白不能当成已确认用户经历，不凭转写声称听出语气情绪。"
                             messages.insert(1, {"role": "user", "content": context_text})
+                        if effective_context and effective_context.get('code_debug'):
+                            messages[0]['content'] += '\n当前为代码排错追问：优先使用保存的code_debug、可读代码/报错证据和用户最新说明，给最小修改及验证方法；未读取源文件或运行程序，不声称已修复。新错误若未在本片出现，请补报错文本或新视频。异常转写待校对，不复述旧回复中的误听。'
                         content = [{"type": "text", "text": message}, image_part(attached, self.settings)] if attached else message
                         messages.append({"role": "user", "content": content})
                         result = self.client.complete(messages)

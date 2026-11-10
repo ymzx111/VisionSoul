@@ -38,6 +38,13 @@ def select(images, limit=4):
 
 
 class SelectionTests(unittest.TestCase):
+    def test_dark_transition_avoided_but_dark_code_editor_preserved(self):
+        dark=Image.new('RGB',(320,180),(8,8,8));ImageDraw.Draw(dark).ellipse((90,40,220,170),fill=(14,14,14))
+        editor=Image.new('RGB',(320,180),'#151515');draw=ImageDraw.Draw(editor)
+        for y in range(12,160,16):draw.text((12,y),'print(total) # NameError',fill='white')
+        selected=select([dark,editor,Image.new('RGB',editor.size,'blue')])
+        self.assertNotIn(0,selected);self.assertIn(1,selected)
+
     def test_similar_nearby_defocus_does_not_spend_detail_budget(self):
         sharp = patterned()
         blurred = sharp.filter(ImageFilter.GaussianBlur(6))

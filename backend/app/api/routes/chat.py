@@ -25,6 +25,7 @@ class SendMessage(BaseModel):
     request_id: Identifier = Field(title="消息请求编号", description="前端自动生成；原样重试已完成的请求不会再调用模型。")
     message: str = Field(min_length=1, max_length=2000, title="你的消息")
     inspect_video: bool = Field(default=False,title="重新细看视频并比较候选",description="显式重新发送画面，可能增加模型用量；普通追问为false。")
+    debug_code: bool = Field(default=False,title="从视频辅助排查代码报错",description="显式读取最多4张高清并生成建议，不执行代码；产生API用量。")
     image_id: Identifier | None = Field(default=None, title="可选图片编号", description="一段话题最多关联一张图片。")
     video_id: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None = Field(default=None, title="可选视频编号", description="先上传视频，再与文字一起发送；同话题后续可不再填写。")
 
@@ -32,6 +33,8 @@ class SendMessage(BaseModel):
     def one_media(self):
         if self.image_id and self.video_id:
             raise ValueError("一次只能分享一张图片或一个视频。")
+        if self.inspect_video and self.debug_code:
+            raise ValueError('一次只能选择一种视频分析任务。')
         return self
 
 

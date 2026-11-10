@@ -1,0 +1,14 @@
+{
+  "id": "dev_name",
+  "split": "dev",
+  "code": "prices = [10, 20]\nprint(sum(price))\n",
+  "question": "我想计算总价，代码运行报错。请结合代码和终端帮我定位、给最小修改步骤。",
+  "speech": null,
+  "expected_error": "NameError",
+  "expected_check": "变量price与prices不一致，改为prices",
+  "file": "media/dev_name/clip.mp4",
+  "sha256": "8c0fd1f25256b7bc72411f65eb1b57357fe2c8d5f0224b9ae9700b606d0be628",
+  "actual_stderr": "Traceback (most recent call last):\n  File \"G:\\VisionSoul\\datasets\\code_debug_eval\\media\\dev_name\\lesson.py\", line 2, in <module>\n    print(sum(price))\n              ^^^^^\nNameError: name 'price' is not defined. Did you mean: 'prices'?\n",
+  "speech_start": null,
+  "note": "程序合成屏幕视频，不是课堂实拍；test_type混入Wikitongues Widya公开视频的无关讲话作声音负对照，未合成/声称有人朗读代码问题。"
+}

@@ -348,3 +348,8 @@ textarea:disabled { opacity: .7; }
 .video-panel-content > .text-button { margin: 10px 18px; }
 .video-panel-content .audio-evidence { max-height: none; overflow: visible; }
 .video-panel-content .audio-evidence-scroll { max-height: none; overflow: visible; }
+.video-chat-panel .question-actions { flex-wrap: wrap; gap: 8px; }
+.code-debug-report { padding: 16px 20px; overflow-wrap: anywhere; }
+.code-debug-report h3 { margin-top: 0; }
+.code-debug-report article { margin: 12px 0; border-top: 1px solid #d9e3db; padding-top: 10px; }
+.code-debug-report pre { background: #f0f3ee; border: 1px solid #d9e3db; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 Consolas, monospace; }

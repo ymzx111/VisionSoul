@@ -3,7 +3,7 @@ import { validateAudioEvidence } from './audio-evidence.mjs';
 
 const relations = { supports: '模型判断：内容相符', contradicts: '模型判断：内容不一致', uncertain: '关联待确认', audio_only: '仅对白依据' };
 
-export default function AudioEvidence({ audio, links = [], frames, duration, onSeek, formatTime, soundClues, notes = [] }) {
+export default function AudioEvidence({ audio, links = [], frames, duration, onSeek, formatTime, soundClues, notes = [], warnings = [] }) {
   const [showAll, setShowAll] = useState(false);
   if (!audio) return <p className="chat-history-note">旧视频尚未处理音频，重新上传可启用。</p>;
   try { validateAudioEvidence(audio, links, frames, duration); }
@@ -12,6 +12,7 @@ export default function AudioEvidence({ audio, links = [], frames, duration, onS
   return <details className="video-evidence audio-evidence">
     <summary>对白与音画依据 · {audio.segments.length}段</summary>
     <p className="chat-history-note">{audio.source === 'corrected' ? '当前为用户校对白。' : '自动转写可能有误。'}时间接近不代表内容已验证。点击时间回听。</p>
+    {!!warnings.length && <p className="notice notice-warning">部分转写重复或与时长不符，分析时已标为待校对。请回听并使用“校对白”修正。</p>}
     {notes.map((note, index) => <p className="chat-history-note" key={index}>{note}</p>)}
     <div className="audio-evidence-scroll">
       {(showAll ? links : links.slice(0, 4)).map((link, index) => {
@@ -26,6 +27,7 @@ export default function AudioEvidence({ audio, links = [], frames, duration, onS
       {audio.segments.map(speech => <div className="audio-transcript-row" key={speech.id}>
         <button className="text-button" onClick={() => onSeek(speech.start)} aria-label={`回听 ${formatTime(speech.start)} 对白`}>{formatTime(speech.start)}—{formatTime(speech.end)}</button>
         <p>{speech.text}</p>
+        {warnings.some(row => row.segment_id === speech.id) && <p className="chat-history-note">此段转写待核对，不作可靠内容依据。</p>}
         {soundClues?.segments?.find(row => row.segment_id === speech.id) && (() => {
           const clue = soundClues.segments.find(row => row.segment_id === speech.id);
           const volume = { quieter: '音量相对较轻', louder: '音量相对较响', similar: '音量相近', not_compared: '单段不比较音量' }[clue.volume];

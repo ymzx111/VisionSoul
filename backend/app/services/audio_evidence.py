@@ -2,6 +2,7 @@
 from typing import Literal
 import re
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from app.services.transcript_quality import transcript_warnings, trusted_transcript
 
 AUDIO_VERSION = "whisper-small-int8-timeline-v1"
 PRIMARY_SECONDS = 1.5
@@ -53,6 +54,7 @@ class AudioLink(BaseModel):
     frame_time: float | None = Field(default=None, ge=0, le=30)
     relation: Literal["supports", "contradicts", "uncertain", "audio_only"]
     detail: str = Field(min_length=1, max_length=180)
+    content_visible: bool = False
 
 
 def frame_candidates(segment: SpeechSegment, frames):
@@ -110,7 +112,16 @@ def normalize_model_links(links, transcript: AudioTranscript, frames):
             link.candidate_id = link.frame_index = link.frame_time = None
             cleared += 1
     validate_links(normalized, transcript, frames)
+    untrusted = {row['segment_id'] for row in transcript_warnings(transcript)}
+    downgraded = 0
+    for link in normalized:
+        if link.relation == 'supports' and (not link.content_visible or link.segment_id in untrusted
+                or any(term in link.detail for term in ('无法验证', '无法证实', '无法确认', '不能验证', '不能证实', '无法由画面'))):
+            link.relation = 'uncertain'
+            downgraded += 1
     notes = [f"{cleared}条仅对白依据已去除多余画面绑定，未建立画面验证关系。"] if cleared else []
+    if downgraded:
+        notes.append(f'{downgraded}条支持关系缺少可靠内容依据，已标为关联待确认。')
     return normalized, notes
 
 
@@ -118,12 +129,14 @@ def audio_prompt(transcript: AudioTranscript, frames):
     if transcript.status != "ready":
         return "音频状态：" + transcript.message + " 不得编造对白或声音情绪。"
     rows = []
-    for segment in transcript.segments:
+    warnings = transcript_warnings(transcript)
+    for segment in trusted_transcript(transcript, warnings).segments:
         candidates = frame_candidates(segment, frames)
         labels = lambda window: ",".join(f"C{row['candidate_id']}={row['frame_index']}@{row['frame_time']:g}" for row in candidates if row["window"] == window)
         rows.append(f"S{segment.id}@{segment.start:g}-{segment.end:g} {segment.text}\n近:{labels('primary')}；补:{labels('secondary')}")
     label = "用户校对白（优先于旧转写与历史回复，仍需按画面核对）" if transcript.source == "corrected" else "自动转写（可能有误）"
-    return label + "（原视频秒数；近±1.5秒，补±3秒，仅为时间候选）：\n" + "\n".join(rows)
+    warning = '部分分段存在重复/时间密度异常，已遮蔽待校对文字；不得猜测原文。\n' if warnings else ''
+    return warning + label + "（原视频秒数；近±1.5秒，补±3秒，仅为时间候选）：\n" + "\n".join(rows)
 
 
 def add_time_citations(reply: str, question: str, transcript: AudioTranscript, links) -> str:
@@ -142,7 +155,11 @@ def add_time_citations(reply: str, question: str, transcript: AudioTranscript, l
         return (distance, segment.id not in link_map, -overlap, segment.start)
     references = []
     labels = {"supports": "模型判断相符", "contradicts": "模型判断不一致", "uncertain": "关联待确认"}
+    unreliable = {row['segment_id'] for row in transcript_warnings(transcript)}
     for segment in sorted(transcript.segments, key=rank)[:2]:
+        if segment.id in unreliable:
+            references.append(f'{segment.start:g}—{segment.end:g}秒：自动转写待校对，请回听原声，不引用为内容依据。')
+            continue
         excerpt = segment.text[:60] + ("…" if len(segment.text) > 60 else "")
         line = f"{segment.start:g}—{segment.end:g}秒：“{excerpt}”"
         link = link_map.get(segment.id)
@@ -181,4 +198,16 @@ def model_context(context):
         result["audio_links"] = []
         result["summary"] = "旧综合报告基于旧对白，待用户主动重新分析；不得沿用其推断。"
         result["comparison"] = None
+        result['code_debug'] = None
+    if result.get('audio'):
+        audio = AudioTranscript.model_validate(result['audio'])
+        warnings = transcript_warnings(audio)
+        result['audio'] = trusted_transcript(audio, warnings).model_dump()
+        result['audio_warnings'] = warnings
+        if warnings:
+            # 旧概述/诊断可能建立在异常转写上，保留视觉事实，推断暂不提供给模型。
+            result['summary'] = '部分对白转写待校对，仅参考视觉观察与用户当前说明。'
+            result['comparison'] = None
+            bad_ids = {row['segment_id'] for row in warnings}
+            result['audio_links'] = [row for row in result.get('audio_links', []) if row['segment_id'] not in bad_ids]
     return result

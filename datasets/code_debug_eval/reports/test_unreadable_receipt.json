@@ -1,0 +1,12 @@
+{
+  "reply": {
+    "answer": "{\"observations\":[{\"frame_index\":0,\"keywords\":[\"深色背景\",\"模糊文字\"],\"description\":\"画面为深色背景，左上角有一块极模糊的文字痕迹，无法辨认字符。\",\"uncertain\":true},{\"frame_index\":1,\"keywords\":[\"左侧文字块\",\"不可读\"],\"description\":\"与图0基本相同，左侧模糊文字块位置一致，内容仍不可读。\",\"uncertain\":true},{\"frame_index\":2,\"keywords\":[\"日志行\",\"模糊\",\"暗红\"],\"description\":\"出现一个暗色文本区域，像日志/终端的多行输出，字符被模糊处理，无法读取。\",\"uncertain\":true},{\"frame_index\":3,\"keywords\":[\"多行文本\",\"模糊\"],\"description\":\"左侧有若干行淡色文字，疑似启动或日志信息，具体字符不可辨。\",\"uncertain\":true}],\"summary\":\"画面是深色背景的终端或日志类界面，文字整体被模糊处理，没有任何一处代码或报错信息清晰可读；视频无音轨。\",\"reply\":\"这段画面里的文字都糊成一片了，我读不出任何错误原文，定位不了，你别急，我先给你最省事的补拍办法。\",\"code_debug\":{\"status\":\"insufficient\",\"visible_error\":null,\"evidence\":[{\"frame_index\":2,\"kind\":\"context\",\"excerpt\":\"（暗色多行文本区域，字符模糊不可读）\",\"line_number\":null},{\"frame_index\":3,\"kind\":\"context\",\"excerpt\":\"（左侧多行淡色文字，字符模糊不可读）\",\"line_number\":null}],\"causes\":[],\"steps\":[\"把报错窗口停稳在屏幕上，等画面清晰后再录，或直接截图\",\"放大终端/源码字体，保证报错原文和行号占满画面可读区域\",\"如果录屏仍糊，直接把错误文本和对应源码行粘贴给我\"],\"suggested_code\":null,\"missing\":[\"可清晰阅读的报错原文（错误类型与消息）\",\"报错指向的文件路径与行号\",\"出错调用附近的源码片段\"]}}",
+    "model": "deepseek-flash",
+    "usage": {
+      "prompt_tokens": 2369,
+      "completion_tokens": 436,
+      "total_tokens": 2805
+    },
+    "truncated": false
+  }
+}

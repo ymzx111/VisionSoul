@@ -1,5 +1,6 @@
 import { validateComparison } from './video-comparison.mjs';
 import { validateAudioEvidence } from './audio-evidence.mjs';
+import { validateCodeDebug } from './code-debug.mjs';
 const VIDEO_ID = /^[0-9a-f]{64}$/;
 const STORAGE_KEY = 'visionsoul.currentVideo';
 
@@ -16,6 +17,7 @@ async function request(fetcher, url, options) {
 }
 
 function validatedResult(result, video) {
+  validateCodeDebug(result.code_debug, video.frames);
   validateComparison(result.comparison,video.frames);
   validateAudioEvidence(video.audio, result.audio_links, video.frames, video.duration_seconds);
   if (result.video_id !== video.video_id || !Array.isArray(result.observations) || !result.observations.length

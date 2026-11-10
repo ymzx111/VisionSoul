@@ -1,0 +1,72 @@
+{
+  "note": "已见旧样例离线回归，非新实拍或新模型请求",
+  "cases": [
+    {
+      "id": "widya_nan",
+      "old_selected": [
+        0,
+        5,
+        11,
+        18
+      ],
+      "new_selected": [
+        3,
+        11,
+        14,
+        18
+      ],
+      "audio_warnings": [
+        {
+          "segment_id": 1,
+          "reasons": [
+            "多段转写循环重复，需回听确认"
+          ]
+        },
+        {
+          "segment_id": 2,
+          "reasons": [
+            "多段转写循环重复，需回听确认"
+          ]
+        },
+        {
+          "segment_id": 3,
+          "reasons": [
+            "多段转写循环重复，需回听确认"
+          ]
+        },
+        {
+          "segment_id": 4,
+          "reasons": [
+            "重复片段过多",
+            "文字密度与识别时长明显不符",
+            "多段转写循环重复，需回听确认"
+          ]
+        }
+      ],
+      "normalized_relations": [
+        "uncertain",
+        "uncertain",
+        "uncertain",
+        "uncertain"
+      ],
+      "notes": [
+        "4条支持关系缺少可靠内容依据，已标为关联待确认。"
+      ]
+    },
+    {
+      "id": "river_bank_blur",
+      "old_selected": [
+        0,
+        4,
+        7,
+        10
+      ],
+      "new_selected": [
+        4,
+        7,
+        10
+      ],
+      "audio_warnings": []
+    }
+  ]
+}
