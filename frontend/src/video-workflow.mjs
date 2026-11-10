@@ -20,7 +20,7 @@ function validatedResult(result, video) {
   validateCodeDebug(result.code_debug, video.frames);
   validateComparison(result.comparison,video.frames);
   validateAudioEvidence(video.audio, result.audio_links, video.frames, video.duration_seconds);
-  if (result.video_id !== video.video_id || !Array.isArray(result.observations) || !result.observations.length
+  if (result.video_id !== video.video_id || !Array.isArray(result.observations)
       || typeof result.summary !== 'string' || typeof result.reply !== 'string') {
     throw new Error('视频分析结果不完整，请检查后端记录；不会自动重新分析。');
   }

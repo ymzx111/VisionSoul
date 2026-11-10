@@ -12,6 +12,16 @@ const response = body => ({ ok: true, json: async () => body });
 const file = () => new File(['fake-local-video'], 'test.mp4', { type: 'video/mp4' });
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
+test('unreadable video can display an honest reply without invented observation cards', async () => {
+  const result = { ...answer(), observations: [], summary: '画面没有可确认内容。', reply: '请补拍题目，当前无法确认条件。' };
+  const workflow = createVideoWorkflow({ storage: null, fetcher: async url =>
+    response(url.endsWith('status') ? config : url.endsWith('analyze') ? result : info()) });
+  await workflow.initialize(); await workflow.selectFiles([file()]);
+  assert.equal(await workflow.analyze(), true);
+  assert.deepEqual(workflow.getState().result.observations, []);
+  assert.equal(workflow.getState().result.reply, result.reply);
+});
+
 test('upload never analyzes; explicit analysis sends once and reuses success', async () => {
   const calls = [];
   const workflow = createVideoWorkflow({ storage: null, fetcher: async (url, options) => {

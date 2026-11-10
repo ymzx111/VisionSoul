@@ -30,6 +30,7 @@ from app.services.transcript_quality import transcript_warnings
 from app.services.video_debug import CodeDebugReport, debug_reply
 from app.services.video_tasks import task_prompt
 from app.services.video_reading import DetailSelection, READING_TASK, wants_text_detail
+from app.services.video_result import decode_video_result, result_failure
 
 logger = logging.getLogger(__name__)
 VIDEO_TASK = (Path(__file__).resolve().parents[1] / "prompts" / "video.md").read_text(encoding="utf-8").strip()
@@ -78,12 +79,12 @@ class Observation(BaseModel):
     frame_index: int = Field(ge=0, le=MAX_SAMPLES-1, title="依据采样编号")
     keywords: list[str] = Field(min_length=1, max_length=4, title="主要事物")
     description: str = Field(min_length=1, max_length=120, title="画面描述")
-    uncertain: bool = Field(title="是否待确认")
+    uncertain: bool = Field(default=True, title="是否待确认；模型省略时保守标记")
 
 
 class VideoEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    observations: list[Observation] = Field(min_length=1, max_length=8, title="观察记录")
+    observations: list[Observation] = Field(max_length=8, title="观察记录；没有可靠可见事实时可为空")
     summary: str = Field(min_length=1, max_length=240, title="视频概述")
     comparison: Comparison | None = Field(default=None, title="多视角辨识与候选比对")
     audio_links: list[AudioLink] = Field(default_factory=list, max_length=MAX_AUDIO_LINKS, title="音画依据关系（模型判断）")
@@ -93,15 +94,11 @@ class VideoEvidence(BaseModel):
 
 
 class VideoContent(VideoEvidence):
-    reply: str = Field(min_length=1, max_length=240, title="小灵回应")
-
-
-class ReadingVideoContent(VideoContent):
-    reply: str = Field(min_length=1, max_length=6000, title="读题说明及必要代码")
+    reply: str = Field(min_length=1, max_length=6000, title="分析回复，允许必要说明和代码")
 
 
 class VideoAnswer(VideoContent):
-    reply: str = Field(min_length=1, max_length=6000, title="回应、排错建议及按需附加的原始时间依据")
+    reply: str = Field(min_length=1, max_length=6400, title="模型回应及服务端按需附加的原始时间依据")
     video_id: str = Field(title="视频编号")
     model: str = Field(title="使用模型")
     usage: TokenUsage | None = Field(default=None, title="原分析用量")
@@ -251,10 +248,14 @@ class VideoService:
         reply = self.client.complete([{"role": "system", "content": prompt},
             *([{"role":"user","content":memory_text}] if memory_text else []), *(history or []),
             {"role": "user", "content": parts}], json_mode=True, max_tokens=self.settings.video_max_tokens)
+        stage = "json"
         try:
             if reply.truncated:
                 raise ValueError("truncated")
-            content = (ReadingVideoContent if reading else VideoContent).model_validate_json(reply.answer)
+            raw = decode_video_result(reply.answer)
+            stage = "schema"
+            content = VideoContent.model_validate(raw)
+            stage = "evidence"
             content.audio_links, content.evidence_notes = normalize_model_links(content.audio_links, info.audio, info.frames)
             if transcript_warnings(info.audio):
                 content.evidence_notes.append('部分自动转写待校对，分析已遮蔽异常文字；可回听并校对白。')
@@ -284,7 +285,10 @@ class VideoService:
                 merged.append(observation)
             content.observations = merged
         except ValueError as exc:
-            raise DeepSeekError("模型返回的结构化结果不完整，本次可能已有用量；不会自动重试。", 502) from exc
+            report, message = result_failure(exc, reply, self.settings.video_storage_dir.parent, stage)
+            logger.warning("视频分析校验失败 id=%s stage=%s reason=%s fields=%s chars=%s",
+                           report["id"], report["stage"], report["reason"], report["fields"], report["output_chars"])
+            raise DeepSeekError(message, 502) from exc
         payload = content.model_dump()
         payload["detail_selection"] = DetailSelection(profile=profile, frame_indices=sorted(detailed),
             source_indices=sorted(index for index, path in detailed.items() if path == detail_path(directory, index))).model_dump()
