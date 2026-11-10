@@ -14,6 +14,7 @@ from app.services.deepseek import DeepSeekClient, DeepSeekError, image_part
 from app.services.videos import VideoError, VideoService
 from app.services.role_store import RoleStore
 from app.services.audio_evidence import AudioTranscript, AudioLink, add_time_citations, current_context, model_context
+from app.services.video_reading import needs_text_refresh
 
 
 class TurnLocks:
@@ -146,6 +147,11 @@ class ChatService:
                         prior = context_messages(history,self.settings,message,len(memory_text),persona_prompt)
                         video_context, result = videos.start_conversation(attached_video,message,prior[1:],memory_text=memory_text)
                         video_context["opening_message"] = message
+                    elif attached_video and needs_text_refresh(message, video_context):
+                        prior = context_messages(history, self.settings, message, len(memory_text), persona_prompt)
+                        opening = video_context.get("opening_message", message)
+                        video_context, result = videos.read_text(attached_video, message, prior[1:], memory_text)
+                        video_context["opening_message"] = opening
                     if result is None:
                         effective_context = model_context(video_context) if video_context else None
                         saved_audio, saved_links = None, []

@@ -29,6 +29,7 @@ from app.services.sound_clues import measure_sound, sound_prompt
 from app.services.transcript_quality import transcript_warnings
 from app.services.video_debug import CodeDebugReport, debug_reply
 from app.services.video_tasks import task_prompt
+from app.services.video_reading import DetailSelection, READING_TASK, wants_text_detail
 
 logger = logging.getLogger(__name__)
 VIDEO_TASK = (Path(__file__).resolve().parents[1] / "prompts" / "video.md").read_text(encoding="utf-8").strip()
@@ -88,10 +89,15 @@ class VideoEvidence(BaseModel):
     audio_links: list[AudioLink] = Field(default_factory=list, max_length=MAX_AUDIO_LINKS, title="音画依据关系（模型判断）")
     evidence_notes: list[str] = Field(default_factory=list, max_length=4, title="依据处理说明")
     code_debug: CodeDebugReport | None = None
+    detail_selection: DetailSelection | None = None
 
 
 class VideoContent(VideoEvidence):
     reply: str = Field(min_length=1, max_length=240, title="小灵回应")
+
+
+class ReadingVideoContent(VideoContent):
+    reply: str = Field(min_length=1, max_length=6000, title="读题说明及必要代码")
 
 
 class VideoAnswer(VideoContent):
@@ -191,12 +197,12 @@ class VideoService:
         temporary.write_text(transcript.model_dump_json(), encoding="utf-8")
         os.replace(temporary, directory / "audio.json")
 
-    def _detail_frames(self, info: VideoInfo, directory: Path) -> dict[int, Path]:
-        selected = select_from_directory(info.frames, directory)
+    def _detail_frames(self, info: VideoInfo, directory: Path, *, profile="general") -> dict[int, Path]:
+        selected = select_from_directory(info.frames, directory, profile=profile)
         paths = {index: directory / f"detail-{index}.jpg" for index in selected}
         missing = [frame for frame in info.frames if frame.index in paths and not detail_path(directory, frame.index).is_file()]
         if missing and (directory / "source.mp4").is_file():
-            # 一个隔离子进程单遍读取，只保存选中帧；普通观察、上传和恢复不触发。
+            # 一个隔离子进程单遍读取，只保存选中帧；上传和恢复不触发。
             with upload_workspace(directory) as workspace:
                 (workspace / "targets.json").write_text(json.dumps([
                     {"index": frame.index, "time_seconds": frame.time_seconds} for frame in missing
@@ -220,10 +226,12 @@ class VideoService:
     def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None, memory_text: str = "", inspect: bool = False, debug_code: bool = False) -> VideoAnswer:
         directory = video_directory(info.video_id, self.settings)
         parts = [{"type": "text", "text": "图号@原视频秒，区间是重复图的采样点，不代表连续动作。"}]
-        detailed = self._detail_frames(info, directory) if inspect or debug_code else {}
+        reading = not inspect and not debug_code and wants_text_detail(caption)
+        profile = "text" if reading or debug_code else "general"
+        detailed = self._detail_frames(info, directory, profile=profile) if inspect or debug_code or reading else {}
         for frame in info.frames:
             high = frame.index in detailed
-            parts.append({"type": "text", "text": f"{frame.index}@{compact_times(frame.seen_at, info.sample_interval_seconds)}"})
+            parts.append({"type": "text", "text": f"{frame.index}@{compact_times(frame.seen_at, info.sample_interval_seconds)}" + (" 高清候选（不保证可读）" if high else "")})
             path = detailed[frame.index] if high else directory / f"frame-{frame.index}.jpg"
             encoded = base64.b64encode(path.read_bytes()).decode("ascii")
             parts.append({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + encoded, "detail": "high" if high else "low"}})
@@ -233,9 +241,11 @@ class VideoService:
             parts.append({"type": "text", "text": sound_prompt(info.sound_clues)})
         prompt = task_prompt(prompt, audio_task=AUDIO_TASK if info.audio.status == 'ready' else '',
                              comparison_task=COMPARISON_TASK if inspect and not debug_code else '', debug_code=debug_code)
+        if reading:
+            prompt += "\n" + READING_TASK
         if caption:
             parts.append({"type": "text", "text": caption})
-        if inspect or debug_code:
+        if inspect or debug_code or reading:
             if not detailed:
                 prompt += "\n此视频只有旧版概览图，没有额外细节图；不要声称看到了叶脉、小字等缺失细节。必要时提示重新上传原视频。"
         reply = self.client.complete([{"role": "system", "content": prompt},
@@ -244,7 +254,7 @@ class VideoService:
         try:
             if reply.truncated:
                 raise ValueError("truncated")
-            content = VideoContent.model_validate_json(reply.answer)
+            content = (ReadingVideoContent if reading else VideoContent).model_validate_json(reply.answer)
             content.audio_links, content.evidence_notes = normalize_model_links(content.audio_links, info.audio, info.frames)
             if transcript_warnings(info.audio):
                 content.evidence_notes.append('部分自动转写待校对，分析已遮蔽异常文字；可回听并校对白。')
@@ -276,6 +286,8 @@ class VideoService:
         except ValueError as exc:
             raise DeepSeekError("模型返回的结构化结果不完整，本次可能已有用量；不会自动重试。", 502) from exc
         payload = content.model_dump()
+        payload["detail_selection"] = DetailSelection(profile=profile, frame_indices=sorted(detailed),
+            source_indices=sorted(index for index, path in detailed.items() if path == detail_path(directory, index))).model_dump()
         payload["reply"] = add_time_citations(debug_reply(content.code_debug, info.frames) if debug_code else content.reply, caption, info.audio, content.audio_links)
         return VideoAnswer(**payload, video_id=info.video_id, model=reply.model, usage=reply.usage, audio_revision=info.audio_revision)
 
@@ -289,6 +301,7 @@ class VideoService:
                 "audio": info.audio.model_dump(), "audio_links": [row.model_dump() for row in result.audio_links],
                 "evidence_notes": result.evidence_notes,
                 "code_debug": result.code_debug.model_dump() if result.code_debug else None,
+                "detail_selection": result.detail_selection.model_dump() if result.detail_selection else None,
                 "audio_warnings": transcript_warnings(info.audio),
                 "analysis_audio_revision": info.audio_revision, "analysis_stale": False, "sound_clues": info.sound_clues}
 
@@ -303,10 +316,21 @@ class VideoService:
         finally:
             ANALYSIS_LOCK.release()
 
+    def read_text(self, video_id: str, message: str, history: list[dict], memory_text: str = ""):
+        """用户新提出读题请求时，重看同一素材；一次调用，不混入比对/排错结构要求。"""
+        if not ANALYSIS_LOCK.acquire(blocking=False):
+            raise VideoError("已有视频正在观察，请稍等后再发送。", 409)
+        try:
+            info = self.info(video_id)
+            answer = self._observe(info, message, history, memory_text)
+            return self._snapshot(info, answer), ModelReply(answer=answer.reply, model=answer.model, usage=answer.usage)
+        finally:
+            ANALYSIS_LOCK.release()
+
     def start_conversation(self, video_id: str, message: str, history: list[dict], memory_text: str = "") -> tuple[dict, ModelReply | None]:
         """首次无观察时一次请求同时看图和接话；已有观察时让聊天服务仅用文字接话。"""
         info = self.info(video_id)
-        if self.isolated:
+        if self.isolated or wants_text_detail(message):
             # 新空间的分析只随当前话题保存，不跨话题复用可能混入配文/角色记忆的综合观察。
             if not ANALYSIS_LOCK.acquire(blocking=False):
                 raise VideoError("已有视频正在观察，请稍等后再发送。", 409)

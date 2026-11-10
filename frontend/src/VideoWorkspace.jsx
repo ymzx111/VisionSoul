@@ -4,6 +4,7 @@ import VideoComparison from './VideoComparison.jsx';
 import AudioEvidence from './AudioEvidence.jsx';
 import AudioEditor from './AudioEditor.jsx';
 import VideoCodeDebug from './VideoCodeDebug.jsx';
+import { selectedDetailFrames } from './detail-selection.mjs';
 
 export function formatTime(seconds) {
   const tenths = Math.floor(seconds * 10 + 1e-6);
@@ -23,6 +24,7 @@ export default function VideoWorkspace({ workflow, state, chatWorkflow, chatStat
   const result = chatState.videoId === video?.video_id ? chatState.videoContext || state.result : state.result;
   const stale = !!result && (result.analysis_stale || (result.analysis_audio_revision ?? result.audio_revision ?? 0) !== (video?.audio_revision || 0));
   const keywords = result ? [...new Set(result.observations.flatMap(item => item.keywords))] : [];
+  const detailFrames = selectedDetailFrames(result?.detail_selection, video?.frames || []);
   useEffect(() => { setView(result?.code_debug ? 'debug' : result?.comparison ? 'comparison' : 'video'); }, [result?.comparison,result?.code_debug,video?.video_id]);
   const seek = seconds => {
     if (!player.current) return;
@@ -43,7 +45,7 @@ export default function VideoWorkspace({ workflow, state, chatWorkflow, chatStat
         {uploadControls && video && <button className="text-button" disabled={busy} onClick={() => input.current?.click()}>更换素材</button>}
         {video && <button className="text-button" disabled={busy} onClick={() => { (uploadControls || workflow).clear(); setPosition(''); setPlaybackError(''); }}>清空</button>}</div>
       <div className="video-panel-content">
-      {stale && <p className="notice notice-warning" role="status">对白已校对，旧综合分析待更新。新追问优先使用校对白；点击“细看并比对”才会重新读取画面并产生 API 用量。</p>}
+      {stale && <p className="notice notice-warning" role="status">对白已校对，旧综合分析待更新。新追问优先使用校对白；重新读题、细看比对或代码排错会重读画面并产生 API 用量。</p>}
       <div className="video-media" hidden={view !== 'video'}>
       <input type="file" ref={input} className="sr-only" tabIndex={-1} accept={uploadControls?.accept || 'video/mp4,.mp4'} multiple={!!uploadControls} aria-label={uploadControls ? '选择图片或视频' : '选择视频文件'} disabled={busy}
         onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ''; if (files.length) chooseFiles(files); }}/>
@@ -69,6 +71,14 @@ export default function VideoWorkspace({ workflow, state, chatWorkflow, chatStat
       {video && <div className="video-sample-strip" aria-label="本地采样画面">{video.frames.map(frame => <button key={frame.index} className="sample-button" onClick={() => jump(frame)} aria-label={`查看 ${formatTime(frame.time_seconds)} 画面`}>
         <img src={frame.url} alt={`${formatTime(frame.time_seconds)} 采样截图`}/><span>{formatTime(frame.time_seconds)}</span></button>)}</div>}
       <div className="video-note" role="status">{position || (video ? `${video.sampling_policy !== 'one_second' ? '旧版采样，重新上传可用1秒采样与对白识别。' : '每1秒采样并保留末帧。'}采样 ${video.sample_count} 次，合并为 ${video.frames.length} 张画面。` : '上传后不会自动调用付费模型。')}</div>
+      {!!detailFrames.length && <details className="video-evidence detail-frame-evidence"><summary>高清关键帧 · {result.detail_selection.profile === 'text' ? '读题/代码优先' : '画面细节'} · {detailFrames.length}张</summary>
+        <p className="chat-history-note">按清晰度、内容变化和停留选取，最多4张。高清不代表原文字一定清楚；点击缩略图打开细节图，点击时间回看原视频。</p>
+        <div className="detail-frame-list">{detailFrames.map(frame => <div key={frame.index}>
+          <a href={frame.detail_url || `/api/videos/${video.video_id}/frames/${frame.index}/detail`} target="_blank" rel="noreferrer"><img src={frame.url} alt={`${formatTime(frame.time_seconds)} 高清候选预览`}/></a>
+          <button className="text-button" onClick={() => jump(frame)}>回看 {formatTime(frame.time_seconds)}</button>
+          <span>{result.detail_selection.source_indices.includes(frame.index) ? '原视频高清' : '已保存细节图'}</span>
+        </div>)}</div>
+      </details>}
       {!uploadControls && (state.error || state.configError) && <div className="notice notice-error" role="alert">{state.error || state.configError}</div>}
       {video && result && <details className="video-evidence"><summary>观察依据 · 点击展开</summary>
         <div className="video-keywords" aria-label="识别到的主要事物">{keywords.map(word => <span key={word}>{word}</span>)}</div>
