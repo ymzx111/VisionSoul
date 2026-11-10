@@ -83,7 +83,7 @@ export default function VideoWorkspace({ workflow, state, chatWorkflow, chatStat
         await workflow.loadVideo(video.video_id);
         if (chatState.videoId === video.video_id && chatState.conversationId) await chatWorkflow.loadConversation(chatState.conversationId);
       }}/>}
-      {video && <AudioEvidence audio={result?.current_audio || video.audio || result?.audio} links={stale ? [] : result?.audio_links || []} frames={video.frames} duration={video.duration_seconds} onSeek={seek} formatTime={formatTime} soundClues={video.sound_clues}/>}
+      {video && <AudioEvidence key={`${video.video_id}-${video.audio_revision || 0}`} audio={result?.current_audio || video.audio || result?.audio} links={stale ? [] : result?.audio_links || []} frames={video.frames} duration={video.duration_seconds} onSeek={seek} formatTime={formatTime} soundClues={video.sound_clues} notes={stale ? [] : result?.evidence_notes || []}/>}
       </div>
     </section>
     <VideoChatPanel workflow={chatWorkflow} state={chatState} videoState={{ ...state, loadingVideo: state.loadingVideo || audioBusy }} draft={draft} setDraft={setDraft}/>

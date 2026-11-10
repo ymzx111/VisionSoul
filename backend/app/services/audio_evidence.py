@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 AUDIO_VERSION = "whisper-small-int8-timeline-v1"
 PRIMARY_SECONDS = 1.5
 SECONDARY_SECONDS = 3.0
+MAX_AUDIO_LINKS = 64
 
 
 class SpeechSegment(BaseModel):
@@ -71,6 +72,8 @@ def frame_candidates(segment: SpeechSegment, frames):
 
 
 def validate_links(links, transcript: AudioTranscript, frames):
+    if len(links) > MAX_AUDIO_LINKS:
+        raise ValueError("音画依据数量过多")
     if transcript.status == "ready" and not links:
         raise ValueError("缺少对白依据")
     for link in links:
@@ -91,6 +94,24 @@ def validate_links(links, transcript: AudioTranscript, frames):
                 link.frame_index, link.frame_time = chosen["frame_index"], chosen["frame_time"]
             if not any(row["frame_index"] == link.frame_index and row["frame_time"] == link.frame_time for row in candidates):
                 raise ValueError("引用画面不在音画候选窗口内")
+
+
+def normalize_model_links(links, transcript: AudioTranscript, frames):
+    """仅在新模型回复入口保守清理；缓存读取仍严格校验，不修改原始对白。"""
+    normalized = [link.model_copy(deep=True) for link in links]
+    cleared = 0
+    for link in normalized:
+        if link.relation != "audio_only":
+            continue
+        if any(value is not None for value in (link.candidate_id, link.frame_index, link.frame_time)):
+            # 先验证多余引用确实存在且不冲突，不能借清理绕过边界检查。
+            probe = link.model_copy(update={"relation": "uncertain"})
+            validate_links([probe], transcript, frames)
+            link.candidate_id = link.frame_index = link.frame_time = None
+            cleared += 1
+    validate_links(normalized, transcript, frames)
+    notes = [f"{cleared}条仅对白依据已去除多余画面绑定，未建立画面验证关系。"] if cleared else []
+    return normalized, notes
 
 
 def audio_prompt(transcript: AudioTranscript, frames):

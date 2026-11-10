@@ -1,0 +1,104 @@
+{
+  "id": "widya_nan",
+  "status": "accepted",
+  "answer": {
+    "observations": [
+      {
+        "frame_index": 0,
+        "keywords": [
+          "剪影",
+          "站立者"
+        ],
+        "description": "画面几乎全黑，仅见一人上半身剪影，细节不可辨",
+        "uncertain": true
+      },
+      {
+        "frame_index": 1,
+        "keywords": [
+          "讲话者",
+          "红色挂脖上衣"
+        ],
+        "description": "女性坐在黑色椅背前，对镜微笑，白墙背景",
+        "uncertain": false
+      },
+      {
+        "frame_index": 4,
+        "keywords": [
+          "表情变化"
+        ],
+        "description": "讲话者侧头低眉，表情较先前收拢",
+        "uncertain": false
+      },
+      {
+        "frame_index": 14,
+        "keywords": [
+          "手部动作"
+        ],
+        "description": "右手抬至胸前，似配合讲话比划",
+        "uncertain": false
+      },
+      {
+        "frame_index": 17,
+        "keywords": [
+          "手按胸口"
+        ],
+        "description": "手掌贴于胸口位置，继续讲话",
+        "uncertain": false
+      }
+    ],
+    "summary": "白墙前一位穿红色挂脖上衣的女性坐在黑色椅背前讲话，面部朝向和手势多次变化；首帧过暗难辨。对白中反复说“我记得写了一句”，并出现“哈囉”“Vidia”等转写内容。",
+    "comparison": null,
+    "audio_links": [
+      {
+        "segment_id": 0,
+        "candidate_id": 4,
+        "frame_index": 1,
+        "frame_time": 1.0,
+        "relation": "supports",
+        "detail": "1秒前后人物正面出镜微笑，与打招呼的开场对白相符"
+      },
+      {
+        "segment_id": 1,
+        "candidate_id": 1,
+        "frame_index": 9,
+        "frame_time": 9.0,
+        "relation": "supports",
+        "detail": "7-9秒人物侧头低眉说话，对白内容无法由画面证实"
+      },
+      {
+        "segment_id": 2,
+        "candidate_id": 1,
+        "frame_index": 14,
+        "frame_time": 14.0,
+        "relation": "supports",
+        "detail": "13-14秒人物继续讲话，手部尚未抬起"
+      },
+      {
+        "segment_id": 3,
+        "candidate_id": 0,
+        "frame_index": 18,
+        "frame_time": 18.0,
+        "relation": "supports",
+        "detail": "18秒附近手按胸口，与重复念叨的画面时段接近"
+      }
+    ],
+    "evidence_notes": [],
+    "reply": "开头一帧黑得像被谁关了灯，后面才看清人物。对白一直在原地打转：“我记得写了一句”循环了好几遍，中间还夹着“Vidia”这个称呼。转写可能听错，人名建议回听原声确认。\n\n时间依据（自动转写，可能有误）：\n1.36—5.48秒：“哈囉,我是Vidia,今天呢,我記得寫了”；画面1秒（模型判断相符）\n5.48—11.22秒：“一句,我記得寫了一句,我記得”；画面9秒（模型判断相符）",
+    "video_id": "55a7713c7e40f9933285be704f2266c0669c942f55a093ca1e627a79fc5fdbc2",
+    "model": "deepseek-flash",
+    "usage": {
+      "prompt_tokens": 5659,
+      "completion_tokens": 438,
+      "total_tokens": 6097
+    },
+    "cached": false,
+    "audio_revision": 0
+  },
+  "question": "这是第三方视频，讲话者不是我。简洁概括画面和对白各自的信息；指出不能互相验证的内容，给出时间依据。转写中的人名地名不要当作确认事实。",
+  "elapsed_seconds": 6.099,
+  "usage": {
+    "prompt_tokens": 5659,
+    "completion_tokens": 438,
+    "total_tokens": 6097
+  }
+}

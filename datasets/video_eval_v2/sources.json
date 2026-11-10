@@ -1,0 +1,7 @@
+{
+  "version": "v2",
+  "sources": [
+    {"id":"river_bank","split":"test","title":"River Bank-Closeup","author":"Chazzie1769","license":"CC0-1.0","license_url":"https://creativecommons.org/publicdomain/zero/1.0/","page":"https://commons.wikimedia.org/wiki/File:River_Bank-Closeup.webm","url":"https://upload.wikimedia.org/wikipedia/commons/7/7a/River_Bank-Closeup.webm","seconds":11,"expected_visual":["河流","岸边石块"],"speech":"unknown"},
+    {"id":"widya_nan","split":"test","title":"Widya 20210426 nan","author":"Wikitongues","license":"CC-BY-SA-4.0","license_url":"https://creativecommons.org/licenses/by-sa/4.0/","page":"https://commons.wikimedia.org/wiki/File:Widya_20210426_nan.ogg","url":"https://upload.wikimedia.org/wikipedia/commons/4/48/Widya_20210426_nan.ogg","seconds":20,"expected_visual":["讲话者"],"speech":"yes"}
+  ]
+}

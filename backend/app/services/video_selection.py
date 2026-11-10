@@ -2,9 +2,9 @@
 from dataclasses import dataclass
 import math
 
-from PIL import Image, ImageFilter, ImageStat
+from PIL import Image, ImageChops, ImageFilter, ImageStat
 
-SELECTION_VERSION = "quality-diversity-v1"
+SELECTION_VERSION = "quality-diversity-focus-v2"
 MAX_DETAIL_FRAMES = 4
 NEAR_DISTANCE = 0.03
 
@@ -16,6 +16,7 @@ class FrameQuality:
     exposure: float
     contrast: float
     signature: bytes
+    focus: float | None = None
 
 
 def measure_frame(image: Image.Image) -> FrameQuality:
@@ -38,7 +39,10 @@ def measure_frame(image: Image.Image) -> FrameQuality:
     # 同时保留粗略颜色布局和边缘布局，不把它当作语义相似度。
     signature = rgb.resize((16, 16), Image.Resampling.BILINEAR).tobytes()
     signature += edges.resize((16, 16), Image.Resampling.BILINEAR).tobytes()
-    return FrameQuality(quality, sharpness, exposure, contrast, signature)
+    # 高频残差区分宽而平滑的虚焦光斑与较细纹理；不是语义清晰度评分。
+    residual = ImageChops.difference(gray, gray.filter(ImageFilter.GaussianBlur(1)))
+    focus = 1 - math.exp(-ImageStat.Stat(residual).stddev[0] / 8)
+    return FrameQuality(quality, sharpness, exposure, contrast, signature, focus)
 
 
 def visual_distance(left: FrameQuality, right: FrameQuality) -> float:
@@ -67,6 +71,24 @@ def select_detail_frames(frames, measurements: dict[int, FrameQuality], limit=MA
     if not usable:
         return [max(eligible, key=lambda frame: (quality(frame), -frame.index)).index]
     eligible = usable
+    def clearer_peer(frame):
+        current = measurements[frame.index]
+        if current.focus is None or (current.focus <= 1e-6 and current.contrast <= 0.01):
+            # 完全平滑的墙面/天空也可能是独立内容，不凭缺少纹理推定失焦。
+            return False
+        for other in usable:
+            metric = measurements[other.index]
+            # 仅与附近、粗颜色布局相近的帧比较，保留独立低纹理场景及全部概览。
+            if metric.focus is None or metric.focus < 0.08 or current.focus >= metric.focus * 0.35:
+                continue
+            if min(abs(a - b) for a in frame.seen_at for b in other.seen_at) > 5:
+                continue
+            color_gap = sum(abs(a - b) for a, b in zip(current.signature[:768], metric.signature[:768])) / (768 * 255)
+            if color_gap <= 0.18:
+                return True
+        return False
+    focused = [frame for frame in usable if not clearer_peer(frame)]
+    eligible = focused or usable
     representatives = []
     distances = {}
 

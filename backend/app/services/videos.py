@@ -23,7 +23,7 @@ from app.services.deepseek import DeepSeekClient, DeepSeekError, ModelReply, Tok
 from app.services.video_comparison import Comparison, DETAIL_VERSION, compact_times
 from app.services.video_selection import select_from_directory
 from app.services.video_details import detail_path
-from app.services.audio_evidence import AudioTranscript, AudioLink, AUDIO_VERSION, audio_prompt, validate_links, add_time_citations, current_context
+from app.services.audio_evidence import AudioTranscript, AudioLink, AUDIO_VERSION, MAX_AUDIO_LINKS, audio_prompt, validate_links, normalize_model_links, add_time_citations, current_context
 from app.services.audio_corrections import read_audio, save_correction, CorrectionError
 from app.services.sound_clues import measure_sound, sound_prompt
 
@@ -82,7 +82,8 @@ class VideoEvidence(BaseModel):
     observations: list[Observation] = Field(min_length=1, max_length=8, title="观察记录")
     summary: str = Field(min_length=1, max_length=240, title="视频概述")
     comparison: Comparison | None = Field(default=None, title="多视角辨识与候选比对")
-    audio_links: list[AudioLink] = Field(default_factory=list, max_length=4, title="音画依据关系（模型判断）")
+    audio_links: list[AudioLink] = Field(default_factory=list, max_length=MAX_AUDIO_LINKS, title="音画依据关系（模型判断）")
+    evidence_notes: list[str] = Field(default_factory=list, max_length=4, title="依据处理说明")
 
 
 class VideoContent(VideoEvidence):
@@ -238,7 +239,9 @@ class VideoService:
             if reply.truncated:
                 raise ValueError("truncated")
             content = VideoContent.model_validate_json(reply.answer)
-            validate_links(content.audio_links, info.audio, info.frames)
+            content.audio_links, content.evidence_notes = normalize_model_links(content.audio_links, info.audio, info.frames)
+            if len(content.audio_links) > 4:
+                content.evidence_notes.append(f"已保存{len(content.audio_links)}条音画依据，页面默认展示前4条，其余可展开。")
             if inspect and content.comparison is None:
                 raise ValueError("missing comparison")
             if content.comparison:
@@ -272,6 +275,7 @@ class VideoService:
                                  for row in result.observations],
                 "comparison": result.comparison.model_dump() if result.comparison else None,
                 "audio": info.audio.model_dump(), "audio_links": [row.model_dump() for row in result.audio_links],
+                "evidence_notes": result.evidence_notes,
                 "analysis_audio_revision": info.audio_revision, "analysis_stale": False, "sound_clues": info.sound_clues}
 
     def inspect(self, video_id: str, message: str, history: list[dict], memory_text: str = ""):
@@ -340,7 +344,8 @@ class VideoService:
             snapshot = self._snapshot(info, answer)
             # 只缓存视觉事实，不把针对这一条消息的个性回应带进其他话题。
             evidence = {"observations": [row.model_dump() for row in answer.observations],
-                        "summary": answer.summary, "audio_links": [row.model_dump() for row in answer.audio_links]}
+                        "summary": answer.summary, "audio_links": [row.model_dump() for row in answer.audio_links],
+                        "evidence_notes": answer.evidence_notes}
             temporary = None
             try:
                 with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=directory, prefix=".evidence-", delete=False) as output:

@@ -1,0 +1,21 @@
+{
+  "type": "旧失败离线回归，不是新来源独立推理",
+  "results": [
+    {
+      "id": "ying_henan",
+      "receipt_sha256": "d76d455b744086de46f477fc1c1ebd5d3f5d60a68e03c3f9dd85981a36fa314e",
+      "validated_links": 5,
+      "notes": [],
+      "paid_calls": 0
+    },
+    {
+      "id": "skaha_lake_speech_mismatch",
+      "receipt_sha256": "a1845a6fe033a5405f024012834d98a868c8abe019676dfdb4503a7cafee641b",
+      "validated_links": 4,
+      "notes": [
+        "3条仅对白依据已去除多余画面绑定，未建立画面验证关系。"
+      ],
+      "paid_calls": 0
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "frozen_at": "2026-11-10T05:25:26.047989+00:00",
+  "sources_sha256": "9ed2077d9051ca76f2025fc8cec97a17dc6ef5ecc3bd7276f2500008d74579ba",
+  "code_sha256": {
+    "backend/app/services/video_selection.py": "3d242b65ab97a50e79c1973bafbb0a6f0d1f7091e2d408b4b6e03777c26a19aa",
+    "backend/app/services/video_extract.py": "dcc1b8499a6a7a79dca108acd8b6eee27cb1456fe43e95cc4127db66f84acb1a",
+    "backend/app/services/video_details.py": "678a33d1c21eeeb9ccb4f8abd6e4bb1cfe6b3d1fd5cdffc2c5804bbea13de523",
+    "backend/app/services/audio_extract.py": "aa7e9af153863aa26282be9db00c7d86a2c3faa22a2b42424ed340937f32accc",
+    "backend/app/services/audio_evidence.py": "2155e00b0cf10775b536535fc7d4e0b544fce23b48fc442d3f1ce7662ea28856",
+    "backend/app/core/video_policy.py": "618f52df0683f6bd2c6a4b68b8042b4372935866b8d52ff0b3b7675954e102cf",
+    "backend/app/services/videos.py": "e4bc3c0b5d46718f7babc535b236c679d47180ce202dc34c0fb6ec8bda72152e",
+    "backend/app/prompts/audio.md": "16390230ab2908e18e6576d40803cbf5c23917a5da1a1b1be38af7bb8400b3ee",
+    "backend/app/prompts/video.md": "85fbf9ec7d381a059aa30b4538d76cad21eaf2591c409c26192001ca818ce79f",
+    "backend/app/services/deepseek.py": "914452c362a00888c7e0d0e466d77ba10b7aa203ce98ac70c997737c9a7c9bb1",
+    "backend/app/core/config.py": "9c916f72990fb070947a9726fb3e8c5d0237f62671f6d84fa927e6e7edbf4f48",
+    "backend/requirements.txt": "871f414845c4f9e556c1325fa5f615181c6c25921a8ef60bac6ebfb8bbc1ca36",
+    "backend/requirements-audio-lock.txt": "af67f4aa74d71599ccb3fd5b03ecd7e29c8326fc0673474fd55bb15af46d4cdb",
+    "frontend/src/VideoWorkspace.jsx": "4055b25b9a8d5c21fa58ab7f88d40a5bb9b3e4237a44a5b0656c2d640431f53b",
+    "tools/prepare_video_eval.py": "c4e8583645cc8cd816043b038ce07382ab2812b9e31d50eeb5aa50812014cf19",
+    "tools/evaluate_video_corpus.py": "9d7a7982868287428a22a8eb81fbefc4dc929158fdff40d56a0da2462fc9f83a",
+    "tools/evaluate_video_v2.py": "2f2726e3b5b90cfffcb0266b7382db988844f2407fa9717c3b0307f6d77228e3",
+    "frontend/src/AudioEvidence.jsx": "efed6d2289c6de7df1e0ecf30ac423da175bbd68d5a9ee63a097e4c99ac0f4eb",
+    "frontend/src/audio-evidence.mjs": "fe7f4a0639834b396be3b4ebeafc75e7a1ef160b3171e199c26d13345198b616"
+  },
+  "policy": "v1已看过样例仅用于回归；v2新原片在冻结后才下载评测，结果不用于本轮反向调参。"
+}

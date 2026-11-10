@@ -27,3 +27,10 @@ test('invalid transcript ranges and mismatched status are rejected', () => {
   assert.throws(() => validateAudioEvidence({ ...audio, segments: [{ ...audio.segments[0], start: NaN }] }, [], frames, 15));
   assert.throws(() => validateAudioEvidence({ ...audio, segments: [{ ...audio.segments[0], end: 20 }] }, [], frames, 15));
 });
+
+test('more than four valid links survive but invalid later references and over 64 are rejected', () => {
+  validateAudioEvidence(audio, Array.from({ length: 5 }, () => ({ ...link })), frames, 15);
+  assert.throws(() => validateAudioEvidence(audio, [...Array.from({ length: 4 }, () => ({ ...link })), { ...link, frame_time: 0 }], frames, 15));
+  assert.throws(() => validateAudioEvidence(audio, Array.from({ length: 65 }, () => ({ ...link })), frames, 15));
+  assert.throws(() => validateAudioEvidence(audio, [{ segment_id: 0, candidate_id: 0, relation: 'audio_only', detail: '仅对白' }], frames, 15));
+});

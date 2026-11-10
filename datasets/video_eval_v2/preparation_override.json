@@ -1,0 +1,9 @@
+{
+  "reason": "PyAV拒绝原Theora的零字节重复帧包；改用同一原作页面列出的官方720p VP9转码，不改生产算法。",
+  "original_url": "https://upload.wikimedia.org/wikipedia/commons/4/48/Widya_20210426_nan.ogg",
+  "original_sha256": "bdd2c872ad57d6186a4260513abb3bffbcf80b9a11941318d3cd5f90f5115686",
+  "actual_decode_source_url": "https://upload.wikimedia.org/wikipedia/commons/transcoded/4/48/Widya_20210426_nan.ogg/Widya_20210426_nan.ogg.720p.vp9.webm",
+  "actual_decode_source_sha256": "cb7d49a9f704430d1fc130d82af8251060b42d9cfb1989451b599d5e3079f446",
+  "output_sha256": "826a06beb05a1074f3892c2898bd7e0f8a33247ff39a5d45b3d54c0dd89a3895",
+  "paid_calls": 0
+}

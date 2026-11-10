@@ -1,0 +1,112 @@
+{
+  "version": "v2",
+  "clips": [
+    {
+      "id": "river_bank",
+      "split": "test",
+      "title": "River Bank-Closeup",
+      "author": "Chazzie1769",
+      "license": "CC0-1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "page": "https://commons.wikimedia.org/wiki/File:River_Bank-Closeup.webm",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/7/7a/River_Bank-Closeup.webm",
+      "seconds": 11,
+      "expected_visual": [
+        "河流",
+        "岸边石块"
+      ],
+      "speech": "unknown",
+      "file": "test/river_bank.mp4",
+      "source_ids": [
+        "river_bank"
+      ],
+      "sha256": "337352b71a98a20675b30357e059f8ee688d345463c5ecf8059ce52300f0b276",
+      "raw_sha256": "8e54de109cd68404f3cceab59a2cdd842d7916f53a164641dced6aee12ed2381",
+      "variant": "original_excerpt"
+    },
+    {
+      "id": "widya_nan",
+      "split": "test",
+      "title": "Widya 20210426 nan",
+      "author": "Wikitongues",
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "page": "https://commons.wikimedia.org/wiki/File:Widya_20210426_nan.ogg",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/4/48/Widya_20210426_nan.ogg",
+      "seconds": 20,
+      "expected_visual": [
+        "讲话者"
+      ],
+      "speech": "yes",
+      "file": "test/widya_nan.mp4",
+      "source_ids": [
+        "widya_nan"
+      ],
+      "sha256": "826a06beb05a1074f3892c2898bd7e0f8a33247ff39a5d45b3d54c0dd89a3895",
+      "raw_sha256": "bdd2c872ad57d6186a4260513abb3bffbcf80b9a11941318d3cd5f90f5115686",
+      "variant": "original_excerpt"
+    },
+    {
+      "id": "widya_nan_delay",
+      "split": "test",
+      "file": "test/widya_nan_delay.mp4",
+      "seconds": 20,
+      "source_ids": [
+        "widya_nan"
+      ],
+      "sha256": "d9073c1a17aeac498ca1e74aed12ecd2b7ccda148c877cbcd294bb9db3a4a3a8",
+      "variant": "delay",
+      "license": "CC-BY-SA-4.0",
+      "speech": "yes",
+      "audio_delay": 2,
+      "blur_windows": [],
+      "expected_visual": [
+        "讲话者"
+      ]
+    },
+    {
+      "id": "river_bank_speech_mismatch",
+      "split": "test",
+      "file": "test/river_bank_speech_mismatch.mp4",
+      "seconds": 11,
+      "source_ids": [
+        "river_bank",
+        "widya_nan"
+      ],
+      "sha256": "fba6b3c232c8c0d6a2fb0474a8e6607efccd554c612a0ce0b0e5ddf368bee3f8",
+      "variant": "mismatch",
+      "license": "CC-BY-SA-4.0",
+      "speech": "yes",
+      "audio_delay": 0,
+      "blur_windows": [],
+      "expected_visual": [
+        "河流",
+        "岸边石块"
+      ]
+    },
+    {
+      "id": "river_bank_blur",
+      "split": "test",
+      "file": "test/river_bank_blur.mp4",
+      "seconds": 11,
+      "source_ids": [
+        "river_bank"
+      ],
+      "sha256": "6a030ac743735914832b460464ecb2769a34882ab621b6fff4835faf099fca1e",
+      "variant": "blur",
+      "license": "CC-BY-SA-4.0",
+      "speech": "unknown",
+      "audio_delay": 0,
+      "blur_windows": [
+        [
+          0,
+          4
+        ]
+      ],
+      "expected_visual": [
+        "河流",
+        "岸边石块"
+      ]
+    }
+  ]
+}

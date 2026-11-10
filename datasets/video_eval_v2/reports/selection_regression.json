@@ -1,0 +1,18 @@
+{
+  "type": "已见调试素材回归，非独立测试",
+  "id": "lake_closeup_editor",
+  "old_high_indices": [
+    0,
+    5,
+    8,
+    12
+  ],
+  "new_high_indices": [
+    5,
+    8,
+    10,
+    12
+  ],
+  "first_defocused_frame_removed": true,
+  "all_overviews_preserved": true
+}

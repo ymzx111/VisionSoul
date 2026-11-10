@@ -1,0 +1,340 @@
+{
+  "split": "test",
+  "clips": [
+    {
+      "id": "river_bank",
+      "file": "test/river_bank.mp4",
+      "video_id": "e3f23c84057b9c85c004b07da79ece61b3684cd43127991b483994a3a529ea38",
+      "seconds": 11.0,
+      "sample_count": 12,
+      "unique_frames": 12,
+      "high_frames": [
+        {
+          "index": 0,
+          "time": 0.0
+        },
+        {
+          "index": 4,
+          "time": 4.0
+        },
+        {
+          "index": 7,
+          "time": 7.0
+        },
+        {
+          "index": 10,
+          "time": 10.0
+        }
+      ],
+      "upload_asr_seconds": 4.043,
+      "selection_seconds": 0.119,
+      "reused_local_cache": false,
+      "audio": {
+        "version": "whisper-small-int8-timeline-v1",
+        "status": "no_speech",
+        "message": "未识别到可靠对白，仅分析画面。",
+        "language": "zh",
+        "segments": [],
+        "source": "automatic"
+      },
+      "checks": {
+        "source_checksum": true,
+        "max_31_samples": true,
+        "one_second_coverage": true,
+        "covers_start_and_tail": true,
+        "max_4_high_frames": true,
+        "speech_candidates_exist": true
+      },
+      "engineering_pass": true
+    },
+    {
+      "id": "widya_nan",
+      "file": "test/widya_nan.mp4",
+      "video_id": "55a7713c7e40f9933285be704f2266c0669c942f55a093ca1e627a79fc5fdbc2",
+      "seconds": 20.0,
+      "sample_count": 21,
+      "unique_frames": 21,
+      "high_frames": [
+        {
+          "index": 0,
+          "time": 0.0
+        },
+        {
+          "index": 5,
+          "time": 5.0
+        },
+        {
+          "index": 11,
+          "time": 11.0
+        },
+        {
+          "index": 18,
+          "time": 18.0
+        }
+      ],
+      "upload_asr_seconds": 9.476,
+      "selection_seconds": 0.175,
+      "reused_local_cache": false,
+      "audio": {
+        "version": "whisper-small-int8-timeline-v1",
+        "status": "ready",
+        "message": "本机自动转写，关键数字、名称和时间请回听确认。",
+        "language": "zh",
+        "segments": [
+          {
+            "id": 0,
+            "start": 1.36,
+            "end": 5.48,
+            "text": "哈囉,我是Vidia,今天呢,我記得寫了"
+          },
+          {
+            "id": 1,
+            "start": 5.48,
+            "end": 11.22,
+            "text": "一句,我記得寫了一句,我記得"
+          },
+          {
+            "id": 2,
+            "start": 11.41,
+            "end": 15.55,
+            "text": "寫了一句,我記得寫了一句,我記得寫了一句,我記得寫了一句,我"
+          },
+          {
+            "id": 3,
+            "start": 15.55,
+            "end": 19.76,
+            "text": "記得寫了一句,我記得寫了一句,"
+          },
+          {
+            "id": 4,
+            "start": 19.8,
+            "end": 19.84,
+            "text": "我記得寫了一句,我記得寫了一句,我記得寫了一句,我記得寫了一句,我記得寫了一句,我記得寫了一句,我記得寫了一句,我記得寫了一句,我記得寫了一句,我記得寫了一句,我記得寫了一句,我記得寫了一句,我記得寫了一句,我記得寫了一句,我記得寫了一句,我記得寫了一句,我記得寫了一句,我記得寫了一句,我記得寫了"
+          },
+          {
+            "id": 5,
+            "start": 19.84,
+            "end": 19.96,
+            "text": "阿神"
+          }
+        ],
+        "source": "automatic"
+      },
+      "checks": {
+        "source_checksum": true,
+        "max_31_samples": true,
+        "one_second_coverage": true,
+        "covers_start_and_tail": true,
+        "max_4_high_frames": true,
+        "speech_candidates_exist": true,
+        "expected_audio_state": true
+      },
+      "engineering_pass": true
+    },
+    {
+      "id": "widya_nan_delay",
+      "file": "test/widya_nan_delay.mp4",
+      "video_id": "49c338e1de648c9993db0e99e5b3a0b01948c510e6ed4534ca0c7f98a6e7c3bd",
+      "seconds": 20.0,
+      "sample_count": 21,
+      "unique_frames": 21,
+      "high_frames": [
+        {
+          "index": 0,
+          "time": 0.0
+        },
+        {
+          "index": 5,
+          "time": 5.0
+        },
+        {
+          "index": 11,
+          "time": 11.0
+        },
+        {
+          "index": 18,
+          "time": 18.0
+        }
+      ],
+      "upload_asr_seconds": 4.991,
+      "selection_seconds": 0.176,
+      "reused_local_cache": false,
+      "audio": {
+        "version": "whisper-small-int8-timeline-v1",
+        "status": "ready",
+        "message": "本机自动转写，关键数字、名称和时间请回听确认。",
+        "language": "zh",
+        "segments": [
+          {
+            "id": 0,
+            "start": 3.34,
+            "end": 7.62,
+            "text": "哈囉,我是Vidia,我是Khunthian,我是Chakwe"
+          },
+          {
+            "id": 1,
+            "start": 7.62,
+            "end": 7.9,
+            "text": "b"
+          },
+          {
+            "id": 2,
+            "start": 7.94,
+            "end": 12.28,
+            "text": "我是Kinbali,我是H"
+          },
+          {
+            "id": 3,
+            "start": 12.5,
+            "end": 14.26,
+            "text": "ijitChakweb"
+          },
+          {
+            "id": 4,
+            "start": 14.26,
+            "end": 18.22,
+            "text": "我是Pasia,我是SD,我是Sanpeh,我是Khunthian"
+          },
+          {
+            "id": 5,
+            "start": 18.25,
+            "end": 19.85,
+            "text": "我是Sanpeha"
+          }
+        ],
+        "source": "automatic"
+      },
+      "checks": {
+        "source_checksum": true,
+        "max_31_samples": true,
+        "one_second_coverage": true,
+        "covers_start_and_tail": true,
+        "max_4_high_frames": true,
+        "speech_candidates_exist": true,
+        "expected_audio_state": true,
+        "waveform_delay_preserved": true
+      },
+      "known_audio_delay": 2,
+      "measured_waveform_delay": 2.0,
+      "engineering_pass": true
+    },
+    {
+      "id": "river_bank_speech_mismatch",
+      "file": "test/river_bank_speech_mismatch.mp4",
+      "video_id": "8211491b0922483c4c0e0d73a6636429dbb7064562eac9da20c32f89a8638db9",
+      "seconds": 11.0,
+      "sample_count": 12,
+      "unique_frames": 12,
+      "high_frames": [
+        {
+          "index": 0,
+          "time": 0.0
+        },
+        {
+          "index": 4,
+          "time": 4.0
+        },
+        {
+          "index": 7,
+          "time": 7.0
+        },
+        {
+          "index": 10,
+          "time": 10.0
+        }
+      ],
+      "upload_asr_seconds": 6.403,
+      "selection_seconds": 0.116,
+      "reused_local_cache": false,
+      "audio": {
+        "version": "whisper-small-int8-timeline-v1",
+        "status": "ready",
+        "message": "本机自动转写，关键数字、名称和时间请回听确认。",
+        "language": "zh",
+        "segments": [
+          {
+            "id": 0,
+            "start": 2.36,
+            "end": 6.1,
+            "text": "如果有任何問題,我會回答"
+          },
+          {
+            "id": 1,
+            "start": 6.1,
+            "end": 8.68,
+            "text": "我會回答"
+          },
+          {
+            "id": 2,
+            "start": 8.68,
+            "end": 8.88,
+            "text": "然後"
+          }
+        ],
+        "source": "automatic"
+      },
+      "checks": {
+        "source_checksum": true,
+        "max_31_samples": true,
+        "one_second_coverage": true,
+        "covers_start_and_tail": true,
+        "max_4_high_frames": true,
+        "speech_candidates_exist": true,
+        "expected_audio_state": true
+      },
+      "engineering_pass": true
+    },
+    {
+      "id": "river_bank_blur",
+      "file": "test/river_bank_blur.mp4",
+      "video_id": "d54a25c5080257152cbfd0d0d9e3b76a39e202c9f2df446abc85c3a1f168358b",
+      "seconds": 11.0,
+      "sample_count": 12,
+      "unique_frames": 12,
+      "high_frames": [
+        {
+          "index": 0,
+          "time": 0.0
+        },
+        {
+          "index": 4,
+          "time": 4.0
+        },
+        {
+          "index": 7,
+          "time": 7.0
+        },
+        {
+          "index": 10,
+          "time": 10.0
+        }
+      ],
+      "upload_asr_seconds": 3.289,
+      "selection_seconds": 0.107,
+      "reused_local_cache": false,
+      "audio": {
+        "version": "whisper-small-int8-timeline-v1",
+        "status": "no_speech",
+        "message": "未识别到可靠对白，仅分析画面。",
+        "language": "zh",
+        "segments": [],
+        "source": "automatic"
+      },
+      "checks": {
+        "source_checksum": true,
+        "max_31_samples": true,
+        "one_second_coverage": true,
+        "covers_start_and_tail": true,
+        "max_4_high_frames": true,
+        "speech_candidates_exist": true,
+        "prefers_clear_frames": true
+      },
+      "high_frames_in_known_blur": [
+        0
+      ],
+      "engineering_pass": true
+    }
+  ],
+  "note": "工程评测，不是语义准确率；unknown音轨不预设无讲话；转写不可当成真值标签。",
+  "paid_api_calls": 0
+}

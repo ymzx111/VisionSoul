@@ -38,6 +38,18 @@ def select(images, limit=4):
 
 
 class SelectionTests(unittest.TestCase):
+    def test_similar_nearby_defocus_does_not_spend_detail_budget(self):
+        sharp = patterned()
+        blurred = sharp.filter(ImageFilter.GaussianBlur(6))
+        chosen = select([blurred, sharp, Image.new('RGB', sharp.size, 'blue')])
+        self.assertNotIn(0, chosen)
+        self.assertIn(1, chosen)
+        self.assertIn(2, chosen)
+
+    def test_entirely_blurred_video_keeps_a_fallback(self):
+        blurred = patterned().filter(ImageFilter.GaussianBlur(6))
+        self.assertTrue(select([blurred, blurred.copy()]))
+
     def test_sharp_representative_wins_over_blurred_view(self):
         image = patterned()
         blurred = image.filter(ImageFilter.GaussianBlur(4))
