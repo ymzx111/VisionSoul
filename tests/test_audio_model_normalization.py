@@ -34,11 +34,31 @@ class ModelNormalizationTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
 
     def test_invalid_fifth_link_cannot_hide_behind_ui_limit(self):
-        self.payload['audio_links'] = [deepcopy(self.link) for _ in range(4)] + [{**self.link, 'frame_time': 0}]
+        self.payload['audio_links'] = [deepcopy(self.link) for _ in range(4)] + [{**self.link, 'candidate_id': 0, 'frame_time': 0}]
         with self.assertRaises(DeepSeekError):
             self.videos.analyze(self.info.video_id)
         self.assertEqual(len(self.calls), 1)
         self.assertFalse(list(self.directory.glob('analysis-*.json')))
+
+    def test_out_of_window_link_becomes_only_speech_and_visual_analysis_is_cached(self):
+        self.payload['audio_links'] = [self.link, {'segment_id': 0, 'frame_index': 0, 'frame_time': 0,
+            'relation': 'supports', 'content_visible': True, 'detail': '不应保留这条画面判断。'}]
+        result = self.videos.analyze(self.info.video_id)
+        self.assertEqual(result.audio_links[0].frame_time, 11)
+        link = result.audio_links[1]
+        self.assertEqual(link.relation, 'audio_only')
+        self.assertEqual(link.segment_id, 0)
+        self.assertFalse(link.content_visible)
+        self.assertIsNone(link.frame_index)
+        self.assertIsNone(link.frame_time)
+        self.assertIsNone(link.candidate_id)
+        self.assertNotIn('不应保留', link.detail)
+        self.assertIn('未匹配', result.evidence_notes[0])
+        self.assertEqual(len(result.observations), 2)
+        restored = self.videos.analyze(self.info.video_id)
+        self.assertTrue(restored.cached)
+        self.assertEqual(restored.audio_links, result.audio_links)
+        self.assertEqual(len(self.calls), 1)
 
     def test_invalid_audio_only_candidate_and_conflicting_coordinates_stay_rejected(self):
         for fields in [{'candidate_id': 11}, {'candidate_id': 0, 'frame_time': 0, 'frame_index': 0}]:

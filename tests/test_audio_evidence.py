@@ -170,7 +170,7 @@ class AudioChatTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
 
     def test_invalid_audio_link_does_not_cache_or_retry_or_save_half_chat(self):
-        self.link["frame_time"] = 25
+        self.link["segment_id"] = 1
         chat = ChatService(self.settings, self.client, self.videos)
         with self.assertRaises(DeepSeekError):
             chat.send(conversation_id=None, request_id="c" * 32, message="依据呢", image_id=None, video_id=self.info.video_id)

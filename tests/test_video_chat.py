@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from app.api.routes.chat import get_chat_service
 from app.core.config import Settings, get_settings
 from app.main import app
+from app.services.audio_evidence import AudioTranscript, SpeechSegment
 from app.services.chat import ChatService
 from app.services.chat_store import ChatStore
 from app.services.deepseek import DeepSeekClient, DeepSeekError
@@ -40,14 +41,15 @@ class VideoChatTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name)
         self.settings = Settings(_env_file=None, deepseek_api_key="test-key-not-valid",
-            chat_database_path=root / "chat.sqlite3", video_storage_dir=root / "videos")
+            chat_database_path=root / "chat.sqlite3", video_storage_dir=root / "videos", role_database_path=root / "roles.sqlite3")
         self.calls = []
         self.status = 200
+        self.payload = result_payload()
 
         def handler(request):
             payload = json.loads(request.content)
             self.calls.append(payload)
-            answer = json.dumps(result_payload(), ensure_ascii=False) if payload.get("response_format") else "记得，你说去了西湖。"
+            answer = json.dumps(self.payload, ensure_ascii=False) if payload.get("response_format") else "记得，你说去了西湖。"
             return httpx.Response(self.status, json={"model": "deepseek-flash", "choices": [
                 {"message": {"content": answer}, "finish_reason": "stop"}],
                 "usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}})
@@ -80,6 +82,53 @@ class VideoChatTests(unittest.TestCase):
         replay = self.send(request="1")
         self.assertTrue(replay["replayed"])
         self.assertEqual(len(self.calls), 2)
+
+    def test_blank_video_request_asks_for_goal_and_saves_turn(self):
+        self.payload["reply"] = "画面从红色切换到蓝色。你想让我分析这段视频的哪部分？"
+        self.videos.analyze(self.video.video_id)
+        self.calls.clear()
+        first = self.send("  ")
+        self.assertEqual(len(self.calls), 1)
+        self.assertTrue(pictures(self.calls[0]))
+        prompt = self.calls[0]["messages"][0]["content"]
+        self.assertIn("只问一个", prompt)
+        self.assertEqual(first["user_message"]["content"], "分析这段视频")
+        self.assertEqual(first["assistant_message"]["content"], self.payload["reply"])
+        self.assertTrue(self.send("")["replayed"])
+        self.assertEqual(len(self.calls), 1)
+        with self.assertRaises(DeepSeekError) as error:
+            self.send("", "2", first["conversation_id"])
+        self.assertEqual(error.exception.status_code, 422)
+        self.assertEqual(len(self.calls), 1)
+        followup = self.send("请说颜色变化。", "2", first["conversation_id"])
+        self.assertEqual(followup["conversation_id"], first["conversation_id"])
+        self.assertFalse(pictures(self.calls[1]))
+
+    def test_blank_video_request_uses_transcript_for_task_and_reading_in_one_call(self):
+        audio = AudioTranscript(status="ready", segments=[
+            SpeechSegment(id=0, start=0.3, end=2, text="把黄色的这一道题用 C 远离实现。"),
+        ])
+        (self.settings.video_storage_dir / self.video.video_id / "audio.json").write_text(
+            audio.model_dump_json(), encoding="utf-8")
+        self.payload.update(reply="你想完成黄色题目。这里是代码。", audio_links=[
+            {"segment_id": 0, "relation": "audio_only", "detail": "对白提到黄色题目。"},
+        ])
+        first = self.send("")
+        self.assertEqual(len(self.calls), 1)
+        prompt = self.calls[0]["messages"][0]["content"]
+        self.assertIn("直接作答", prompt)
+        self.assertIn("本轮是题目/屏幕文字阅读", prompt)
+        parts = self.calls[0]["messages"][-1]["content"]
+        self.assertTrue(any("C 远离" in part.get("text", "") for part in parts))
+        self.assertGreater(sum(part["image_url"]["detail"] == "high" for part in pictures(self.calls[0])), 0)
+        self.assertEqual(first["assistant_message"]["content"], self.payload["reply"])
+
+        self.videos.isolated = True
+        self.send("请只概括画面。", "2")
+        prompt = self.calls[1]["messages"][0]["content"]
+        self.assertNotIn("本轮用户上传视频并点击开始分析", prompt)
+        self.assertNotIn("本轮是题目/屏幕文字阅读", prompt)
+        self.assertEqual(self.calls[1]["messages"][-1]["content"][-1]["text"], "请只概括画面。")
 
     def test_new_topic_reuses_visual_facts_but_not_previous_caption_or_reply(self):
         first = self.send("这是只属于第一个话题的地名秘密。")
@@ -141,6 +190,11 @@ class VideoChatTests(unittest.TestCase):
             self.assertEqual(client.get("/api/chat/conversations").json(), [])
             self.assertEqual(client.post("/api/chat/messages", json={**body, "history": []}).status_code, 422)
             self.assertEqual(client.post("/api/chat/messages", json={**body, "image_id": "a" * 32}).status_code, 422)
+            blank = {"request_id": "2" * 32, "message": " "}
+            self.assertEqual(client.post("/api/chat/messages", json=blank).status_code, 422)
+            self.assertEqual(client.post("/api/chat/messages", json={**blank, "video_id": self.video.video_id,
+                "debug_code": True}).status_code, 422)
+            self.assertEqual(client.post("/api/chat/messages", json={**blank, "video_id": self.video.video_id}).status_code, 200)
 
     def test_migration_preserves_legacy_rows_and_is_idempotent(self):
         path = Path(self.temp.name) / "legacy.sqlite3"

@@ -115,8 +115,11 @@ export function createMediaWorkflow({ fetcher = globalThis.fetch, storage = glob
     if (own.kind && !(imageId || videoId)) return false;
     if ((inspectVideo || debugCode) && !videoId) return false;
     let content = message.trim();
-    if (!content && !current.conversationId && own.kind) content = debugCode ? '请结合视频中的源码和终端错误，给出有依据的可能原因与修改步骤。'
-      : own.kind === 'image' ? '请说明这张图片的主要内容和可见细节。' : '请概括视频画面与对白，分别说明能确认和不确定的内容。';
+    if (!content && !current.conversationId) {
+      if (debugCode) content = '请结合视频中的源码和终端错误，给出有依据的可能原因与修改步骤。';
+      else if (inspectVideo) content = '请概括视频画面与对白，分别说明能确认和不确定的内容。';
+      else if (imageId) content = '请说明这张图片的主要内容和可见细节。';
+    }
     return chat.send(content, imageId, { videoId, imageCount: imageId ? 1 : 0, uploadReady: true, inspectVideo, debugCode });
   }
 

@@ -32,12 +32,26 @@ function setup(options={}) {
 test('one entry routes photo and video automatically; swapping starts a fresh topic without crossed IDs',async()=>{
   const {workflow:w,posts,messages}=setup();await w.initialize();
   assert.equal(await w.selectFiles([image()]),true);assert.equal(w.getState().kind,'image');assert.equal(messages().length,0);
-  assert.equal(await w.send(''),true);assert.equal(messages()[0].image_id,imageId);assert.ok(!messages()[0].video_id);
+  assert.equal(await w.send(''),true);assert.equal(messages()[0].image_id,imageId);assert.equal(messages()[0].message,'请说明这张图片的主要内容和可见细节。');assert.ok(!messages()[0].video_id);
   await w.send('继续解释');assert.equal(messages()[1].conversation_id,'1'.padStart(32,'0'));
   assert.equal(await w.selectFiles([video()]),true);assert.equal(w.getState().chat.messages.length,0);
-  assert.equal(await w.send(''),true);assert.equal(messages()[2].conversation_id,null);assert.equal(messages()[2].image_id,null);assert.equal(messages()[2].video_id,videoId);
+  assert.equal(await w.send(''),true);assert.equal(messages()[2].conversation_id,null);assert.equal(messages()[2].image_id,null);assert.equal(messages()[2].video_id,videoId);assert.equal(messages()[2].message,'');
   await w.selectFiles([image()]);await w.send('再看图片');assert.equal(messages()[3].conversation_id,null);assert.ok(!messages()[3].video_id);
   assert.equal(posts().filter(c=>c.url==='/api/images').length,2);w.dispose();
+});
+
+test('video uses the same action for a typed request and keeps special actions explicit', async () => {
+  const { workflow, messages } = setup();
+  await workflow.initialize();
+  await workflow.selectFiles([video()]);
+  assert.equal(await workflow.send('  看一下第 4 题  '), true);
+  assert.equal(messages()[0].message, '看一下第 4 题');
+  assert.equal(await workflow.send('  '), false);
+  await workflow.selectFiles([video()]);
+  assert.equal(await workflow.send('', { debugCode: true }), true);
+  assert.equal(messages()[1].debug_code, true);
+  assert.match(messages()[1].message, /源码和终端错误/);
+  workflow.dispose();
 });
 
 test('multiple photos and mixed uploads produce explicit errors with no upload or paid call',async()=>{

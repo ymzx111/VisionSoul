@@ -116,7 +116,8 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
     if (imageCount > 1) { publish({ error: '目前只支持单张图片上传' }); return false; }
     if (imageCount === 1 && (!imageId || !uploadReady)) { publish({ error: '请等待图片上传成功，或清空图片后聊文字。' }); return false; }
     const content = message.trim();
-    if (!content || content.length > 2000) { publish({ error: '请填写 1 至 2000 个字符的消息。' }); return false; }
+    const autoVideo = mode === 'media' && !state.conversationId && videoId && !imageId && !inspectVideo && !debugCode;
+    if ((!content && !autoVideo) || content.length > 2000) { publish({ error: '请填写 1 至 2000 个字符的消息。' }); return false; }
     const changedImage = state.imageId && imageId && state.imageId !== imageId;
     const changedVideo = mode !== 'image' && state.videoId && videoId && state.videoId !== videoId;
     const changedKind = mode === 'media' && ((imageId && state.videoId) || (videoId && state.imageId));
@@ -130,7 +131,7 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
     if (!retry || retry.fingerprint !== fingerprint) retry = { fingerprint, request_id: makeId() };
     const current = epoch;
     controller = new AbortController();
-    publish({ sending: true, error: '', pending: { role: 'user', content, image_id: imageId, video_id: state.videoId ? null : body.video_id }, usage: null, truncated: false });
+    publish({ sending: true, error: '', pending: { role: 'user', content: content || '分析这段视频', image_id: imageId, video_id: state.videoId ? null : body.video_id }, usage: null, truncated: false });
     try {
       const data = await read(fetcher, '/api/chat/messages', { method: 'POST', signal: controller.signal,
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, request_id: retry.request_id }) });

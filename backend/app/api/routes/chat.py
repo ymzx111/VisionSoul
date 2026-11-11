@@ -24,7 +24,7 @@ class SendMessage(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid", title="发送伙伴消息")
     conversation_id: Identifier | None = Field(default=None, title="话题编号", description="第一次发送留空，后续使用返回的话题编号。")
     request_id: Identifier = Field(title="消息请求编号", description="前端自动生成；原样重试已完成的请求不会再调用模型。")
-    message: str = Field(min_length=1, max_length=2000, title="你的消息")
+    message: str = Field(max_length=2000, title="你的消息", description="新视频话题可留空，由模型从视频判断任务。")
     space: ChatSpace = Field(default="companion", title="对话空间", description="工作解析不读取角色或记忆；同话题不能跨空间。")
     inspect_video: bool = Field(default=False,title="重新细看视频并比较候选",description="显式重新发送画面，可能增加模型用量；普通追问为false。")
     debug_code: bool = Field(default=False,title="从视频辅助排查代码报错",description="显式读取最多4张高清并生成建议，不执行代码；产生API用量。")

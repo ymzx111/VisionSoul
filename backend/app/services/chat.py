@@ -75,6 +75,11 @@ class ChatService:
             effective_space = space or "companion"
             if effective_space not in {"work", "companion"}:
                 raise DeepSeekError("请选择工作解析或角色对话。", 422)
+            if not message.strip():
+                if conversation_id or not video_id or image_id or inspect_video or debug_code:
+                    raise DeepSeekError("请填写消息，或上传新视频后点击开始分析。", 422)
+                message = ""
+            display_message = message or "分析这段视频"
             self.store.initialize()
             body = {"conversation_id": conversation_id, "message": message, "image_id": image_id}
             if space is not None:
@@ -146,7 +151,7 @@ class ChatService:
                     elif attached_video and video_context is None:
                         prior = context_messages(history,self.settings,message,len(memory_text),persona_prompt)
                         video_context, result = videos.start_conversation(attached_video,message,prior[1:],memory_text=memory_text)
-                        video_context["opening_message"] = message
+                        video_context["opening_message"] = display_message
                     elif attached_video and needs_text_refresh(message, video_context):
                         prior = context_messages(history, self.settings, message, len(memory_text), persona_prompt)
                         opening = video_context.get("opening_message", message)
@@ -180,7 +185,7 @@ class ChatService:
                                 saved_audio, saved_links)})
                     return self.store.finish_turn(
                         conversation=conversation, conversation_id=target, image_id=attached,
-                        message=message, model_reply=result.model_dump(), request_id=request_id,
+                        message=display_message, model_reply=result.model_dump(), request_id=request_id,
                         fingerprint=fingerprint, persona_id=persona_version, video_id=attached_video, video_context=video_context,
                         space=effective_space,
                     )

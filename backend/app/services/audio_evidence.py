@@ -11,6 +11,10 @@ SECONDARY_SECONDS = 3.0
 MAX_AUDIO_LINKS = 64
 
 
+class AudioCandidateWindowError(ValueError):
+    """对白存在，但模型提供的画面与时间无法绑定到本轮候选。"""
+
+
 class SpeechSegment(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     id: int = Field(ge=0, le=63)
@@ -96,23 +100,34 @@ def validate_links(links, transcript: AudioTranscript, frames):
                     raise ValueError("候选编号与附带图号或时间冲突")
                 link.frame_index, link.frame_time = chosen["frame_index"], chosen["frame_time"]
             if not any(row["frame_index"] == link.frame_index and row["frame_time"] == link.frame_time for row in candidates):
-                raise ValueError("引用画面不在音画候选窗口内")
+                raise AudioCandidateWindowError("引用画面不在音画候选窗口内")
 
 
 def normalize_model_links(links, transcript: AudioTranscript, frames):
     """仅在新模型回复入口保守清理；缓存读取仍严格校验，不修改原始对白。"""
-    normalized = [link.model_copy(deep=True) for link in links]
+    if not links or len(links) > MAX_AUDIO_LINKS:
+        validate_links(links, transcript, frames)
+    normalized = []
     cleared = 0
-    for link in normalized:
-        if link.relation != "audio_only":
-            continue
-        if any(value is not None for value in (link.candidate_id, link.frame_index, link.frame_time)):
-            # 先验证多余引用确实存在且不冲突，不能借清理绕过边界检查。
-            probe = link.model_copy(update={"relation": "uncertain"})
+    unmatched = 0
+    for original in links:
+        link = original.model_copy(deep=True)
+        extra_picture = link.relation == "audio_only" and any(
+            value is not None for value in (link.candidate_id, link.frame_index, link.frame_time))
+        probe = link.model_copy(update={"relation": "uncertain"}) if extra_picture else link
+        try:
             validate_links([probe], transcript, frames)
-            link.candidate_id = link.frame_index = link.frame_time = None
-            cleared += 1
-    validate_links(normalized, transcript, frames)
+        except AudioCandidateWindowError:
+            # 原对白编号已通过校验。丢掉无法核对的图号、时间和关联理由。
+            link = AudioLink(segment_id=link.segment_id, relation="audio_only",
+                             detail="画面时间未匹配该段对白。请回听原视频核对转写。")
+            unmatched += 1
+        else:
+            if extra_picture:
+                link.candidate_id = link.frame_index = link.frame_time = None
+                link.content_visible = False
+                cleared += 1
+        normalized.append(link)
     untrusted = {row['segment_id'] for row in transcript_warnings(transcript)}
     downgraded = 0
     for link in normalized:
@@ -120,7 +135,12 @@ def normalize_model_links(links, transcript: AudioTranscript, frames):
                 or any(term in link.detail for term in ('无法验证', '无法证实', '无法确认', '不能验证', '不能证实', '无法由画面'))):
             link.relation = 'uncertain'
             downgraded += 1
-    notes = [f"{cleared}条仅对白依据已去除多余画面绑定，未建立画面验证关系。"] if cleared else []
+    picture_notes = []
+    if cleared:
+        picture_notes.append(f"{cleared}条仅对白依据已去除多余画面绑定，未建立画面验证关系。")
+    if unmatched:
+        picture_notes.append(f"{unmatched}条画面引用未匹配对白的时间候选，已仅保留对白依据。")
+    notes = ["".join(picture_notes)] if picture_notes else []
     if downgraded:
         notes.append(f'{downgraded}条支持关系缺少可靠内容依据，已标为关联待确认。')
     return normalized, notes

@@ -27,9 +27,9 @@ from app.services.video_focus import focus_path
 from app.services.audio_evidence import AudioTranscript, AudioLink, AUDIO_VERSION, MAX_AUDIO_LINKS, audio_prompt, validate_links, normalize_model_links, add_time_citations, current_context
 from app.services.audio_corrections import read_audio, save_correction, CorrectionError
 from app.services.sound_clues import measure_sound, sound_prompt
-from app.services.transcript_quality import transcript_warnings
+from app.services.transcript_quality import transcript_warnings, trusted_transcript
 from app.services.video_debug import CodeDebugReport, debug_reply
-from app.services.video_tasks import task_prompt
+from app.services.video_tasks import AUTO_VIDEO_TASK, task_prompt
 from app.services.video_reading import DetailSelection, FrameAdjustment, READING_TASK, parse_focus_range, valid_focus_range, wants_text_detail
 from app.services.video_result import decode_video_result, result_failure
 
@@ -267,10 +267,14 @@ class VideoService:
                                     focus_range_ms=interval, focus_frames=focus_frames)
         return selection, paths
 
-    def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None, memory_text: str = "", inspect: bool = False, debug_code: bool = False) -> VideoAnswer:
+    def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None, memory_text: str = "", inspect: bool = False, debug_code: bool = False, *, auto_task: bool = False) -> VideoAnswer:
         directory = video_directory(info.video_id, self.settings)
         parts = [{"type": "text", "text": "图号@原视频秒，区间是重复图的采样点，不代表连续动作。"}]
-        reading = not inspect and not debug_code and wants_text_detail(caption)
+        question = caption
+        if auto_task:
+            speech = trusted_transcript(info.audio, transcript_warnings(info.audio))
+            question = " ".join(segment.text for segment in speech.segments)
+        reading = not inspect and not debug_code and wants_text_detail(question)
         interval = parse_focus_range(caption)
         profile = "text" if reading or debug_code or interval else "general"
         if interval:
@@ -313,6 +317,8 @@ class VideoService:
                              comparison_task=COMPARISON_TASK if inspect and not debug_code else '', debug_code=debug_code)
         if reading:
             prompt += "\n" + READING_TASK
+        if auto_task:
+            prompt += "\n" + AUTO_VIDEO_TASK
         if interval:
             prompt += f"\n本轮优先分析 {interval[0] / 1000:g}–{interval[1] / 1000:g} 秒。引用重点画面时使用随图提供的编号和实际时间，无法辨认的字符请明确标注。"
         if caption:
@@ -410,12 +416,12 @@ class VideoService:
     def start_conversation(self, video_id: str, message: str, history: list[dict], memory_text: str = "") -> tuple[dict, ModelReply | None]:
         """首次无观察时一次请求同时看图和接话；已有观察时让聊天服务仅用文字接话。"""
         info = self.info(video_id)
-        if self.isolated or wants_text_detail(message) or parse_focus_range(message) is not None:
+        if not message or self.isolated or wants_text_detail(message) or parse_focus_range(message) is not None:
             # 新空间的分析只随当前话题保存，不跨话题复用可能混入配文/角色记忆的综合观察。
             if not ANALYSIS_LOCK.acquire(blocking=False):
                 raise VideoError("已有视频正在观察，请稍等后再发送。", 409)
             try:
-                answer = self._observe(info, message, history, memory_text)
+                answer = self._observe(info, message, history, memory_text, auto_task=not message)
                 return self._snapshot(info, answer), ModelReply(answer=answer.reply, model=answer.model, usage=answer.usage)
             finally:
                 ANALYSIS_LOCK.release()

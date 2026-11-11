@@ -3,6 +3,7 @@ from pathlib import Path
 
 PROMPTS = Path(__file__).resolve().parents[1] / 'prompts'
 CODE_DEBUG_TASK = (PROMPTS / 'video_debug.md').read_text(encoding='utf8').strip()
+AUTO_VIDEO_TASK = (PROMPTS / 'video_auto.md').read_text(encoding='utf8').strip()
 
 
 def task_prompt(base, *, audio_task='', comparison_task='', debug_code=False):
