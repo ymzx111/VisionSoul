@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAudioEditWorkflow } from './audio-edit-workflow.mjs';
 
-const original = { status: 'ready', message: '转写', segments: [{id:0,start:1,end:2,text:'打磨院'}] };
+const original = { status: 'ready', message: '转写', segments: [{id:0,start:1,end:2,text:'打磨院',
+  words:[{text:'打磨',start:1,end:1.4,score:0.4}],retry:{start:0.5,end:2.5,text:'达磨院'}}] };
 const record = { original, audio: original, revision: 0 };
 const response = (body, ok=true) => ({ ok, json: async () => structuredClone(body) });
 
@@ -17,7 +18,9 @@ test('open edit and save only use local endpoint and preserve original', async (
   assert.equal(updated,true);
   assert.equal(calls.length,2);
   assert.equal(calls[1][0],`/api/videos/${'a'.repeat(64)}/audio`);
-  assert.equal(JSON.parse(calls[1][1].body).expected_revision,0);
+  const payload = JSON.parse(calls[1][1].body);
+  assert.equal(payload.expected_revision,0);
+  assert.deepEqual(payload.segments, [{ id: 0, start: 1.2, end: 2, text: '达摩院' }]);
   assert.equal(flow.getState().record.original.segments[0].text,'打磨院');
 });
 test('invalid time and blank text never send a save request', async () => {

@@ -36,6 +36,7 @@ def read_audio(directory):
 
 
 def save_correction(directory, expected_revision: int, segments: list[SpeechSegment], duration: float):
+    segments = [SpeechSegment(id=row.id, start=row.start, end=row.end, text=row.text) for row in segments]
     current = read_audio(directory)
     if current["revision"] != expected_revision:
         raise CorrectionError("对白已在其他页面修改，请重新打开校对后再保存。", 409)
@@ -47,7 +48,8 @@ def save_correction(directory, expected_revision: int, segments: list[SpeechSegm
         raise CorrectionError("对白时间必须位于视频内，结束时间须晚于开始时间。")
     corrected = AudioTranscript(status="ready", source="corrected", language=current["original"].language,
         message="用户校对白；仍需结合画面核对。", segments=segments)
-    if corrected.segments == current["audio"].segments:
+    if ([row.model_dump(exclude={"words", "retry"}) for row in segments]
+            == [row.model_dump(exclude={"words", "retry"}) for row in current["audio"].segments]):
         return current
     record = CorrectionRecord(revision=current["revision"] + 1,
         raw_sha256=hashlib.sha256((directory / "audio.json").read_bytes()).hexdigest(),

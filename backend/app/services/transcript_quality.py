@@ -3,6 +3,15 @@ import re
 from collections import Counter
 
 
+LOW_WORD_SCORE = 0.50
+
+
+def uncertain_words(segment):
+    """只向模型发送最可疑的少数词，分数不是正确率。"""
+    words = [word for word in segment.words if word.score < LOW_WORD_SCORE and re.search(r"\w", word.text)]
+    return sorted(words, key=lambda word: word.score)[:3]
+
+
 def transcript_warnings(audio):
     if audio.status != 'ready' or audio.source == 'corrected':
         return []
@@ -45,4 +54,6 @@ def trusted_transcript(audio, warnings=None):
     for segment in copy.segments:
         if segment.id in ids:
             segment.text = '【此段自动转写待校对，不可据此推断内容；请回听原声】'
+            segment.words = []
+            segment.retry = None
     return copy

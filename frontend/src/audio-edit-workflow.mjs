@@ -26,7 +26,7 @@ export function createAudioEditWorkflow({ videoId, duration, fetcher = globalThi
       publish({ open: true, loading: true, error: '' });
       try {
         const record = await request();
-        publish({ record, segments: record.audio.segments.map(segment => ({ ...segment })) });
+        publish({ record, segments: record.audio.segments.map(({ id, start, end, text }) => ({ id, start, end, text })) });
         return true;
       } catch (error) { publish({ error: error.message || '读取失败，请稍后重试。' }); return false; }
       finally { publish({ loading: false }); }

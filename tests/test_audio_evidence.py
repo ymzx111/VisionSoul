@@ -17,8 +17,8 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from app.core.config import Settings
-from app.services.audio_evidence import AudioLink, AudioTranscript, SpeechSegment, frame_candidates, validate_links, add_time_citations
-from app.services.audio_extract import decode_timeline, speech_segments, transcribe
+from app.services.audio_evidence import AudioLink, AudioTranscript, SpeechSegment, SpeechWord, audio_prompt, frame_candidates, validate_links, add_time_citations, model_context
+from app.services.audio_extract import decode_timeline, retry_uncertain_speech, speech_segments, transcribe
 from app.services.chat import ChatService
 from app.services.deepseek import DeepSeekClient, DeepSeekError
 from app.services.videos import SampleFrame, VideoService, VideoError
@@ -88,11 +88,58 @@ class AlignmentTests(unittest.TestCase):
                 AudioTranscript.model_validate(payload)
 
     def test_word_times_split_long_speech_and_keep_vad_restored_original_times(self):
-        word = lambda start, end, text: SimpleNamespace(start=start, end=end, word=text)
+        word = lambda start, end, text: SimpleNamespace(start=start, end=end, word=text, probability=0.42)
         rows = speech_segments([SimpleNamespace(no_speech_prob=0, avg_logprob=-0.1,
             words=[word(10, 12, "请看"), word(12, 14.2, "这里"), word(14.3, 15, "有叶子。")])], 16)
         self.assertEqual([(row.start, row.end) for row in rows], [(10, 14.2), (14.3, 15)])
         self.assertEqual(rows[0].text, "请看这里")
+        self.assertEqual([(word.start, word.end, word.score) for word in rows[0].words],
+                         [(10, 12, 0.42), (12, 14.2, 0.42)])
+
+    def test_retry_only_reprocesses_one_task_window_and_keeps_both_results(self):
+        def segment(index, start, token, low, score):
+            return SpeechSegment(id=index, start=start, end=start + 2, text=token + low, words=[
+                SpeechWord(start=start, end=start + 1, text=token, score=0.9),
+                SpeechWord(start=start + 1, end=start + 2, text=low, score=score),
+            ])
+
+        ordinary = segment(0, 1, "沿着湖边", "散补", 0.1)
+        secondary = segment(1, 4, "请看这道题", "呀", 0.3)
+        task = segment(2, 8, "代码", "振兴补权", 0.41)
+        later_task = segment(3, 12, "题目要求", "呲语", 0.45)
+        audio = AudioTranscript(status="ready", segments=[ordinary, secondary, task, later_task])
+        model = SimpleNamespace()
+        samples = np.arange(16 * 16000, dtype=np.float32)
+        with patch.object(model, "transcribe", create=True, return_value=(
+                iter([SimpleNamespace(text="代码进行补全，用 C 语言。")]), None)) as run:
+            retry_uncertain_speech(model, samples, AudioTranscript(status="ready", segments=[ordinary]))
+            run.assert_not_called()
+            retry_uncertain_speech(model, samples, audio)
+            run.assert_called_once()
+            np.testing.assert_array_equal(run.call_args.args[0], samples[120000:168000])
+            self.assertIn("C 语言", run.call_args.kwargs["initial_prompt"])
+
+        self.assertEqual(task.text, "代码振兴补权")
+        self.assertEqual((task.retry.start, task.retry.end), (7.5, 10.5))
+        self.assertTrue(all(row.retry is None for row in (ordinary, secondary, later_task)))
+        restored = AudioTranscript.model_validate_json(audio.model_dump_json())
+        prompt = audio_prompt(restored, [])
+        self.assertIn("低分：振兴补权@9", prompt)
+        self.assertIn("同音轨复识别候选 7.5–10.5秒：代码进行补全，用 C 语言。", prompt)
+        saved = model_context({"audio": restored.model_dump()})["audio"]["segments"][2]
+        self.assertNotIn("words", saved)
+        self.assertEqual(saved["low_score_words"][0]["text"], "振兴补权")
+
+    def test_optional_retry_failure_keeps_initial_transcript(self):
+        audio = AudioTranscript(status="ready", segments=[SpeechSegment(id=0, start=0, end=2,
+            text="请看代码补权", words=[SpeechWord(text="请看代码", start=0, end=1, score=0.92),
+                                      SpeechWord(text="补权", start=1, end=2, score=0.4)])])
+        model = SimpleNamespace()
+        with patch.object(model, "transcribe", create=True, side_effect=RuntimeError) as run:
+            retry_uncertain_speech(model, np.zeros(32000), audio)
+            run.assert_called_once()
+        self.assertEqual(audio.segments[0].text, "请看代码补权")
+        self.assertIsNone(audio.segments[0].retry)
 
     def test_real_audio_pts_offset_and_silence_remain_on_video_clock(self):
         with tempfile.TemporaryDirectory() as temp:

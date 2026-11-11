@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.core.config import Settings, get_settings
 from app.api.routes.videos import get_video_service
-from app.services.audio_evidence import AudioTranscript, SpeechSegment, model_context
+from app.services.audio_evidence import AudioTranscript, SpeechRetry, SpeechSegment, SpeechWord, model_context
 from app.services.chat import ChatService
 from app.services.deepseek import DeepSeekClient
 from app.services.videos import VideoService, VideoError, ANALYSIS_LOCK
@@ -46,7 +46,9 @@ class AudioCorrectionTests(unittest.TestCase):
         self.service = VideoService(self.settings, self.client)
         self.video = self.service.upload(BytesIO(self.source))
         self.directory = self.settings.video_storage_dir / self.video.video_id
-        self.raw = AudioTranscript(status="ready", message="原始转写", segments=[SpeechSegment(id=0, start=1, end=1.4, text="打磨院")])
+        self.raw = AudioTranscript(status="ready", message="原始转写", segments=[SpeechSegment(id=0, start=1, end=1.4, text="打磨院",
+            words=[SpeechWord(text="打磨", start=1, end=1.2, score=0.4)],
+            retry=SpeechRetry(start=0.5, end=1.9, text="达磨院"))])
         self.raw_path = self.directory / "audio.json"
         self.raw_path.write_text(self.raw.model_dump_json(), encoding="utf-8")
         self.raw_bytes = self.raw_path.read_bytes()
@@ -65,6 +67,7 @@ class AudioCorrectionTests(unittest.TestCase):
         restored = VideoService(self.settings).info(self.video.video_id)
         self.assertEqual(restored.audio_revision, 1)
         self.assertEqual(restored.audio.segments, self.edits)
+        self.assertEqual(saved["original"].segments[0].retry.text, "达磨院")
         self.assertFalse(self.calls)
 
     def test_unchanged_save_does_not_invalidate_cache_and_stale_revision_conflicts(self):

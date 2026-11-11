@@ -3,9 +3,9 @@ from typing import Literal
 import re
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.core.video_policy import MAX_EVIDENCE_FRAMES
-from app.services.transcript_quality import transcript_warnings, trusted_transcript
+from app.services.transcript_quality import transcript_warnings, trusted_transcript, uncertain_words
 
-AUDIO_VERSION = "whisper-small-int8-timeline-v1"
+AUDIO_VERSION = "whisper-small-int8-timeline-v2"
 PRIMARY_SECONDS = 1.5
 SECONDARY_SECONDS = 3.0
 MAX_AUDIO_LINKS = 64
@@ -15,17 +15,38 @@ class AudioCandidateWindowError(ValueError):
     """对白存在，但模型提供的画面与时间无法绑定到本轮候选。"""
 
 
+class SpeechWord(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    text: str = Field(min_length=1, max_length=80)
+    start: float = Field(ge=0, le=30)
+    end: float = Field(ge=0, le=30)
+    score: float = Field(ge=0, le=1)
+
+
+class SpeechRetry(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    start: float = Field(ge=0, le=30)
+    end: float = Field(ge=0, le=30)
+    text: str = Field(min_length=1, max_length=180)
+
+
 class SpeechSegment(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     id: int = Field(ge=0, le=63)
     start: float = Field(ge=0, le=30)
     end: float = Field(ge=0, le=30)
     text: str = Field(min_length=1, max_length=300)
+    words: list[SpeechWord] = Field(default_factory=list, max_length=128)
+    retry: SpeechRetry | None = None
 
     @model_validator(mode="after")
     def ordered(self):
         if self.end < self.start or not self.text.strip():
             raise ValueError("对白时间或内容无效")
+        if any(not self.start <= word.start <= word.end <= self.end for word in self.words):
+            raise ValueError("词时间超出对白范围")
+        if self.retry and not (self.retry.start <= self.start <= self.end <= self.retry.end):
+            raise ValueError("复识别窗口没有覆盖原对白")
         return self
 
 
@@ -154,7 +175,14 @@ def audio_prompt(transcript: AudioTranscript, frames):
     for segment in trusted_transcript(transcript, warnings).segments:
         candidates = frame_candidates(segment, frames)
         labels = lambda window: ",".join(f"C{row['candidate_id']}={row['frame_index']}@{row['frame_time']:g}" for row in candidates if row["window"] == window)
-        rows.append(f"S{segment.id}@{segment.start:g}-{segment.end:g} {segment.text}\n近:{labels('primary')}；补:{labels('secondary')}")
+        row = f"S{segment.id}@{segment.start:g}-{segment.end:g} {segment.text}"
+        uncertain = uncertain_words(segment)
+        if uncertain:
+            row += "［低分：" + "、".join(f"{word.text}@{word.start:g}" for word in uncertain) + "］"
+        if segment.retry:
+            retry = segment.retry
+            row += f"［同音轨复识别候选 {retry.start:g}–{retry.end:g}秒：{retry.text}］"
+        rows.append(f"{row}\n近:{labels('primary')}；补:{labels('secondary')}")
     label = "用户校对白（优先于旧转写与历史回复，仍需按画面核对）" if transcript.source == "corrected" else "自动转写（可能有误）"
     warning = '部分分段存在重复/时间密度异常，已遮蔽待校对文字；不得猜测原文。\n' if warnings else ''
     return warning + label + "（原视频秒数；近±1.5秒，补±3秒，仅为时间候选）：\n" + "\n".join(rows)
@@ -223,7 +251,12 @@ def model_context(context):
     if result.get('audio'):
         audio = AudioTranscript.model_validate(result['audio'])
         warnings = transcript_warnings(audio)
-        result['audio'] = trusted_transcript(audio, warnings).model_dump()
+        safe = trusted_transcript(audio, warnings)
+        result['audio'] = safe.model_dump(exclude={'segments': {'__all__': {'words'}}}, exclude_none=True)
+        for row, segment in zip(result['audio']['segments'], safe.segments):
+            words = uncertain_words(segment)
+            if words:
+                row['low_score_words'] = [word.model_dump(exclude={'score'}) for word in words]
         result['audio_warnings'] = warnings
         if warnings:
             # 旧概述/诊断可能建立在异常转写上，保留视觉事实，推断暂不提供给模型。

@@ -3,6 +3,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import sys
 import wave
 
@@ -11,9 +12,14 @@ import numpy as np
 
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from app.services.audio_evidence import AudioTranscript, SpeechSegment
+from app.services.audio_evidence import AudioTranscript, SpeechRetry, SpeechSegment, SpeechWord
+from app.services.transcript_quality import LOW_WORD_SCORE, transcript_warnings
 
 RATE = 16000
+TASK_CUES = re.compile(r"帮我|麻烦|请(?:你|帮|问|看|分析|写)|想让|要求|任务|题目|这(?:一)?道题|代码|程序|报错|怎么|多少|"
+                       r"第\s*\d+\s*题|\d+(?:\.\d+)?\s*(?:秒|分钟|行|个|元|%|％)")
+CODE_CUES = re.compile(r"代码|程序|编程|报错|题干|流程图")
+CODE_VOCABULARY = "编程任务常用词：代码、补全、C 语言、输入输出、流程图。"
 
 
 def decode_timeline(source: Path, duration: float):
@@ -76,15 +82,62 @@ def speech_segments(segments, duration):
                 chunk = []
         if chunk:
             chunks.append(chunk)
-        ranges = [(group[0].start, group[-1].end, "".join(word.word for word in group)) for group in chunks]
+        ranges = [(group[0].start, group[-1].end, "".join(word.word for word in group), group) for group in chunks]
         if not words:
-            ranges = [(segment.start, segment.end, segment.text)]
-        for start, end, text in ranges:
+            ranges = [(segment.start, segment.end, segment.text, [])]
+        for start, end, text, group in ranges:
             text = text.strip()
-            if text and end > 0 and start < duration:
-                result.append(SpeechSegment(id=len(result), start=round(max(0, start), 3),
-                    end=round(min(duration, end), 3), text=text))
+            if not text or end <= 0 or start >= duration:
+                continue
+            start, end = round(max(0, start), 3), round(min(duration, end), 3)
+            scored = []
+            for word in group:
+                score = getattr(word, "probability", None)
+                left, right = round(max(start, word.start), 3), round(min(end, word.end), 3)
+                token = word.word.strip()
+                if score is not None and 0 <= score <= 1 and left <= right and 0 < len(token) <= 80:
+                    scored.append(SpeechWord(text=token, start=left, end=right, score=round(score, 4)))
+            result.append(SpeechSegment(id=len(result), start=start, end=end, text=text, words=scored[:128]))
     return result
+
+
+def retry_priority(segment):
+    """低分词在任务线索附近才有复识别优先级。"""
+    text = "".join(word.text for word in segment.words)
+    cues = list(TASK_CUES.finditer(text))
+    offset = 0
+    priority = 1.0
+    for word in segment.words:
+        end = offset + len(word.text)
+        token = re.sub(r"[\W_]+", "", word.text)
+        if word.score < LOW_WORD_SCORE and token and token not in {"啊", "嗯", "哦", "吧", "呢", "呀", "呃", "哈"}:
+            if any(max(cue.start() - end, offset - cue.end()) <= 5 for cue in cues):
+                priority = min(priority, word.score)
+        offset = end
+    return priority
+
+
+def retry_uncertain_speech(model, samples, audio):
+    """同一视频最多复识别一个窗口，保留初次转写和时间轴。"""
+    flagged = {warning["segment_id"] for warning in transcript_warnings(audio)}
+    eligible = [segment for segment in audio.segments
+                if segment.id not in flagged and 0 < segment.end - segment.start <= 5]
+    target = min(eligible, key=retry_priority, default=None)
+    if target is None or retry_priority(target) == 1.0:
+        return
+    start = max(0, round((target.start - 0.5) * RATE))
+    end = min(samples.size, round((target.end + 0.5) * RATE))
+    hint = CODE_VOCABULARY if CODE_CUES.search(target.text) else None
+    try:
+        segments, _ = model.transcribe(samples[start:end], language="zh", beam_size=5,
+            condition_on_previous_text=False, temperature=0, vad_filter=True,
+            vad_parameters={"min_silence_duration_ms": 500}, initial_prompt=hint)
+        text = " ".join(segment.text.strip() for segment in segments).strip()
+    except (RuntimeError, ValueError):
+        return
+    normalized = lambda value: re.sub(r"[\W_]+", "", value).casefold()
+    if 0 < len(text) <= 180 and normalized(text) and normalized(text) != normalized(target.text):
+        target.retry = SpeechRetry(start=start / RATE, end=end / RATE, text=text)
 
 
 def transcribe(directory: Path, model_dir: Path, threads: int):
@@ -110,8 +163,10 @@ def transcribe(directory: Path, model_dir: Path, threads: int):
         vad_parameters={"min_silence_duration_ms": 500}, condition_on_previous_text=False,
         beam_size=3, temperature=0, hallucination_silence_threshold=1.0)
     rows = speech_segments(segments, duration)
-    return AudioTranscript(status="ready" if rows else "no_speech", language=info.language,
+    transcript = AudioTranscript(status="ready" if rows else "no_speech", language=info.language,
         message="本机自动转写，关键数字、名称和时间请回听确认。" if rows else "未识别到可靠对白，仅分析画面。", segments=rows)
+    retry_uncertain_speech(model, samples, transcript)
+    return transcript
 
 
 if __name__ == "__main__":

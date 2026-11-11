@@ -273,7 +273,8 @@ class VideoService:
         question = caption
         if auto_task:
             speech = trusted_transcript(info.audio, transcript_warnings(info.audio))
-            question = " ".join(segment.text for segment in speech.segments)
+            question = " ".join(segment.text + (" " + segment.retry.text if segment.retry else "")
+                                for segment in speech.segments)
         reading = not inspect and not debug_code and wants_text_detail(question)
         interval = parse_focus_range(caption)
         profile = "text" if reading or debug_code or interval else "general"
