@@ -19,6 +19,12 @@ RATE = 16000
 TASK_CUES = re.compile(r"帮我|麻烦|请(?:你|帮|问|看|分析|写)|想让|要求|任务|题目|这(?:一)?道题|代码|程序|报错|怎么|多少|"
                        r"第\s*\d+\s*题|\d+(?:\.\d+)?\s*(?:秒|分钟|行|个|元|%|％)")
 CODE_CUES = re.compile(r"代码|程序|编程|报错|题干|流程图")
+LANGUAGE_SLOT = re.compile(
+    r"(?:用|采用)\s*(?P<language>JavaScript|Python|Java|Rust|C\+\+|C#|C)\s*"
+    r"(?P<suffix>[一-鿿]{2,4}?)(?=\s*(?:来|去)?\s*(?:实现|编写|解决|完成))",
+    re.IGNORECASE,
+)
+LANGUAGE_SUFFIXES = ("语言", "程序", "代码", "脚本", "库", "框架", "工具", "接口", "数组", "指针", "结构体", "循环", "函数", "原生", "语法")
 CODE_VOCABULARY = "编程任务常用词：代码、补全、C 语言、输入输出、流程图。"
 
 
@@ -117,17 +123,41 @@ def retry_priority(segment):
     return priority
 
 
+def unusual_language(segment, preceding):
+    """有明确任务时，复核「用某语言实现」位置的异常后缀，词分数可能仍然很高。"""
+    if not TASK_CUES.search(segment.text + preceding):
+        return None
+    match = LANGUAGE_SLOT.search(segment.text)
+    if match and not match["suffix"].endswith(LANGUAGE_SUFFIXES):
+        return match["language"]
+    return None
+
+
 def retry_uncertain_speech(model, samples, audio):
     """同一视频最多复识别一个窗口，保留初次转写和时间轴。"""
     flagged = {warning["segment_id"] for warning in transcript_warnings(audio)}
-    eligible = [segment for segment in audio.segments
-                if segment.id not in flagged and 0 < segment.end - segment.start <= 5]
-    target = min(eligible, key=retry_priority, default=None)
-    if target is None or retry_priority(target) == 1.0:
+    candidates = []
+    for index, segment in enumerate(audio.segments):
+        if segment.id in flagged or not 0 < segment.end - segment.start <= 5:
+            continue
+        previous = audio.segments[index - 1] if index else None
+        preceding = previous.text if (previous and previous.id not in flagged
+                                      and segment.start - previous.end <= 2) else ""
+        language = unusual_language(segment, preceding)
+        priority = retry_priority(segment)
+        if language or priority < 1:
+            # 明确语言槽位优先，避免一次机会用在无关的低分词上。
+            candidates.append((not language, priority, index, segment, language))
+    if not candidates:
         return
+    _, _, _, target, language = min(candidates)
     start = max(0, round((target.start - 0.5) * RATE))
     end = min(samples.size, round((target.end + 0.5) * RATE))
-    hint = CODE_VOCABULARY if CODE_CUES.search(target.text) else None
+    hint = None
+    if language:
+        hint = f"请用 {language} 语言实现。"
+    elif CODE_CUES.search(target.text):
+        hint = CODE_VOCABULARY
     try:
         segments, _ = model.transcribe(samples[start:end], language="zh", beam_size=5,
             condition_on_previous_text=False, temperature=0, vad_filter=True,
@@ -136,8 +166,15 @@ def retry_uncertain_speech(model, samples, audio):
     except (RuntimeError, ValueError):
         return
     normalized = lambda value: re.sub(r"[\W_]+", "", value).casefold()
-    if 0 < len(text) <= 180 and normalized(text) and normalized(text) != normalized(target.text):
-        target.retry = SpeechRetry(start=start / RATE, end=end / RATE, text=text)
+    if not 0 < len(text) <= 180 or not normalized(text) or normalized(text) == normalized(target.text):
+        return
+    if language:
+        if not re.search(rf"(?<![a-zA-Z]){re.escape(language)}\s*语言", text, re.IGNORECASE):
+            return
+    elif hint and not (CODE_CUES.search(text) or re.search(r"编写|[A-Za-z]\s*语言", text)):
+        # 已知是编程任务时，不把丢失领域线索的改写交给下游。
+        return
+    target.retry = SpeechRetry(start=start / RATE, end=end / RATE, text=text)
 
 
 def transcribe(directory: Path, model_dir: Path, threads: int):

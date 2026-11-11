@@ -130,6 +130,53 @@ class AlignmentTests(unittest.TestCase):
         self.assertNotIn("words", saved)
         self.assertEqual(saved["low_score_words"][0]["text"], "振兴补权")
 
+    def test_retry_checks_high_scoring_language_misread_across_segments(self):
+        preceding = SpeechSegment(id=0, start=0.3, end=4.9, text="把黄色的这一道题")
+        task = SpeechSegment(id=1, start=5.1, end=7.2, text="去用C远镜实现", words=[
+            SpeechWord(text="C", start=5.4, end=5.6, score=0.77),
+            SpeechWord(text="远镜", start=5.6, end=6.2, score=0.59),
+        ])
+        samples = np.arange(10 * 16000, dtype=np.float32)
+        audio = AudioTranscript(status="ready", segments=[preceding, task])
+        model = SimpleNamespace()
+        with patch.object(model, "transcribe", create=True, return_value=(
+                iter([SimpleNamespace(text="去用 C 语言实现。")]), None)) as run:
+            retry_uncertain_speech(model, samples, audio)
+            run.assert_called_once()
+            np.testing.assert_array_equal(run.call_args.args[0], samples[73600:123200])
+            self.assertIn("C 语言", run.call_args.kwargs["initial_prompt"])
+        self.assertEqual(task.text, "去用C远镜实现")
+        self.assertEqual(task.retry.text, "去用 C 语言实现。")
+
+    def test_valid_technical_phrases_and_unrelated_speech_do_not_trigger(self):
+        preceding = SpeechSegment(id=0, start=0, end=4, text="把这一道题")
+        model = SimpleNamespace()
+        with patch.object(model, "transcribe", create=True) as run:
+            for phrase in ("用 C 语言实现", "用 C 数组实现", "用 C++ 标准库实现", "用 Python 来实现",
+                           "用远镜实现", "用 Canva 完成"):
+                with self.subTest(phrase=phrase):
+                    row = SpeechSegment(id=1, start=4, end=7, text=phrase)
+                    audio = AudioTranscript(status="ready", segments=[preceding, row])
+                    retry_uncertain_speech(model, np.zeros(160000), audio)
+            for preceding in (SpeechSegment(id=0, start=0, end=2, text="我看了一场展览"),
+                              SpeechSegment(id=0, start=0, end=1, text="有一道题")):
+                row = SpeechSegment(id=1, start=4, end=7, text="用 C 远镜实现")
+                audio = AudioTranscript(status="ready", segments=[preceding, row])
+                retry_uncertain_speech(model, np.zeros(160000), audio)
+            run.assert_not_called()
+
+    def test_retry_discards_candidate_that_loses_known_domain(self):
+        segment = SpeechSegment(id=0, start=1, end=3, text="请你编个代码", words=[
+            SpeechWord(text="请你", start=1, end=2, score=0.9),
+            SpeechWord(text="编个代码", start=2, end=3, score=0.4),
+        ])
+        model = SimpleNamespace()
+        with patch.object(model, "transcribe", create=True, return_value=(
+                iter([SimpleNamespace(text="请你评个电话。")]), None)) as run:
+            retry_uncertain_speech(model, np.zeros(64000), AudioTranscript(status="ready", segments=[segment]))
+            run.assert_called_once()
+        self.assertIsNone(segment.retry)
+
     def test_optional_retry_failure_keeps_initial_transcript(self):
         audio = AudioTranscript(status="ready", segments=[SpeechSegment(id=0, start=0, end=2,
             text="请看代码补权", words=[SpeechWord(text="请看代码", start=0, end=1, score=0.92),
