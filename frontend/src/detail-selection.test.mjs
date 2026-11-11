@@ -1,7 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { selectedDetailFrames } from './detail-selection.mjs';
+import { analysisFrames, selectedDetailFrames } from './detail-selection.mjs';
 const frames = [0, 1, 2, 3, 4].map(index => ({ index, time_seconds: index + 0.5 }));
+
+test('adjusted image and evidence use the actual original video time', () => {
+  const id = 'a'.repeat(64);
+  const selection = { profile: 'text', frame_indices: [0, 1], source_indices: [0, 1], adjustments: {
+    0: { kind: 'nearby', time_seconds: 0.625 }, 1: { kind: 'enhanced', time_seconds: 1.5 },
+  } };
+  const evidence = analysisFrames(selection, frames, id, 5);
+  assert.deepEqual(evidence[0].seen_at, [0.625]);
+  assert.equal(evidence[0].url, `/api/videos/${id}/frames/0/detail?variant=nearby`);
+  assert.equal(evidence[1].time_seconds, 1.5);
+  assert.equal(evidence[1].adjustment, 'enhanced');
+  assert.equal(frames[0].time_seconds, 0.5);
+  assert.deepEqual(selectedDetailFrames({ ...selection, adjustments: { 0: { kind: 'nearby', time_seconds: 3 } } }, frames, id, 5), []);
+});
 
 test('old reports remain readable and valid text selections link only to sampled frames', () => {
   assert.deepEqual(selectedDetailFrames(undefined, frames), []);

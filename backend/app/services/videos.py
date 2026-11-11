@@ -22,14 +22,14 @@ from app.core.persona import PERSONA_CORE, load_persona
 from app.services.deepseek import DeepSeekClient, DeepSeekError, ModelReply, TokenUsage, has_api_key
 from app.services.video_comparison import Comparison, DETAIL_VERSION, compact_times
 from app.services.video_selection import select_from_directory
-from app.services.video_details import detail_path
+from app.services.video_details import detail_path, adjustment_path, adjusted_path
 from app.services.audio_evidence import AudioTranscript, AudioLink, AUDIO_VERSION, MAX_AUDIO_LINKS, audio_prompt, validate_links, normalize_model_links, add_time_citations, current_context
 from app.services.audio_corrections import read_audio, save_correction, CorrectionError
 from app.services.sound_clues import measure_sound, sound_prompt
 from app.services.transcript_quality import transcript_warnings
 from app.services.video_debug import CodeDebugReport, debug_reply
 from app.services.video_tasks import task_prompt
-from app.services.video_reading import DetailSelection, READING_TASK, wants_text_detail
+from app.services.video_reading import DetailSelection, FrameAdjustment, READING_TASK, wants_text_detail
 from app.services.video_result import decode_video_result, result_failure
 
 logger = logging.getLogger(__name__)
@@ -212,6 +212,16 @@ class VideoService:
                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                     if process.returncode == 0 and all(detail_path(workspace, frame.index).is_file() for frame in missing):
                         for frame in missing:
+                            metadata = adjustment_path(workspace, frame.index)
+                            if metadata.is_file():
+                                try:
+                                    adjustment = FrameAdjustment.model_validate_json(metadata.read_bytes())
+                                    if adjustment.matches(frame.time_seconds):
+                                        path = adjusted_path(workspace, frame.index, adjustment.kind)
+                                        os.replace(path, adjusted_path(directory, frame.index, adjustment.kind))
+                                        os.replace(metadata, adjustment_path(directory, frame.index))
+                                except (OSError, ValueError):
+                                    logger.warning("邻近帧或锐化结果未保存，本次使用原采样时间的高清图")
                             os.replace(detail_path(workspace, frame.index), detail_path(directory, frame.index))
                     else:
                         logger.warning("原视频高清提取未完成，本次使用已有细节图")
@@ -226,14 +236,32 @@ class VideoService:
         reading = not inspect and not debug_code and wants_text_detail(caption)
         profile = "text" if reading or debug_code else "general"
         detailed = self._detail_frames(info, directory, profile=profile) if inspect or debug_code or reading else {}
+        selection = DetailSelection(profile=profile, frame_indices=sorted(detailed),
+            source_indices=sorted(index for index, path in detailed.items() if path == detail_path(directory, index)))
         for frame in info.frames:
+            if frame.index not in selection.source_indices:
+                continue
+            try:
+                adjustment = FrameAdjustment.model_validate_json(adjustment_path(directory, frame.index).read_bytes())
+                path = adjusted_path(directory, frame.index, adjustment.kind)
+                if adjustment.matches(frame.time_seconds) and adjustment.time_seconds <= info.duration_seconds and path.is_file():
+                    selection.adjustments[frame.index] = adjustment
+                    detailed[frame.index] = path
+            except (OSError, ValueError):
+                continue
+        frames = selection.evidence_frames(info.frames)
+        for frame in frames:
             high = frame.index in detailed
-            parts.append({"type": "text", "text": f"{frame.index}@{compact_times(frame.seen_at, info.sample_interval_seconds)}" + (" 高清候选（不保证可读）" if high else "")})
+            adjustment = selection.adjustments.get(frame.index)
+            label = " 高清候选（不保证可读）" if high else ""
+            if adjustment and adjustment.kind == "enhanced":
+                label = " 轻度锐化辅助图，无法确认的字符标待确认"
+            parts.append({"type": "text", "text": f"{frame.index}@{compact_times(frame.seen_at, info.sample_interval_seconds)}{label}"})
             path = detailed[frame.index] if high else directory / f"frame-{frame.index}.jpg"
             encoded = base64.b64encode(path.read_bytes()).decode("ascii")
             parts.append({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + encoded, "detail": "high" if high else "low"}})
         prompt = self.prompt
-        parts.append({"type": "text", "text": audio_prompt(info.audio, info.frames)})
+        parts.append({"type": "text", "text": audio_prompt(info.audio, frames)})
         if info.sound_clues:
             parts.append({"type": "text", "text": sound_prompt(info.sound_clues)})
         prompt = task_prompt(prompt, audio_task=AUDIO_TASK if info.audio.status == 'ready' else '',
@@ -256,7 +284,7 @@ class VideoService:
             stage = "schema"
             content = VideoContent.model_validate(raw)
             stage = "evidence"
-            content.audio_links, content.evidence_notes = normalize_model_links(content.audio_links, info.audio, info.frames)
+            content.audio_links, content.evidence_notes = normalize_model_links(content.audio_links, info.audio, frames)
             if transcript_warnings(info.audio):
                 content.evidence_notes.append('部分自动转写待校对，分析已遮蔽异常文字；可回听并校对白。')
             if len(content.audio_links) > 4:
@@ -290,14 +318,14 @@ class VideoService:
                            report["id"], report["stage"], report["reason"], report["fields"], report["output_chars"])
             raise DeepSeekError(message, 502) from exc
         payload = content.model_dump()
-        payload["detail_selection"] = DetailSelection(profile=profile, frame_indices=sorted(detailed),
-            source_indices=sorted(index for index, path in detailed.items() if path == detail_path(directory, index))).model_dump()
-        payload["reply"] = add_time_citations(debug_reply(content.code_debug, info.frames) if debug_code else content.reply, caption, info.audio, content.audio_links)
+        payload["detail_selection"] = selection.model_dump()
+        payload["reply"] = add_time_citations(debug_reply(content.code_debug, frames) if debug_code else content.reply, caption, info.audio, content.audio_links)
         return VideoAnswer(**payload, video_id=info.video_id, model=reply.model, usage=reply.usage, audio_revision=info.audio_revision)
 
     @staticmethod
     def _snapshot(info: VideoInfo, result: VideoEvidence) -> dict:
-        frames = {frame.index: frame for frame in info.frames}
+        evidence = result.detail_selection.evidence_frames(info.frames) if result.detail_selection else info.frames
+        frames = {frame.index: frame for frame in evidence}
         return {"video_id": info.video_id, "duration_seconds": info.duration_seconds, "summary": result.summary,
                 "observations": [{**row.model_dump(), "time_seconds": frames[row.frame_index].time_seconds}
                                  for row in result.observations],
@@ -436,7 +464,10 @@ class VideoService:
             answer = VideoAnswer.model_validate_json(path.read_text(encoding="utf-8"))
             manifest=json.loads((directory/"manifest.json").read_text(encoding="utf-8"))
             transcript = read_audio(directory)["audio"]
-            validate_links(answer.audio_links, transcript, [SampleFrame(**{**frame, "url": ""}) for frame in manifest["frames"]])
+            frames = [SampleFrame(**{**frame, "url": ""}) for frame in manifest["frames"]]
+            if answer.detail_selection:
+                frames = answer.detail_selection.evidence_frames(frames)
+            validate_links(answer.audio_links, transcript, frames)
             if answer.comparison:
                 answer.comparison.check_references({frame['index'] for frame in manifest['frames']})
             if answer.code_debug:

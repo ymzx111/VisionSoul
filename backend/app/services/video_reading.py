@@ -27,12 +27,23 @@ def needs_text_refresh(message: str, context: dict | None) -> bool:
     return previous.get("profile") != "text" or bool(re.search(r"重新|再看|再读|仔细|看不清|读不清|模糊", message))
 
 
+class FrameAdjustment(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    kind: Literal["nearby", "enhanced"]
+    time_seconds: float = Field(ge=0, le=30)
+
+    def matches(self, anchor):
+        offset = abs(self.time_seconds - anchor)
+        return offset == 0 if self.kind == "enhanced" else 0 < offset <= 0.501
+
+
 class DetailSelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
     version: str = READING_VERSION
     profile: Literal["general", "text"]
     frame_indices: list[int] = Field(max_length=4)
     source_indices: list[int] = Field(default_factory=list, max_length=4)
+    adjustments: dict[int, FrameAdjustment] = Field(default_factory=dict, max_length=4)
 
     @model_validator(mode="after")
     def valid_indices(self):
@@ -40,4 +51,20 @@ class DetailSelection(BaseModel):
             raise ValueError("invalid selected detail frame")
         if len(set(self.source_indices)) != len(self.source_indices) or not set(self.source_indices) <= set(self.frame_indices):
             raise ValueError("invalid source detail frame")
+        if not self.adjustments.keys() <= set(self.source_indices):
+            raise ValueError("invalid adjusted detail frame")
         return self
+
+    def evidence_frames(self, frames):
+        if not self.adjustments.keys() <= {frame.index for frame in frames}:
+            raise ValueError("adjusted frame not found")
+        result = []
+        for frame in frames:
+            adjustment = self.adjustments.get(frame.index)
+            if adjustment is not None:
+                if not adjustment.matches(frame.time_seconds):
+                    raise ValueError("adjusted frame time does not match")
+                if adjustment.kind == "nearby":
+                    frame = frame.model_copy(update={"time_seconds": adjustment.time_seconds, "seen_at": [adjustment.time_seconds]})
+            result.append(frame)
+        return result

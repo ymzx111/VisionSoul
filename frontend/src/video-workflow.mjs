@@ -1,6 +1,7 @@
 import { validateComparison } from './video-comparison.mjs';
 import { validateAudioEvidence } from './audio-evidence.mjs';
 import { validateCodeDebug } from './code-debug.mjs';
+import { analysisFrames } from './detail-selection.mjs';
 const VIDEO_ID = /^[0-9a-f]{64}$/;
 const STORAGE_KEY = 'visionsoul.currentVideo';
 
@@ -19,7 +20,8 @@ async function request(fetcher, url, options) {
 function validatedResult(result, video) {
   validateCodeDebug(result.code_debug, video.frames);
   validateComparison(result.comparison,video.frames);
-  validateAudioEvidence(video.audio, result.audio_links, video.frames, video.duration_seconds);
+  validateAudioEvidence(video.audio, result.audio_links,
+    analysisFrames(result.detail_selection, video.frames, video.video_id, video.duration_seconds), video.duration_seconds);
   if (result.video_id !== video.video_id || !Array.isArray(result.observations)
       || typeof result.summary !== 'string' || typeof result.reply !== 'string') {
     throw new Error('视频分析结果不完整，请检查后端记录；不会自动重新分析。');
