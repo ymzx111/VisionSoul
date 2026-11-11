@@ -1,9 +1,9 @@
 """本地选帧：质量、内容差异和时间覆盖；不访问模型。"""
 from app.services.frame_quality import FrameQuality, measure_frame, visual_distance, text_distance
+from app.core.video_policy import MAX_DETAIL_FRAMES
 from PIL import Image
 
 SELECTION_VERSION = "quality-diversity-text-v4"
-MAX_DETAIL_FRAMES = 4
 NEAR_DISTANCE = 0.03
 
 

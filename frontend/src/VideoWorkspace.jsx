@@ -73,12 +73,12 @@ export default function VideoWorkspace({ workflow, state, chatWorkflow, chatStat
       {video && <div className="video-sample-strip" aria-label="本地采样画面">{video.frames.map(frame => <button key={frame.index} className="sample-button" onClick={() => jump(frame)} aria-label={`查看 ${formatTime(frame.time_seconds)} 画面`}>
         <img src={frame.url} alt={`${formatTime(frame.time_seconds)} 采样截图`}/><span>{formatTime(frame.time_seconds)}</span></button>)}</div>}
       <div className="video-note" role="status">{position || (video ? `${video.sampling_policy !== 'one_second' ? '旧版采样，重新上传可用1秒采样与对白识别。' : '每1秒采样并保留末帧。'}采样 ${video.sample_count} 次，合并为 ${video.frames.length} 张画面。` : '上传后不会自动调用付费模型。')}</div>
-      {!!detailFrames.length && <details className="video-evidence detail-frame-evidence"><summary>高清关键帧 · {result.detail_selection.profile === 'text' ? '读题/代码优先' : '画面细节'} · {detailFrames.length}张</summary>
+      {!!detailFrames.length && <details className="video-evidence detail-frame-evidence"><summary>高清关键帧 · {result.detail_selection.focus_range_ms ? '重点区间' : result.detail_selection.profile === 'text' ? '读题/代码优先' : '画面细节'} · {detailFrames.length}张</summary>
         <p className="chat-history-note">点击缩略图查看细节，点击时间回看原视频。锐化辅助图上的不确定字符请以原画面核对。</p>
         <div className="detail-frame-list">{detailFrames.map(frame => <div key={frame.index}>
           <a href={frame.detail_url || `/api/videos/${video.video_id}/frames/${frame.index}/detail`} target="_blank" rel="noreferrer"><img src={frame.detail_url || frame.url} alt={`${formatTime(frame.time_seconds)} 高清候选预览`}/></a>
           <button className="text-button" onClick={() => jump(frame)}>回看 {formatTime(frame.time_seconds)}</button>
-          <span>{frame.adjustment === 'nearby' ? '邻近原帧' : frame.adjustment === 'enhanced' ? '轻度锐化' : result.detail_selection.source_indices.includes(frame.index) ? '原视频高清' : '已保存细节图'}</span>
+          <span>{frame.adjustment === 'focus' ? '区间补抽' : frame.adjustment === 'nearby' ? '邻近原帧' : frame.adjustment === 'enhanced' ? '轻度锐化' : result.detail_selection.source_indices.includes(frame.index) ? '原视频高清' : '已保存细节图'}</span>
         </div>)}</div>
       </details>}
       {!uploadControls && (state.error || state.configError) && <div className="notice notice-error" role="alert">{state.error || state.configError}</div>}

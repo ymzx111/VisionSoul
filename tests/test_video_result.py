@@ -67,6 +67,27 @@ class VideoResultTests(unittest.TestCase):
         self.send()
         self.assertEqual(len(self.calls), 1)
 
+    def test_extra_valid_observations_are_saved_and_replayed(self):
+        self.payload["observations"] = [
+            {"frame_index": 0, "keywords": ["题目"], "description": f"可见条件 {index}", "uncertain": False}
+            for index in range(12)
+        ]
+        result = self.send()
+        self.assertEqual(len(result["video_context"]["observations"]), 12)
+        self.assertEqual(len(self.chat.store.messages(result["conversation_id"])), 2)
+        self.assertEqual(self.send()["video_context"]["observations"], result["video_context"]["observations"])
+        self.assertEqual(len(self.calls), 1)
+
+    def test_invalid_reference_after_eighth_observation_still_fails(self):
+        self.payload["observations"] = [
+            {"frame_index": 0, "keywords": ["题目"], "description": f"可见条件 {index}"}
+            for index in range(8)
+        ] + [{"frame_index": 60, "keywords": ["题目"], "description": "不存在的画面"}]
+        with self.assertRaisesRegex(DeepSeekError, "引用了不存在的画面"):
+            self.send()
+        self.assertEqual(self.chat.store.recent(), [])
+        self.assertEqual(len(self.calls), 1)
+
     def test_literal_newline_in_reply_is_preserved(self):
         self.payload["reply"] = "int main(void) {\n    return 0;\n}"
         self.raw = json.dumps(self.payload, ensure_ascii=False).replace("\\n", "\n")

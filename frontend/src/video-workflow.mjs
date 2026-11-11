@@ -18,16 +18,16 @@ async function request(fetcher, url, options) {
 }
 
 function validatedResult(result, video) {
-  validateCodeDebug(result.code_debug, video.frames);
-  validateComparison(result.comparison,video.frames);
-  validateAudioEvidence(video.audio, result.audio_links,
-    analysisFrames(result.detail_selection, video.frames, video.video_id, video.duration_seconds), video.duration_seconds);
+  const frames = analysisFrames(result.detail_selection, video.frames, video.video_id, video.duration_seconds);
+  validateCodeDebug(result.code_debug, frames);
+  validateComparison(result.comparison, frames);
+  validateAudioEvidence(video.audio, result.audio_links, frames, video.duration_seconds);
   if (result.video_id !== video.video_id || !Array.isArray(result.observations)
       || typeof result.summary !== 'string' || typeof result.reply !== 'string') {
     throw new Error('视频分析结果不完整，请检查后端记录；不会自动重新分析。');
   }
   for (const item of result.observations) {
-    if (!video.frames.some(frame => frame.index === item.frame_index)
+    if (!frames.some(frame => frame.index === item.frame_index)
         || !Array.isArray(item.keywords) || !item.keywords.every(word => typeof word === 'string')
         || typeof item.description !== 'string') throw new Error('分析结果缺少对应截图，无法展示。');
   }

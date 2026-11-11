@@ -17,19 +17,20 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.config import Settings
-from app.core.video_policy import MAX_SAMPLES, PIPELINE_VERSION, LEGACY_PIPELINE, LEGACY_HALF_PIPELINE
+from app.core.video_policy import MAX_DETAIL_FRAMES, MAX_EVIDENCE_FRAMES, MAX_SAMPLES, PIPELINE_VERSION, LEGACY_PIPELINE, LEGACY_HALF_PIPELINE
 from app.core.persona import PERSONA_CORE, load_persona
 from app.services.deepseek import DeepSeekClient, DeepSeekError, ModelReply, TokenUsage, has_api_key
 from app.services.video_comparison import Comparison, DETAIL_VERSION, compact_times
 from app.services.video_selection import select_from_directory
 from app.services.video_details import detail_path, adjustment_path, adjusted_path
+from app.services.video_focus import focus_path
 from app.services.audio_evidence import AudioTranscript, AudioLink, AUDIO_VERSION, MAX_AUDIO_LINKS, audio_prompt, validate_links, normalize_model_links, add_time_citations, current_context
 from app.services.audio_corrections import read_audio, save_correction, CorrectionError
 from app.services.sound_clues import measure_sound, sound_prompt
 from app.services.transcript_quality import transcript_warnings
 from app.services.video_debug import CodeDebugReport, debug_reply
 from app.services.video_tasks import task_prompt
-from app.services.video_reading import DetailSelection, FrameAdjustment, READING_TASK, wants_text_detail
+from app.services.video_reading import DetailSelection, FrameAdjustment, READING_TASK, parse_focus_range, valid_focus_range, wants_text_detail
 from app.services.video_result import decode_video_result, result_failure
 
 logger = logging.getLogger(__name__)
@@ -76,7 +77,7 @@ class SampleFrame(BaseModel):
 
 class Observation(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    frame_index: int = Field(ge=0, le=MAX_SAMPLES-1, title="依据采样编号")
+    frame_index: int = Field(ge=0, lt=MAX_EVIDENCE_FRAMES, title="依据画面编号")
     keywords: list[str] = Field(min_length=1, max_length=4, title="主要事物")
     description: str = Field(min_length=1, max_length=120, title="画面描述")
     uncertain: bool = Field(default=True, title="是否待确认；模型省略时保守标记")
@@ -84,7 +85,7 @@ class Observation(BaseModel):
 
 class VideoEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    observations: list[Observation] = Field(max_length=8, title="观察记录；没有可靠可见事实时可为空")
+    observations: list[Observation] = Field(max_length=64, title="观察记录；没有可靠可见事实时可为空")
     summary: str = Field(min_length=1, max_length=240, title="视频概述")
     comparison: Comparison | None = Field(default=None, title="多视角辨识与候选比对")
     audio_links: list[AudioLink] = Field(default_factory=list, max_length=MAX_AUDIO_LINKS, title="音画依据关系（模型判断）")
@@ -230,32 +231,76 @@ class VideoService:
         return {index: detail_path(directory, index) if detail_path(directory, index).is_file() else path
                 for index, path in paths.items()}
 
+    def _focus_details(self, info, directory, interval, profile):
+        if not valid_focus_range(interval) or interval[1] > round(info.duration_seconds * 1000):
+            raise VideoError("请指定视频时长内、最长 5 秒的重点区间，例如“重点看 3–5 秒”。", 422)
+        if not (directory / "source.mp4").is_file():
+            raise VideoError("重点区间需要原视频，请重新上传。", 404)
+        with upload_workspace(directory) as workspace:
+            (workspace / "focus.json").write_text(json.dumps({"interval": interval, "profile": profile}), encoding="utf-8")
+            command = [sys.executable, "-B", "-X", "utf8", str(Path(__file__).with_name("video_focus.py")),
+                       str(directory), str(workspace)]
+            try:
+                process = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, timeout=self.settings.video_decode_timeout_seconds,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            except subprocess.TimeoutExpired as exc:
+                raise VideoError("重点区间抽帧超时，请缩短区间再试。", 503) from exc
+            if process.returncode != 0:
+                raise VideoError("重点区间抽帧失败，请检查原视频能否播放。", 422)
+            times = json.loads((workspace / "focus-result.json").read_text(encoding="utf-8"))
+            if not times:
+                raise VideoError("这个区间没有可用画面，请适当扩大区间。", 422)
+            if (not isinstance(times, list) or len(times) > MAX_DETAIL_FRAMES
+                    or any(type(time) is not int or not interval[0] <= time <= interval[1] for time in times)
+                    or len(set(times)) != len(times)):
+                raise VideoError("重点区间画面记录无效。", 503)
+            original = {round(frame.time_seconds * 1000): frame.index for frame in info.frames}
+            focus_frames = {original.get(time, MAX_SAMPLES + offset): time for offset, time in enumerate(times)}
+            paths = {}
+            for index, time in focus_frames.items():
+                path = focus_path(directory, time)
+                if not path.is_file():
+                    os.replace(focus_path(workspace, time), path)
+                paths[index] = path
+        selection = DetailSelection(profile=profile, frame_indices=sorted(paths), source_indices=sorted(paths),
+                                    focus_range_ms=interval, focus_frames=focus_frames)
+        return selection, paths
+
     def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None, memory_text: str = "", inspect: bool = False, debug_code: bool = False) -> VideoAnswer:
         directory = video_directory(info.video_id, self.settings)
         parts = [{"type": "text", "text": "图号@原视频秒，区间是重复图的采样点，不代表连续动作。"}]
         reading = not inspect and not debug_code and wants_text_detail(caption)
-        profile = "text" if reading or debug_code else "general"
-        detailed = self._detail_frames(info, directory, profile=profile) if inspect or debug_code or reading else {}
-        selection = DetailSelection(profile=profile, frame_indices=sorted(detailed),
-            source_indices=sorted(index for index, path in detailed.items() if path == detail_path(directory, index)))
-        for frame in info.frames:
-            if frame.index not in selection.source_indices:
-                continue
-            try:
-                adjustment = FrameAdjustment.model_validate_json(adjustment_path(directory, frame.index).read_bytes())
-                path = adjusted_path(directory, frame.index, adjustment.kind)
-                if adjustment.matches(frame.time_seconds) and adjustment.time_seconds <= info.duration_seconds and path.is_file():
-                    selection.adjustments[frame.index] = adjustment
-                    detailed[frame.index] = path
-            except (OSError, ValueError):
-                continue
+        interval = parse_focus_range(caption)
+        profile = "text" if reading or debug_code or interval else "general"
+        if interval:
+            selection, detailed = self._focus_details(info, directory, interval, profile)
+        else:
+            detailed = self._detail_frames(info, directory, profile=profile) if inspect or debug_code or reading else {}
+            selection = DetailSelection(profile=profile, frame_indices=sorted(detailed),
+                source_indices=sorted(index for index, path in detailed.items() if path == detail_path(directory, index)))
+            for frame in info.frames:
+                if frame.index not in selection.source_indices:
+                    continue
+                try:
+                    adjustment = FrameAdjustment.model_validate_json(adjustment_path(directory, frame.index).read_bytes())
+                    path = adjusted_path(directory, frame.index, adjustment.kind)
+                    if adjustment.matches(frame.time_seconds) and adjustment.time_seconds <= info.duration_seconds and path.is_file():
+                        selection.adjustments[frame.index] = adjustment
+                        detailed[frame.index] = path
+                except (OSError, ValueError):
+                    continue
         frames = selection.evidence_frames(info.frames)
+        if interval:
+            frames.sort(key=lambda frame: frame.time_seconds)
         for frame in frames:
             high = frame.index in detailed
             adjustment = selection.adjustments.get(frame.index)
             label = " 高清候选（不保证可读）" if high else ""
             if adjustment and adjustment.kind == "enhanced":
                 label = " 轻度锐化辅助图，无法确认的字符标待确认"
+            if frame.index in selection.focus_frames:
+                label = " 重点区间原始高清画面"
             parts.append({"type": "text", "text": f"{frame.index}@{compact_times(frame.seen_at, info.sample_interval_seconds)}{label}"})
             path = detailed[frame.index] if high else directory / f"frame-{frame.index}.jpg"
             encoded = base64.b64encode(path.read_bytes()).decode("ascii")
@@ -268,6 +313,8 @@ class VideoService:
                              comparison_task=COMPARISON_TASK if inspect and not debug_code else '', debug_code=debug_code)
         if reading:
             prompt += "\n" + READING_TASK
+        if interval:
+            prompt += f"\n本轮优先分析 {interval[0] / 1000:g}–{interval[1] / 1000:g} 秒。引用重点画面时使用随图提供的编号和实际时间，无法辨认的字符请明确标注。"
         if caption:
             parts.append({"type": "text", "text": caption})
         if inspect or debug_code or reading:
@@ -293,18 +340,19 @@ class VideoService:
                 raise ValueError('missing code debug report')
             if inspect and not debug_code and content.comparison is None:
                 raise ValueError("missing comparison")
+            frame_times = {frame.index: frame.time_seconds for frame in frames}
             if content.comparison:
-                content.comparison.check_references({frame.index for frame in info.frames})
+                content.comparison.check_references(frame_times.keys())
             if content.code_debug:
-                content.code_debug.check_references({frame.index for frame in info.frames})
+                content.code_debug.check_references(frame_times.keys())
             indices = [item.frame_index for item in content.observations]
             # 一帧可以有主体、背景等多条不同观察；只拒绝不存在的图号。
-            if any(index >= len(info.frames) for index in indices):
+            if any(index not in frame_times for index in indices):
                 raise ValueError("unknown frame")
             for observation in content.observations:
                 if any(not keyword.strip() or len(keyword) > 24 for keyword in observation.keywords):
                     raise ValueError("invalid keyword")
-            content.observations.sort(key=lambda item: item.frame_index)
+            content.observations.sort(key=lambda item: frame_times[item.frame_index])
             merged = []
             for observation in content.observations:
                 signature = (set(observation.keywords), observation.description, observation.uncertain)
@@ -333,7 +381,7 @@ class VideoService:
                 "audio": info.audio.model_dump(), "audio_links": [row.model_dump() for row in result.audio_links],
                 "evidence_notes": result.evidence_notes,
                 "code_debug": result.code_debug.model_dump() if result.code_debug else None,
-                "detail_selection": result.detail_selection.model_dump() if result.detail_selection else None,
+                "detail_selection": result.detail_selection.model_dump(mode="json") if result.detail_selection else None,
                 "audio_warnings": transcript_warnings(info.audio),
                 "analysis_audio_revision": info.audio_revision, "analysis_stale": False, "sound_clues": info.sound_clues}
 
@@ -362,7 +410,7 @@ class VideoService:
     def start_conversation(self, video_id: str, message: str, history: list[dict], memory_text: str = "") -> tuple[dict, ModelReply | None]:
         """首次无观察时一次请求同时看图和接话；已有观察时让聊天服务仅用文字接话。"""
         info = self.info(video_id)
-        if self.isolated or wants_text_detail(message):
+        if self.isolated or wants_text_detail(message) or parse_focus_range(message) is not None:
             # 新空间的分析只随当前话题保存，不跨话题复用可能混入配文/角色记忆的综合观察。
             if not ANALYSIS_LOCK.acquire(blocking=False):
                 raise VideoError("已有视频正在观察，请稍等后再发送。", 409)
@@ -468,10 +516,11 @@ class VideoService:
             if answer.detail_selection:
                 frames = answer.detail_selection.evidence_frames(frames)
             validate_links(answer.audio_links, transcript, frames)
+            frame_indices = {frame.index for frame in frames}
             if answer.comparison:
-                answer.comparison.check_references({frame['index'] for frame in manifest['frames']})
+                answer.comparison.check_references(frame_indices)
             if answer.code_debug:
-                answer.code_debug.check_references({frame['index'] for frame in manifest['frames']})
+                answer.code_debug.check_references(frame_indices)
             return answer.model_copy(update={"cached": True})
         except (ValueError, OSError) as exc:
             # 缓存损坏时不静默重新付费，要求人工处理。

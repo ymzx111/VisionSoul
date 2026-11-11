@@ -1,11 +1,12 @@
 """代码排错的结构化证据和引用检查；不执行用户画面中的程序。"""
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from app.core.video_policy import MAX_EVIDENCE_FRAMES
 
 
 class CodeEvidence(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    frame_index: int = Field(ge=0, le=60)
+    frame_index: int = Field(ge=0, lt=MAX_EVIDENCE_FRAMES)
     kind: Literal['code', 'error', 'context']
     excerpt: str = Field(min_length=1, max_length=700)
     line_number: int | None = Field(default=None, ge=1, le=1000000)

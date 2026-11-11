@@ -49,7 +49,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
       {chat.persona.configured === false && <p className="notice notice-warning">模型尚未配置。</p>}
       {chat.error && <div className="notice notice-error" role="alert">{chat.error}</div>}
       {chat.truncated && <p className="chat-image-note">上一条回复达到长度上限，可以继续追问。</p>}
-      {state.kind === 'video' && <p className="chat-image-note">读题/代码提问会自动选最多4张高清图；已读题后的普通追问复用文字，要求重新读题时再读画面。</p>}
+      {state.kind === 'video' && <p className="chat-image-note">输入「重点看 3–5 秒」可对指定区间补抽，每次最多 5 秒。读题或排错最多使用 4 张高清图。</p>}
       <label className="sr-only" htmlFor="media-message">问题或补充说明</label>
       <textarea id="media-message" maxLength={2000} disabled={busy} value={draft} onChange={event => setDraft(event.target.value)}
         placeholder={chat.conversationId ? '继续追问，或补充你的说明…' : '可选：你想了解什么？不填写也可以开始分析。'}/>

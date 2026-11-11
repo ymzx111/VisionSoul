@@ -12,6 +12,7 @@ from app.core.video_policy import MAX_SAMPLES, SAMPLE_INTERVAL_SECONDS
 from app.services.deepseek import DeepSeekError, has_api_key
 from app.services.videos import VideoAnswer, VideoError, VideoInfo, VideoService, video_directory
 from app.services.video_details import detail_path, adjusted_path
+from app.services.video_focus import focus_path
 from app.services.audio_evidence import SpeechSegment, AudioTranscript
 
 router = APIRouter(prefix="/api/videos", tags=["短视频观察"])
@@ -143,4 +144,16 @@ def detail_frame(video_id: VideoID,index: Annotated[int,Path(ge=0,le=MAX_SAMPLES
             raise VideoError("这个视频没有细节图，可重新选择原视频生成。",404)
         return FileResponse(path,media_type="image/jpeg",headers={"X-Content-Type-Options":"nosniff","Cache-Control":"private, no-store"})
     except (VideoError,OSError) as exc:
+        raise safe_error(exc) from exc
+
+
+@router.get("/{video_id}/focus-frames/{milliseconds}", summary="查看重点区间的原始画面", response_class=FileResponse)
+def focus_frame_file(video_id: VideoID, milliseconds: Annotated[int, Path(ge=0, le=30000)],
+                     settings: Annotated[Settings, Depends(get_settings)]):
+    try:
+        path = focus_path(video_directory(video_id, settings), milliseconds)
+        if not path.is_file():
+            raise VideoError("重点画面不存在。", 404)
+        return FileResponse(path, media_type="image/jpeg", headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store"})
+    except (VideoError, OSError) as exc:
         raise safe_error(exc) from exc

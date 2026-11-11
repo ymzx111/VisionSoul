@@ -2,6 +2,7 @@
 from typing import Literal
 import re
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from app.core.video_policy import MAX_EVIDENCE_FRAMES
 from app.services.transcript_quality import transcript_warnings, trusted_transcript
 
 AUDIO_VERSION = "whisper-small-int8-timeline-v1"
@@ -50,7 +51,7 @@ class AudioLink(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     segment_id: int = Field(ge=0, le=63)
     candidate_id: int | None = Field(default=None, ge=0, le=11)
-    frame_index: int | None = Field(default=None, ge=0, le=60)
+    frame_index: int | None = Field(default=None, ge=0, lt=MAX_EVIDENCE_FRAMES)
     frame_time: float | None = Field(default=None, ge=0, le=30)
     relation: Literal["supports", "contradicts", "uncertain", "audio_only"]
     detail: str = Field(min_length=1, max_length=180)

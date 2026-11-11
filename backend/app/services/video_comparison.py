@@ -2,7 +2,7 @@
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from PIL import ImageFilter, ImageStat
-from app.core.video_policy import MAX_SAMPLES
+from app.core.video_policy import MAX_EVIDENCE_FRAMES
 
 DETAIL_VERSION = "detail-v1-1280"
 
@@ -15,7 +15,7 @@ def clarity_score(image) -> float:
 
 class Feature(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    frame_index: int = Field(ge=0, le=MAX_SAMPLES-1)
+    frame_index: int = Field(ge=0, lt=MAX_EVIDENCE_FRAMES)
     detail: str = Field(min_length=1, max_length=120)
 
 

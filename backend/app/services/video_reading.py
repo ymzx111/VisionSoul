@@ -3,6 +3,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Literal
+from app.core.video_policy import MAX_SAMPLES, MAX_DETAIL_FRAMES, MAX_EVIDENCE_FRAMES, MAX_FOCUS_DURATION_MS
 
 READING_VERSION = "text-detail-v1"
 READING_TASK = """本轮是题目/屏幕文字阅读。先核对高清画面中的题干、条件、输入输出及样例，再回答用户。
@@ -20,7 +21,25 @@ def wants_text_detail(message: str) -> bool:
                           r"(?:识别|读取|辨认|看清).{0,8}(?:文字|小字)|(?:编写|生成|写|实现).{0,12}(?:程序|c(?:\+\+)?(?![a-z])|python|java)", message, re.I))
 
 
+def parse_focus_range(message: str) -> tuple[int, int] | None:
+    match = re.search(r"重点\s*(?:看|分析|识别|读)?\s*第?\s*(-?\d{1,3}(?:\.\d{1,3})?)\s*秒?\s*"
+                      r"[-–—~～至到]\s*第?\s*(-?\d{1,3}(?:\.\d{1,3})?)\s*秒", message)
+    if match is None:
+        return None
+    start, end = match.groups()
+    return round(float(start) * 1000), round(float(end) * 1000)
+
+
+def valid_focus_range(interval) -> bool:
+    if not isinstance(interval, (tuple, list)) or len(interval) != 2 or any(type(value) is not int for value in interval):
+        return False
+    start, end = interval
+    return 0 <= start < end <= 30000 and end - start <= MAX_FOCUS_DURATION_MS
+
+
 def needs_text_refresh(message: str, context: dict | None) -> bool:
+    if context and parse_focus_range(message) is not None:
+        return True
     if not context or not wants_text_detail(message):
         return False
     previous = context.get("detail_selection") or {}
@@ -41,23 +60,38 @@ class DetailSelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
     version: str = READING_VERSION
     profile: Literal["general", "text"]
-    frame_indices: list[int] = Field(max_length=4)
-    source_indices: list[int] = Field(default_factory=list, max_length=4)
-    adjustments: dict[int, FrameAdjustment] = Field(default_factory=dict, max_length=4)
+    frame_indices: list[int] = Field(max_length=MAX_DETAIL_FRAMES)
+    source_indices: list[int] = Field(default_factory=list, max_length=MAX_DETAIL_FRAMES)
+    adjustments: dict[int, FrameAdjustment] = Field(default_factory=dict, max_length=MAX_DETAIL_FRAMES)
+    focus_range_ms: tuple[int, int] | None = None
+    focus_frames: dict[int, int] = Field(default_factory=dict, max_length=MAX_DETAIL_FRAMES)
 
     @model_validator(mode="after")
     def valid_indices(self):
-        if len(set(self.frame_indices)) != len(self.frame_indices) or any(not 0 <= index <= 60 for index in self.frame_indices):
+        if len(set(self.frame_indices)) != len(self.frame_indices) or any(not 0 <= index < MAX_EVIDENCE_FRAMES for index in self.frame_indices):
             raise ValueError("invalid selected detail frame")
         if len(set(self.source_indices)) != len(self.source_indices) or not set(self.source_indices) <= set(self.frame_indices):
             raise ValueError("invalid source detail frame")
         if not self.adjustments.keys() <= set(self.source_indices):
             raise ValueError("invalid adjusted detail frame")
+        if self.focus_range_ms is not None:
+            if not valid_focus_range(self.focus_range_ms) or not self.focus_frames or self.adjustments:
+                raise ValueError("invalid focus range")
+            start, end = self.focus_range_ms
+            if (self.focus_frames.keys() != set(self.frame_indices) or self.focus_frames.keys() != set(self.source_indices)
+                    or len(set(self.focus_frames.values())) != len(self.focus_frames)
+                    or any(not start <= time <= end for time in self.focus_frames.values())):
+                raise ValueError("invalid focus frames")
+        elif self.focus_frames:
+            raise ValueError("missing focus range")
         return self
 
     def evidence_frames(self, frames):
-        if not self.adjustments.keys() <= {frame.index for frame in frames}:
+        original_indices = {frame.index for frame in frames}
+        if not self.adjustments.keys() <= original_indices:
             raise ValueError("adjusted frame not found")
+        if any(index < MAX_SAMPLES and index not in original_indices for index in self.focus_frames):
+            raise ValueError("focus frame not found")
         result = []
         for frame in frames:
             adjustment = self.adjustments.get(frame.index)
@@ -66,5 +100,15 @@ class DetailSelection(BaseModel):
                     raise ValueError("adjusted frame time does not match")
                 if adjustment.kind == "nearby":
                     frame = frame.model_copy(update={"time_seconds": adjustment.time_seconds, "seen_at": [adjustment.time_seconds]})
+            if frame.index in self.focus_frames:
+                time = self.focus_frames[frame.index] / 1000
+                if time != frame.time_seconds:
+                    raise ValueError("focus frame time does not match")
+                frame = frame.model_copy(update={"seen_at": [time]})
             result.append(frame)
+        for index, milliseconds in self.focus_frames.items():
+            if index not in original_indices:
+                time = milliseconds / 1000
+                result.append(frames[0].model_copy(update={"index": index, "time_seconds": time,
+                    "seen_at": [time], "url": "", "detail_url": None, "clarity": None}))
         return result
