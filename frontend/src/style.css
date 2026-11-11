@@ -314,6 +314,8 @@ textarea:disabled { opacity: .7; }
 .comparison-candidate { background: #f6f9f1; border: 1px solid #e3eadb; border-radius: 6px; padding: 10px; margin: 10px 0; font-size: 11px; }
 .video-chat-panel .question-actions { flex-wrap: wrap; gap: 9px; }
 .video-chat-panel .question-actions .cost-note { flex-basis: 100%; }
+.video-chat-panel .media-chat-actions .cost-note { flex-basis: auto; }
+.media-chat-actions .button-primary { margin-left: auto; }
 .video-evidence .observation-card { margin-top: 8px; }
 .video-evidence .video-summary { margin-bottom: 10px; }
 .shared-video-chip { display: inline-block; color: #789169; font-size: 10px; margin: 0 0 6px; }

@@ -10,8 +10,8 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
   const canSend = chat.persona.configured && !busy && !state.error && ready && (draft.trim() || (state.kind && !chat.conversationId));
   const messages = chat.pending ? [...chat.messages, { ...chat.pending, id: 'pending' }] : chat.messages;
   useEffect(() => { if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, [chat.messages, chat.pending]);
-  const send = async options => {
-    const sent = await workflow.send(draft, options);
+  const send = async () => {
+    const sent = await workflow.send(draft);
     if (sent) setDraft(value => value === draft ? '' : value);
   };
   return <section className="panel chat-panel video-chat-panel" aria-labelledby="media-chat-heading">
@@ -55,11 +55,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
         placeholder={chat.conversationId ? '继续追问，或补充你的说明…'
           : state.kind === 'video' ? '输入你的要求，或留空，让助手从视频里判断。'
           : '可选：你想了解什么？不填写也可以开始分析。'}/>
-      <div className="question-actions"><span className="cost-note">点击后才调用模型{chat.usage ? chat.replayed ? ' · 已恢复原回复' : ` · 本次${chat.usage.total_tokens} token` : ''}</span>
-        {state.kind === 'video' && <>
-          <button className="button button-secondary" disabled={!canSend} onClick={() => void send({ inspectVideo: true })}>细看并比对</button>
-          <button className="button button-secondary" disabled={!canSend} onClick={() => void send({ debugCode: true })}>代码排错</button>
-        </>}
+      <div className="question-actions media-chat-actions"><span className="cost-note">点击后才调用模型{chat.usage ? chat.replayed ? ' · 已恢复原回复' : ` · 本次${chat.usage.total_tokens} token` : ''}</span>
         <button className="button button-primary" disabled={!canSend} onClick={() => void send()}>{chat.sending ? '正在回复…' : chat.conversationId || !state.kind ? '发送消息 →' : '开始分析 →'}</button>
       </div>
     </div>
