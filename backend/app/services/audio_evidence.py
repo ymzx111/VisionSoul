@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.core.video_policy import MAX_EVIDENCE_FRAMES
 from app.services.transcript_quality import transcript_warnings, trusted_transcript, uncertain_words
 
-AUDIO_VERSION = "whisper-small-int8-timeline-v3"
+AUDIO_VERSION = "whisper-small-int8-timeline-v4"
 PRIMARY_SECONDS = 1.5
 SECONDARY_SECONDS = 3.0
 MAX_AUDIO_LINKS = 64

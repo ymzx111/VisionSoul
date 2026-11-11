@@ -18,7 +18,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from app.core.config import Settings
 from app.services.audio_evidence import AudioLink, AudioTranscript, SpeechSegment, SpeechWord, audio_prompt, frame_candidates, validate_links, add_time_citations, model_context
-from app.services.audio_extract import decode_timeline, retry_uncertain_speech, speech_segments, transcribe
+from app.services.audio_extract import decode_timeline, programming_languages, retry_uncertain_speech, speech_segments, transcribe
 from app.services.chat import ChatService
 from app.services.deepseek import DeepSeekClient, DeepSeekError
 from app.services.videos import SampleFrame, VideoService, VideoError
@@ -153,7 +153,7 @@ class AlignmentTests(unittest.TestCase):
         model = SimpleNamespace()
         with patch.object(model, "transcribe", create=True) as run:
             for phrase in ("用 C 语言实现", "用 C 数组实现", "用 C++ 标准库实现", "用 Python 来实现",
-                           "用远镜实现", "用 Canva 完成"):
+                           "用 C 加加实现", "用 C 井号实现", "用远镜实现", "用 Canva 完成"):
                 with self.subTest(phrase=phrase):
                     row = SpeechSegment(id=1, start=4, end=7, text=phrase)
                     audio = AudioTranscript(status="ready", segments=[preceding, row])
@@ -164,6 +164,59 @@ class AlignmentTests(unittest.TestCase):
                 audio = AudioTranscript(status="ready", segments=[preceding, row])
                 retry_uncertain_speech(model, np.zeros(160000), audio)
             run.assert_not_called()
+
+    def test_programming_language_names_preserve_symbols_and_spoken_aliases(self):
+        cases = {
+            "用 C 语言完成": {"c"},
+            "用 C 写": {"c"},
+            "用Ｃ＋＋、C 加加和 C plus plus": {"c++"},
+            "C#、C 井号和 C sharp": {"c#"},
+            "用 C 语言实现，另给 C++ 对照": {"c", "c++"},
+            "Python 和 JavaScript，另有 Java": {"python", "javascript", "java"},
+            "用 C 区完成，文档提到 JAVASCRIPTING": set(),
+        }
+        for phrase, expected in cases.items():
+            with self.subTest(phrase=phrase):
+                self.assertEqual(programming_languages(phrase), expected)
+
+    def test_retry_cannot_substitute_or_remove_a_known_language(self):
+        candidates = ("请用 C 语言实现代码。", "请用 Python 实现代码。", "请完成代码。", "请用 C++ 和 C# 实现代码。")
+        for candidate in candidates:
+            with self.subTest(candidate=candidate):
+                row = SpeechSegment(id=0, start=0.5, end=3, text="请用 C 加加实现代妈", words=[
+                    SpeechWord(text="请用 C 加加实现代码", start=0.5, end=2, score=0.91),
+                    SpeechWord(text="代妈", start=2, end=3, score=0.31),
+                ])
+                model = SimpleNamespace()
+                with patch.object(model, "transcribe", create=True, return_value=(
+                        iter([SimpleNamespace(text=candidate)]), None)) as run:
+                    retry_uncertain_speech(model, np.zeros(64000), AudioTranscript(status="ready", segments=[row]))
+                    run.assert_called_once()
+                    self.assertIn("C++", run.call_args.kwargs["initial_prompt"])
+                    self.assertNotIn("请用 C 语言", run.call_args.kwargs["initial_prompt"])
+                self.assertIsNone(row.retry)
+
+    def test_retry_uses_adjacent_explicit_language_to_avoid_injecting_c(self):
+        preceding = SpeechSegment(id=0, start=0, end=1.7, text="这道题用 C++")
+        row = SpeechSegment(id=1, start=2, end=4, text="用 C 远镜实现")
+        model = SimpleNamespace()
+        with patch.object(model, "transcribe", create=True, return_value=(
+                iter([SimpleNamespace(text="请用 C 语言实现。")]), None)) as run:
+            retry_uncertain_speech(model, np.zeros(96000), AudioTranscript(status="ready", segments=[preceding, row]))
+            run.assert_called_once()
+            self.assertIn("C++", run.call_args.kwargs["initial_prompt"])
+        self.assertIsNone(row.retry)
+
+    def test_retry_accepts_equivalent_cpp_spelling_with_task_correction(self):
+        row = SpeechSegment(id=0, start=1, end=3, text="用 C 加加写代妈", words=[
+            SpeechWord(text="用 C 加加写代码", start=1, end=2, score=0.92),
+            SpeechWord(text="代妈", start=2, end=3, score=0.45),
+        ])
+        model = SimpleNamespace()
+        with patch.object(model, "transcribe", create=True, return_value=(
+                iter([SimpleNamespace(text="用 C++ 写代码。")]), None)):
+            retry_uncertain_speech(model, np.zeros(64000), AudioTranscript(status="ready", segments=[row]))
+        self.assertEqual(row.retry.text, "用 C++ 写代码。")
 
     def test_retry_discards_candidate_that_loses_known_domain(self):
         segment = SpeechSegment(id=0, start=1, end=3, text="请你编个代码", words=[

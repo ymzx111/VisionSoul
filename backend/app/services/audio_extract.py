@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import unicodedata
 import wave
 
 import av
@@ -24,6 +25,13 @@ LANGUAGE_SLOT = re.compile(
     r"(?P<suffix>[一-鿿]{2,4}?)(?=\s*(?:来|去)?\s*(?:实现|编写|解决|完成))",
     re.IGNORECASE,
 )
+LANGUAGE_NAMES = re.compile(
+    r"(?<![a-zA-Z0-9_])(?:(?P<cpp>C\s*(?:\+\s*\+|加\s*加|plus\s+plus))|"
+    r"(?P<csharp>C\s*(?:#|井号|sharp))|(?P<c>C\s*[语語]言)|"
+    r"(?P<other>JavaScript|Python|Java|Rust))(?![a-zA-Z0-9_+#])",
+    re.IGNORECASE,
+)
+BARE_C_REQUEST = re.compile(r"(?:用|采用)\s*C\s*(?=(?:来|去)?\s*(?:实现|编写|写|解决|完成))", re.IGNORECASE)
 LANGUAGE_SUFFIXES = ("语言", "程序", "代码", "脚本", "库", "框架", "工具", "接口", "数组", "指针", "结构体", "循环", "函数", "原生", "语法")
 CODE_VOCABULARY = "编程任务常用词：代码、补全、C 语言、输入输出、流程图。"
 
@@ -123,12 +131,26 @@ def retry_priority(segment):
     return priority
 
 
+def programming_languages(text):
+    """区分会改变任务的名称，保留加号和井号，也识别常见口述写法。"""
+    normalized = unicodedata.normalize("NFKC", text)
+    aliases = {"cpp": "c++", "csharp": "c#", "c": "c"}
+    names = {aliases.get(match.lastgroup, match[0].casefold()) for match in LANGUAGE_NAMES.finditer(normalized)}
+    if BARE_C_REQUEST.search(normalized):
+        names.add("c")
+    return names
+
+
 def unusual_language(segment, preceding):
     """有明确任务时，复核「用某语言实现」位置的异常后缀，词分数可能仍然很高。"""
     if not TASK_CUES.search(segment.text + preceding):
         return None
-    match = LANGUAGE_SLOT.search(segment.text)
-    if match and not match["suffix"].endswith(LANGUAGE_SUFFIXES):
+    text = unicodedata.normalize("NFKC", segment.text)
+    for match in LANGUAGE_SLOT.finditer(text):
+        suffix = match["suffix"]
+        # 「C 加加」「C 井号」中 C 只是全名的一部分，不能单独作为提示。
+        if suffix.endswith(LANGUAGE_SUFFIXES) or programming_languages(match[0]) - {match["language"].casefold()}:
+            continue
         return match["language"]
     return None
 
@@ -147,15 +169,22 @@ def retry_uncertain_speech(model, samples, audio):
         priority = retry_priority(segment)
         if language or priority < 1:
             # 明确语言槽位优先，避免一次机会用在无关的低分词上。
-            candidates.append((not language, priority, index, segment, language))
+            candidates.append((not language, priority, index, segment, language, preceding))
     if not candidates:
         return
-    _, _, _, target, language = min(candidates)
+    _, _, _, target, language, preceding = min(candidates)
     start = max(0, round((target.start - 0.5) * RATE))
     end = min(samples.size, round((target.end + 0.5) * RATE))
+    original_languages = programming_languages(target.text)
+    context_languages = original_languages or programming_languages(preceding)
+    if language and context_languages and language.casefold() not in context_languages:
+        language = None
     hint = None
     if language:
         hint = f"请用 {language} 语言实现。"
+    elif context_languages:
+        terms = "、".join(name.upper() if name.startswith("c") else name for name in sorted(context_languages))
+        hint = f"编程术语：{terms}、补全代码、输入输出、流程图。"
     elif CODE_CUES.search(target.text):
         hint = CODE_VOCABULARY
     try:
@@ -165,13 +194,16 @@ def retry_uncertain_speech(model, samples, audio):
         text = " ".join(segment.text.strip() for segment in segments).strip()
     except (RuntimeError, ValueError):
         return
-    normalized = lambda value: re.sub(r"[\W_]+", "", value).casefold()
+    normalized = lambda value: re.sub(r"[^\w+#]|_", "", unicodedata.normalize("NFKC", value)).casefold()
     if not 0 < len(text) <= 180 or not normalized(text) or normalized(text) == normalized(target.text):
         return
-    if language:
-        if not re.search(rf"(?<![a-zA-Z]){re.escape(language)}\s*语言", text, re.IGNORECASE):
-            return
-    elif hint and not (CODE_CUES.search(text) or re.search(r"编写|[A-Za-z]\s*语言", text)):
+    candidate_languages = programming_languages(text)
+    required_languages = original_languages | ({language.casefold()} if language else set())
+    if required_languages and candidate_languages != required_languages:
+        return
+    if not required_languages and context_languages and not candidate_languages <= context_languages:
+        return
+    if hint and not (candidate_languages or CODE_CUES.search(text) or "编写" in text):
         # 已知是编程任务时，不把丢失领域线索的改写交给下游。
         return
     target.retry = SpeechRetry(start=start / RATE, end=end / RATE, text=text)
