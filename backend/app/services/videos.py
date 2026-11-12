@@ -30,6 +30,7 @@ from app.services.sound_clues import measure_sound, sound_prompt
 from app.services.transcript_quality import transcript_warnings, trusted_transcript
 from app.services.video_debug import CodeDebugReport, debug_reply
 from app.services.video_tasks import AUTO_VIDEO_TASK, task_prompt
+from app.services.local_ide import CODE_DELIVERY_TASK
 from app.services.video_reading import DetailSelection, FrameAdjustment, READING_TASK, parse_focus_range, valid_focus_range, wants_text_detail
 from app.services.video_result import decode_video_result, result_failure
 
@@ -135,11 +136,12 @@ def video_directory(video_id: str, settings: Settings) -> Path:
 
 
 class VideoService:
-    def __init__(self, settings: Settings, client: DeepSeekClient | None = None, *, system_prompt: str | None = None, isolated: bool = False):
+    def __init__(self, settings: Settings, client: DeepSeekClient | None = None, *, system_prompt: str | None = None, isolated: bool = False, source_delivery: bool = False):
         self.settings = settings
         self.client = client or DeepSeekClient(settings)
         self.prompt = (load_persona(settings)[0] if system_prompt is None else system_prompt) + "\n\n" + VIDEO_TASK
         self.isolated = isolated
+        self.source_delivery = source_delivery
 
     def audio_record(self, video_id):
         try:
@@ -322,6 +324,8 @@ class VideoService:
             prompt += "\n" + AUTO_VIDEO_TASK
         if interval:
             prompt += f"\n本轮优先分析 {interval[0] / 1000:g}–{interval[1] / 1000:g} 秒。引用重点画面时使用随图提供的编号和实际时间，无法辨认的字符请明确标注。"
+        if self.source_delivery and not inspect and not debug_code:
+            prompt += "\n" + CODE_DELIVERY_TASK
         if caption:
             parts.append({"type": "text", "text": caption})
         if inspect or debug_code or reading:

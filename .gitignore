@@ -44,3 +44,6 @@ build/
 
 # 前端开发工具的本机运行记录
 /frontend/.sites-runtime/
+
+# Locally saved AI-generated source files
+/workspace/

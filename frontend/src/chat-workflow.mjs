@@ -25,7 +25,7 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
   const recentUrl = scoped(mode === 'media' ? '/api/chat/conversations?kind=all' : mode === 'video' ? '/api/chat/conversations?kind=video' : '/api/chat/conversations');
   let state = { conversationId: null, imageId: null, messages: [], recent: [], sending: false,
     videoId: null, videoContext: null,
-    loading: false, error: '', pending: null, usage: null, truncated: false, replayed: false,
+    loading: false, error: '', pending: null, usage: null, truncated: false, replayed: false, localSource: null,
     space, legacy: [],
     persona: { name: space === 'work' ? '解析助手' : '小灵', style: space === 'work' ? '客观、清晰、直接' : '活泼俏皮，轻度幽默', context_turns: 6 } };
   const listeners = new Set();
@@ -52,7 +52,7 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
         || (data.image_id && data.video_id))) throw new Error('话题素材关联异常，请检查本机记录。');
     remember(data.id);
     publish({ conversationId: data.id, imageId: data.image_id || null, videoId: data.video_id || null, videoContext: data.video_context || null, messages: data.messages,
-      usage: null, truncated: false, replayed: false, error: '', hasOlder: data.has_older === true });
+      usage: null, truncated: false, replayed: false, localSource: null, error: '', hasOlder: data.has_older === true });
   };
   async function initialize() {
     if (initialized || disposed) return;
@@ -104,7 +104,7 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
     if (state.sending || state.loading || disposed) return false;
     epoch++; retry = null; remember(null);
     publish({ conversationId: null, imageId: null, videoId: null, videoContext: null, messages: [], pending: null,
-      usage: null, truncated: false, replayed: false, error: '', hasOlder: false });
+      usage: null, truncated: false, replayed: false, localSource: null, error: '', hasOlder: false });
     return true;
   }
   async function send(message, imageId = null, { imageCount = imageId ? 1 : 0, uploadReady = true, videoId = null, inspectVideo = false, debugCode = false } = {}) {
@@ -127,11 +127,12 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
     if (mode === 'video' || (mode === 'media' && (videoId || state.videoId))) body.video_id = videoId || state.videoId;
     if (body.video_id && inspectVideo) body.inspect_video = true;
     if (body.video_id && debugCode) body.debug_code = true;
+    if (mode === 'media' && space === 'work' && body.video_id && !inspectVideo && !debugCode) body.open_in_ide = true;
     const fingerprint = JSON.stringify(body);
     if (!retry || retry.fingerprint !== fingerprint) retry = { fingerprint, request_id: makeId() };
     const current = epoch;
     controller = new AbortController();
-    publish({ sending: true, error: '', pending: { role: 'user', content: content || '分析这段视频', image_id: imageId, video_id: state.videoId ? null : body.video_id }, usage: null, truncated: false });
+    publish({ sending: true, error: '', pending: { role: 'user', content: content || '分析这段视频', image_id: imageId, video_id: state.videoId ? null : body.video_id }, usage: null, truncated: false, localSource: null });
     try {
       const data = await read(fetcher, '/api/chat/messages', { method: 'POST', signal: controller.signal,
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, request_id: retry.request_id }) });
@@ -149,7 +150,7 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
       remember(data.conversation_id); retry = null;
       publish({ conversationId: data.conversation_id, imageId: data.image_id || null, videoId: data.video_id || null, videoContext: data.video_context || null,
         messages: [...state.messages, ...additions], usage: data.usage, truncated: data.truncated,
-        replayed: data.replayed, pending: null, sending: false });
+        replayed: data.replayed, localSource: data.local_source || null, pending: null, sending: false });
       void read(fetcher, recentUrl).then(recent => {
         if (current === epoch) publish({ recent });
       }).catch(() => { /* 回复已保存，列表读取失败不能把成功消息变成失败。 */ });

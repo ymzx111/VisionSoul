@@ -3,7 +3,7 @@ import json
 import sqlite3
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.config import Settings, get_settings
@@ -15,6 +15,7 @@ from app.services.chat_store import ChatStore, ChatConflict
 from app.services.deepseek import DeepSeekError, TokenUsage, has_api_key
 from app.services.videos import VideoService, VideoError
 from app.services.audio_evidence import current_context
+from app.services.local_ide import open_generated_source
 
 router = APIRouter(prefix="/api/chat", tags=["伙伴对话"])
 Identifier = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
@@ -27,6 +28,7 @@ class SendMessage(BaseModel):
     message: str = Field(max_length=2000, title="你的消息", description="新视频话题可留空，由模型从视频判断任务。")
     space: ChatSpace = Field(default="companion", title="对话空间", description="工作解析不读取角色或记忆；同话题不能跨空间。")
     inspect_video: bool = Field(default=False,title="重新细看视频并比较候选",description="显式重新发送画面，可能增加模型用量；普通追问为false。")
+    open_in_ide: bool = Field(default=False, title="在本机打开生成的源码")
     debug_code: bool = Field(default=False,title="从视频辅助排查代码报错",description="显式读取最多4张高清并生成建议，不执行代码；产生API用量。")
     image_id: Identifier | None = Field(default=None, title="可选图片编号", description="一段话题最多关联一张图片。")
     video_id: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None = Field(default=None, title="可选视频编号", description="先上传视频，再与文字一起发送；同话题后续可不再填写。")
@@ -50,6 +52,13 @@ class ChatMessage(BaseModel):
     created_at: str
 
 
+class LocalSourceResult(BaseModel):
+    status: Literal["opened", "saved", "error"]
+    detail: str
+    path: str | None = None
+    ide: str | None = None
+
+
 class ChatTurn(BaseModel):
     model_config = ConfigDict(title="伙伴回复")
     conversation_id: str
@@ -64,6 +73,7 @@ class ChatTurn(BaseModel):
     truncated: bool = False
     persona_id: str
     replayed: bool = False
+    local_source: LocalSourceResult | None = None
 
 
 def get_chat_service(settings: Annotated[Settings, Depends(get_settings)]) -> ChatService:
@@ -150,8 +160,19 @@ def classify_conversation(conversation_id: Annotated[str, Path(pattern=r"^[0-9a-
 
 
 @router.post("/messages", response_model=ChatTurn, summary="发送消息给小灵（产生 API 用量）")
-def send_message(request: SendMessage, service: Annotated[ChatService, Depends(get_chat_service)]) -> dict:
+def send_message(body: SendMessage, request: Request, service: Annotated[ChatService, Depends(get_chat_service)]) -> dict:
     try:
-        return service.send(**request.model_dump())
+        turn = service.send(**body.model_dump(exclude={"open_in_ide"}))
     except DeepSeekError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
+
+    # 桌面动作只由同源、本机网页的显式请求触发。
+    loopback = {"127.0.0.1", "::1", "localhost"}
+    origin = request.headers.get("origin")
+    local_browser = (request.client and request.client.host in loopback
+                     and request.url.hostname in loopback
+                     and origin == f"{request.url.scheme}://{request.url.netloc}")
+    if (body.open_in_ide and local_browser and turn["space"] == "work" and turn["video_id"]
+            and not body.inspect_video and not body.debug_code and not turn["replayed"] and not turn["truncated"]):
+        turn["local_source"] = open_generated_source(service.settings, turn)
+    return turn

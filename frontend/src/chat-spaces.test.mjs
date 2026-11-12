@@ -122,3 +122,29 @@ test('legacy classification is blocked while paid request is pending', async () 
   assert.equal(api.calls.some(call => call.url.endsWith('/classify')), false);
   await finish(); await sent;
 });
+
+test('only video in the work space requests the IDE and displays its saved path', async () => {
+  const videoId = '9'.repeat(64);
+  const calls = [];
+  const localSource = { status: 'opened', detail: '已发送到 PyCharm。', path: 'G:\\VisionSoul\\workspace\\main.py' };
+  const fetcher = async (url, options = {}) => {
+    if (url.endsWith('/messages')) {
+      const body = JSON.parse(options.body);
+      calls.push(body);
+      return response({ space: body.space, video_id: body.video_id, conversation_id: workId,
+        user_message: { id: 1, role: 'user', content: body.message },
+        assistant_message: { id: 2, role: 'assistant', content: '完整程序' },
+        local_source: body.open_in_ide ? localSource : null });
+    }
+    return response([]);
+  };
+  for (const space of ['work', 'companion']) {
+    const flow = createChatWorkflow({ fetcher, storage: memory(), mode: 'media', space, makeId: () => workId });
+    assert.equal(await flow.send('请编写程序', null, { videoId }), true);
+    assert.deepEqual(flow.getState().localSource, space === 'work' ? localSource : null);
+    flow.newConversation();
+    assert.equal(flow.getState().localSource, null);
+  }
+  assert.equal(calls[0].open_in_ide, true);
+  assert.equal(calls[1].open_in_ide, undefined);
+});

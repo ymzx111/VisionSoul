@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     chat_context_chars: int = Field(default=12000, ge=2000, le=24000)
     role_database_path: Path | None = None
 
+    # 网页分析成功后的本机源码输出和 IDE 路径。
+    local_source_workspace: Path = Path(__file__).resolve().parents[3] / "workspace"
+    local_pycharm: Path | None = None
+    local_visual_studio: Path | None = None
+
     @field_validator("video_max_frames", mode="before")
     @classmethod
     def upgrade_old_sampling_limit(cls, value):

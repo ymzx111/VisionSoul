@@ -6,6 +6,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import httpx
 
@@ -195,6 +196,64 @@ class VideoChatTests(unittest.TestCase):
             self.assertEqual(client.post("/api/chat/messages", json={**blank, "video_id": self.video.video_id,
                 "debug_code": True}).status_code, 422)
             self.assertEqual(client.post("/api/chat/messages", json={**blank, "video_id": self.video.video_id}).status_code, 200)
+
+    def test_local_video_code_is_saved_and_opened_once_after_success(self):
+        root = Path(self.temp.name)
+        launcher = root / "pycharm64.exe"
+        launcher.touch()
+        self.settings.local_pycharm = launcher
+        self.settings.local_source_workspace = root / "workspace"
+        fence = chr(96) * 3
+        code = 'print("VisionSoul")\n'
+        self.payload["reply"] = f"[语言: Python]\n[文件名: main.py]\n\n{fence}python\n{code}{fence}"
+        app.dependency_overrides[get_chat_service] = lambda: self.chat
+        self.addCleanup(app.dependency_overrides.clear)
+
+        async def local_app(scope, receive, send):
+            await app({**scope, "client": ("127.0.0.1", 1234)}, receive, send)
+
+        body = {"request_id": "1" * 32, "message": "", "space": "work",
+                "video_id": self.video.video_id, "open_in_ide": True}
+        with TestClient(local_app, base_url="http://127.0.0.1:8765") as client, \
+                patch("app.services.local_ide.launch_ide") as launch:
+            origin = {"Origin": "http://127.0.0.1:8765"}
+            result = client.post("/api/chat/messages", json=body, headers=origin)
+            self.assertEqual(result.status_code, 200, result.text)
+            response = result.json()
+            source = response["local_source"]
+            self.assertEqual(source["status"], "opened")
+            target = Path(source["path"])
+            self.assertEqual(target.read_text(encoding="utf8"), code)
+            self.assertEqual(launch.call_args.args[0], [str(launcher), str(target)])
+            self.assertIn("[文件名: main.c]", self.calls[0]["messages"][0]["content"])
+            replay = client.post("/api/chat/messages", json=body, headers=origin).json()
+            self.assertTrue(replay["replayed"])
+            self.assertIsNone(replay["local_source"])
+            self.assertEqual(len(self.calls), 1)
+            foreign = client.post("/api/chat/messages", json={**body, "request_id": "2" * 32},
+                                  headers={"Origin": "https://example.invalid"}).json()
+            self.assertIsNone(foreign["local_source"])
+            launch.assert_called_once()
+
+    def test_native_source_has_buildable_project_and_falls_back_on_launch_error(self):
+        from app.services.local_ide import open_generated_source
+        root = Path(self.temp.name)
+        launcher = root / "devenv.exe"
+        launcher.touch()
+        self.settings.local_visual_studio = launcher
+        self.settings.local_source_workspace = root / "workspace"
+        fence = chr(96) * 3
+        code = '#include <stdio.h>\nint main(void) { return 0; }\n'
+        turn = {"conversation_id": "a" * 32, "assistant_message": {
+            "id": 2, "content": f"[文件名: main.c]\n{fence}c\n{code}{fence}"}}
+        with patch("app.services.local_ide.launch_ide", side_effect=OSError):
+            with self.assertLogs("app.services.local_ide", level="WARNING"):
+                source = open_generated_source(self.settings, turn)
+        self.assertEqual(source["status"], "saved")
+        target = Path(source["path"])
+        self.assertEqual(target.read_text(encoding="utf-8-sig"), code)
+        self.assertIn('ClCompile Include="main.c"', target.with_name("VisionSoulCode.vcxproj").read_text(encoding="utf8"))
+        self.assertTrue(target.with_name("VisionSoulCode.sln").is_file())
 
     def test_migration_preserves_legacy_rows_and_is_idempotent(self):
         path = Path(self.temp.name) / "legacy.sqlite3"
