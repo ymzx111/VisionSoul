@@ -76,6 +76,12 @@ class Settings(BaseSettings):
     python_sandbox_auto_repair: bool = True
     python_sandbox_runtime: Path = Path(__file__).resolve().parents[2] / "storage" / "sandbox-runtime" / "3.13.17"
 
+    # C 编译沙箱：编译器固定在本地存储，产物只在 Wasmtime 里运行。
+    c_sandbox_enabled: bool = True
+    c_sandbox_auto_repair: bool = True
+    c_sandbox_compiler: Path = (Path(__file__).resolve().parents[2] / "storage" / "sandbox-runtime"
+                                / "c" / "zig-0.17.1" / "zig.exe")
+
     @field_validator("video_max_frames", mode="before")
     @classmethod
     def upgrade_old_sampling_limit(cls, value):

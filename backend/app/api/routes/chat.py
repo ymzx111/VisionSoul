@@ -16,6 +16,7 @@ from app.services.deepseek import DeepSeekError, TokenUsage, has_api_key
 from app.services.videos import VideoService, VideoError
 from app.services.audio_evidence import current_context
 from app.services.local_ide import open_generated_source
+from app.services.c_sandbox import debug_c
 from app.services.python_sandbox import PythonCheck, PythonTest, debug_python
 
 router = APIRouter(prefix="/api/chat", tags=["伙伴对话"])
@@ -181,6 +182,12 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
             return debug_python(service.settings, service.client, turn["user_message"]["content"],
                                 code, body.python_test or PythonTest())
 
+        def verify_c(code: str) -> PythonCheck:
+            return debug_c(service.settings, service.client, turn["user_message"]["content"],
+                           code, body.python_test or PythonTest())
+
         turn["local_source"] = open_generated_source(
-            service.settings, turn, verify_python if service.settings.python_sandbox_enabled else None)
+            service.settings, turn,
+            verify_python if service.settings.python_sandbox_enabled else None,
+            verify_c if service.settings.c_sandbox_enabled else None)
     return turn

@@ -73,7 +73,8 @@ def launch_ide(args: list[str], folder: Path) -> None:
 
 
 def open_generated_source(settings: Settings, turn: dict,
-                          verify_python: Callable[[str], PythonCheck] | None = None) -> dict | None:
+                          verify_python: Callable[[str], PythonCheck] | None = None,
+                          verify_c: Callable[[str], PythonCheck] | None = None) -> dict | None:
     reply = turn["assistant_message"]["content"]
     if not FILE_DECLARATION.search(reply):
         return None
@@ -104,7 +105,12 @@ def open_generated_source(settings: Settings, turn: dict,
         logger.warning("本机源码写入失败", exc_info=True)
         return {"status": "error", "detail": "源码写入失败，请检查 workspace 写入权限。"}
 
-    check = verify_python(code) if extension == ".py" and verify_python else None
+    check = None
+    if extension == ".py" and verify_python:
+        check = verify_python(code)
+    elif extension in {".c", ".cpp", ".cc", ".cxx"} and verify_c:
+        # C/C++ 由宿主机编译成 wasm，再在 WASI 沙箱里运行；结果仍放在 python_check 字段里兼容旧前端。
+        check = verify_c(code)
     if check and check.repaired_code:
         try:
             target = save_dated_source(workspace, filename, check.repaired_code)

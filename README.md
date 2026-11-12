@@ -554,3 +554,13 @@ API：`GET /api/videos/{video_id}/audio` 返回原始、当前对白及版本；
     .\.venv\Scripts\python.exe .\tools\install_python_sandbox.py
 
 安装脚本校验运行时压缩包的 SHA-256。沙箱运行时保存在忽略目录 backend/storage 下。可在 backend/.env 设置 PYTHON_SANDBOX_ENABLED=false 或 PYTHON_SANDBOX_AUTO_REPAIR=false。详见 [P045](prompts/P045_Python隔离试跑与自动修复.md)。
+
+## C 语言隔离编译（P048）
+
+工作解析交付 C 源码后，同样自动编译并在沙箱里试跑，再用“验收样例”的多组用例逐组判定。编译在宿主机完成，但只调用固定路径的 Zig、固定参数，工作目录锁在 workspace 的临时目录内；编译产物是 wasm，只在 Wasmtime 里运行，禁用网络、宿主文件写入与子进程，限制时间、内存和输出。沙箱或编译器不可用时停止试跑。编译失败、运行失败和输出不符都会把结构化错误回传给模型自动修复，最多 3 轮，带验收样例时运行输出不出本机。
+
+首次安装：
+
+    .\.venv\Scripts\python.exe .\tools\install_c_sandbox.py
+
+工具链装在 backend/storage/sandbox-runtime/c 下（默认 Zig 0.17.1，约 360 MB，不进 Git），安装脚本校验 SHA-256。可在 backend/.env 设置 C_SANDBOX_ENABLED=false 或 C_SANDBOX_AUTO_REPAIR=false，也可用 C_SANDBOX_COMPILER 指向其他 zig.exe。Visual Studio 打开与沙箱试跑并行存在：沙箱负责判定对错，VS 供你自己运行。详见 [P048](prompts/P048_C语言隔离编译与断言验收.md)。

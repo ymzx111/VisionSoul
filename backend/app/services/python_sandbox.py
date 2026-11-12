@@ -95,6 +95,7 @@ class CaseResult(BaseModel):
     stdout: str = ""
     stderr: str = ""
     exit_code: int | None = None
+    phase: Literal["compile", "run"] | None = None
 
 
 class PythonCheck(BaseModel):
@@ -107,6 +108,8 @@ class PythonCheck(BaseModel):
     repaired_code: str | None = None
     repair_usage: TokenUsage | None = None
     case_results: list[CaseResult] | None = None
+    # C 链路用：区分"编译失败"与"运行失败"。
+    phase: Literal["compile", "run"] | None = None
 
 
 def _compare(actual: str, expected: str) -> bool:
@@ -178,18 +181,22 @@ def _run_once(settings: Settings, code: str, stdin: str, expected: str | None,
     return PythonCheck(status="mismatch", detail="程序已运行，输出与预期不一致。", **data)
 
 
-def run_python_sandbox(settings: Settings, code: str, test: PythonTest) -> PythonCheck:
-    """有 cases 时逐组跑独立沙箱并汇总；否则沿用旧版单组样例。"""
+def run_case_matrix(run_once, test: PythonTest) -> PythonCheck:
+    """逐组跑独立沙箱并汇总；run_once(stdin, expected) 负责单次运行。
+
+    Python 与 C 的验收共用这套汇总规则：全部通过才算 passed，任一不符为
+    mismatch，运行崩溃为 failed，环境不可用则立即返回。
+    """
     if not test.cases:
-        return _run_once(settings, code, test.stdin, test.expected, test.approved_file)
+        return run_once(test.stdin, test.expected)
 
     results: list[CaseResult] = []
     for index, case in enumerate(test.cases, 1):
         name = case.name.strip() or f"用例{index}"
-        one = _run_once(settings, code, case.stdin, case.expected, test.approved_file)
+        one = run_once(case.stdin, case.expected)
         results.append(CaseResult(name=name, status=one.status, stdin=case.stdin,
                                   expected=case.expected, stdout=one.stdout, stderr=one.stderr,
-                                  exit_code=one.exit_code))
+                                  exit_code=one.exit_code, phase=one.phase))
         if one.status in {"unavailable", "busy"}:
             return one.model_copy(update={"case_results": results})
 
@@ -201,11 +208,17 @@ def run_python_sandbox(settings: Settings, code: str, test: PythonTest) -> Pytho
     total = len(results)
     if broken:
         return PythonCheck(status="failed", detail=f"{len(broken)}/{total} 组运行失败（首个：{broken[0].name}）。",
-                           case_results=results, **data)
+                           phase=sample.phase, case_results=results, **data)
     if wrong:
         return PythonCheck(status="mismatch", detail=f"{len(wrong)}/{total} 组输出与预期不一致（首个：{wrong[0].name}）。",
                            case_results=results, **data)
     return PythonCheck(status="passed", detail=f"{total} 组断言全部通过。", case_results=results, **data)
+
+
+def run_python_sandbox(settings: Settings, code: str, test: PythonTest) -> PythonCheck:
+    """有 cases 时逐组跑独立沙箱并汇总；否则沿用旧版单组样例。"""
+    return run_case_matrix(
+        lambda stdin, expected: _run_once(settings, code, stdin, expected, test.approved_file), test)
 
 
 def _repair_payload(task: str, code: str, check: PythonCheck, local_data: bool) -> dict:
