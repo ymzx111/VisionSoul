@@ -5,9 +5,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
   const chat = state.chat;
   const companion = state.space === 'companion';
   const [legacyId, setLegacyId] = useState('');
-  const [sampleInput, setSampleInput] = useState('');
-  const [expectedOutput, setExpectedOutput] = useState('');
-  const [compareOutput, setCompareOutput] = useState(false);
+  const [cases, setCases] = useState([{ name: '', stdin: '', expected: '' }]);
   const [approvedFile, setApprovedFile] = useState(null);
   const [testError, setTestError] = useState('');
   const [readingFile, setReadingFile] = useState(false);
@@ -20,7 +18,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
   const messages = chat.pending ? [...chat.messages, { ...chat.pending, id: 'pending' }] : chat.messages;
   useEffect(() => { if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, [chat.messages, chat.pending]);
   function clearTest() {
-    setSampleInput(''); setExpectedOutput(''); setCompareOutput(false);
+    setCases([{ name: '', stdin: '', expected: '' }]);
     setApprovedFile(null); setTestError('');
     if (fileInput.current) fileInput.current.value = '';
   }
@@ -28,8 +26,16 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
   const send = async () => {
     if (busy) return;
     let pythonTest = null;
-    if (workMedia && (sampleInput || compareOutput || approvedFile)) {
-      pythonTest = { stdin: sampleInput, expected: compareOutput ? expectedOutput : null };
+    const filled = cases.filter(row => row.stdin.trim() || row.expected.trim());
+    if (workMedia && (filled.length || approvedFile)) {
+      pythonTest = {};
+      if (filled.length) {
+        pythonTest.cases = filled.slice(0, 8).map((row, index) => ({
+          name: row.name.trim() || `用例${index + 1}`,
+          stdin: row.stdin,
+          expected: row.expected,
+        }));
+      }
       if (approvedFile) {
         setReadingFile(true);
         try {
@@ -79,6 +85,12 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
           {check && item.id === chat.messages.at(-1)?.id && <details className="python-check">
             <summary>Python 隔离验收 · {check.detail}</summary>
             {check.exit_code != null && <p>退出码 {check.exit_code} · 试跑 {check.attempts} 次</p>}
+            {!!check.case_results?.length && <ul className="python-case-results">
+              {check.case_results.map(row => <li key={row.name}>
+                {row.status === 'passed' ? '通过' : '未通过'} · {row.name}
+                {' '}输入「{row.stdin.trim() || '空'}」预期「{row.expected}」实际「{row.stdout.trim()}」
+              </li>)}
+            </ul>}
             {check.stdout && <><strong>运行输出</strong><pre>{check.stdout}</pre></>}
             {check.stderr && <><strong>错误输出</strong><pre>{check.stderr}</pre></>}
             {check.repaired_code && <><strong>修复版源码</strong><pre>{check.repaired_code}</pre></>}
@@ -99,11 +111,22 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
       {state.kind === 'video' && <p className="chat-image-note">输入「重点看 3–5 秒」可对指定区间补抽，每次最多 5 秒。读题或排错最多使用 4 张高清图。</p>}
       {workMedia && <details className="python-test">
         <summary>Python 验收样例（可选）</summary>
-        <p className="chat-image-note">样例仅在本机使用。留空时，常见 Python 异常可能触发一次额外的模型修复请求。</p>
-        <label htmlFor="python-stdin">样例输入</label>
-        <textarea id="python-stdin" maxLength={4096} value={sampleInput} disabled={busy} onChange={event => setSampleInput(event.target.value)}/>
-        <label><input type="checkbox" checked={compareOutput} disabled={busy} onChange={event => setCompareOutput(event.target.checked)}/> 比对预期输出</label>
-        {compareOutput && <textarea aria-label="预期输出" maxLength={4096} value={expectedOutput} disabled={busy} onChange={event => setExpectedOutput(event.target.value)}/>}
+        <p className="chat-image-note">每组用例独立运行、逐组判定，可覆盖正常、空值、边界。样例仅在本机使用；失败或输出不符时最多自动修复 3 次，过程中不会把运行输出发给模型。</p>
+        {cases.map((row, index) => <div className="python-case" key={index}>
+          <label className="sr-only" htmlFor={`python-case-name-${index}`}>用例名称</label>
+          <input id={`python-case-name-${index}`} placeholder={`用例${index + 1}`} maxLength={40} disabled={busy}
+            value={row.name} onChange={event => setCases(rows => rows.map((item, i) => i === index ? { ...item, name: event.target.value } : item))}/>
+          <label className="sr-only" htmlFor={`python-stdin-${index}`}>样例输入</label>
+          <textarea id={`python-stdin-${index}`} placeholder="样例输入" maxLength={4096} disabled={busy}
+            value={row.stdin} onChange={event => setCases(rows => rows.map((item, i) => i === index ? { ...item, stdin: event.target.value } : item))}/>
+          <label className="sr-only" htmlFor={`python-expected-${index}`}>预期输出</label>
+          <textarea id={`python-expected-${index}`} placeholder="预期输出" maxLength={4096} disabled={busy}
+            value={row.expected} onChange={event => setCases(rows => rows.map((item, i) => i === index ? { ...item, expected: event.target.value } : item))}/>
+          {cases.length > 1 && <button type="button" className="text-button" disabled={busy}
+            onClick={() => setCases(rows => rows.filter((_, i) => i !== index))}>删除本组</button>}
+        </div>)}
+        <button type="button" className="text-button" disabled={busy || cases.length >= 8}
+          onClick={() => setCases(rows => [...rows, { name: '', stdin: '', expected: '' }])}>＋ 添加用例</button>
         <label htmlFor="python-test-file">本轮允许读取的文件（TXT、CSV 或 JSON，最多 8 KiB）</label>
         <input id="python-test-file" ref={fileInput} type="file" accept=".txt,.csv,.json" disabled={busy}
           onChange={event => { setApprovedFile(event.target.files?.[0] || null); setTestError(''); }}/>

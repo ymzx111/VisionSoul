@@ -66,6 +66,24 @@ def source_directory(parent: Path, name: str) -> Path:
     return directory
 
 
+class UnsafeWorkspacePath(ValueError):
+    """写入目标跳出了 workspace 目录。"""
+
+
+def ensure_workspace_path(target: Path, workspace: Path) -> Path:
+    """确认写入目标仍在 workspace 内；检测到 .. 或跳出就拦截报错。
+
+    这是唯一的写盘入口校验：源码、修复版源码和沙箱本轮目录都必须先经过它。
+    """
+    target, workspace = Path(target), Path(workspace)
+    if ".." in target.parts:
+        raise UnsafeWorkspacePath("保存路径中不能包含 ..，已拦截。")
+    resolved_workspace, resolved_target = workspace.resolve(), target.resolve()
+    if resolved_target != resolved_workspace and resolved_workspace not in resolved_target.parents:
+        raise UnsafeWorkspacePath(f"保存路径必须位于 {resolved_workspace} 目录内，已拦截：{target}")
+    return resolved_target
+
+
 def write_source(target: Path, code: str, *, encoding: str = "utf-8") -> Path:
     created = False
     try:
@@ -83,6 +101,10 @@ def write_source(target: Path, code: str, *, encoding: str = "utf-8") -> Path:
 def save_dated_source(workspace: Path, filename: str, code: str, *, encoding: str = "utf-8") -> Path:
     """按语言保存源码，并为同日同名的结果分配序号。文件名需先通过提取校验。"""
     source = Path(filename)
+    workspace = Path(workspace)
+    if source.is_absolute() or ".." in source.parts:
+        raise UnsafeWorkspacePath("源码文件名不能是绝对路径，也不能包含 ..，已拦截。")
+    ensure_workspace_path(workspace, workspace)
     if source.suffix == ".py":
         folder = source_directory(workspace, "Python")
     elif source.suffix in {".c", ".cpp", ".cc", ".cxx"}:
@@ -92,8 +114,11 @@ def save_dated_source(workspace: Path, filename: str, code: str, *, encoding: st
     dated_stem = f"{date.today():%Y.%m.%d}.{source.stem}"
     for number in count(1):
         stem = dated_stem if number == 1 else f"{dated_stem}-{number}"
+        target = folder / f"{stem}{source.suffix}"
+        # 写盘前统一校验，文件名被拼出 .. 或绝对路径时直接拦截。
+        ensure_workspace_path(target, workspace)
         try:
-            return write_source(folder / f"{stem}{source.suffix}", code, encoding=encoding)
+            return write_source(target, code, encoding=encoding)
         except FileExistsError:
             continue
 

@@ -1,4 +1,5 @@
-"""Python 隔离验收、安全边界和一次修复策略。"""
+"""Python 隔离验收、安全边界、多组断言和三次修复策略。"""
+import json
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -8,7 +9,9 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from app.core.config import Settings
 from app.services.deepseek import ModelReply
-from app.services.python_sandbox import ApprovedFile, PythonCheck, PythonTest, debug_python, run_python_sandbox
+from app.services.python_sandbox import (
+    ApprovedFile, CaseResult, CaseSpec, PythonCheck, PythonTest, debug_python, run_python_sandbox,
+)
 
 
 class PythonSandboxTests(unittest.TestCase):
@@ -88,33 +91,72 @@ print("secret-visible", "DEEPSEEK_API_KEY" in os.environ)
         with self.assertRaises(ValueError):
             ApprovedFile(filename="sample.txt", content="测" * 3000)
 
-    def test_repairs_once_and_never_sends_raw_output(self):
-        first = PythonCheck(status="failed", detail="failure", stdout="PRIVATE_DATA",
-                            stderr="Traceback with PRIVATE_DATA\nNameError: PRIVATE_DATA", exit_code=1)
-        second = PythonCheck(status="ran", detail="success", stdout="42\n", exit_code=0)
+    def test_real_runtime_runs_multiple_cases(self):
+        self.require_runtime()
+        code = "a = int(input())\nprint(a * 2)\n"
+        test = PythonTest(cases=[
+            CaseSpec(name="正常", stdin="21\n", expected="42"),
+            CaseSpec(name="零", stdin="0\n", expected="0"),
+            CaseSpec(name="负数", stdin="-3\n", expected="-6"),
+        ])
+        result = self.check(code, test)
+        self.assertEqual(result.status, "passed")
+        self.assertEqual([row.status for row in result.case_results], ["passed", "passed", "passed"])
+        self.assertIn("3 组断言全部通过", result.detail)
+
+        wrong = test.model_copy(update={"cases": [CaseSpec(name="边界", stdin="5\n", expected="11")]})
+        mismatch = self.check(code, wrong)
+        self.assertEqual(mismatch.status, "mismatch")
+        self.assertEqual(mismatch.case_results[0].status, "mismatch")
+        self.assertIn("边界", mismatch.detail)
+
+    def test_repairs_up_to_three_times_then_keeps_result(self):
+        failures = [PythonCheck(status="failed", detail="failure", stdout="RAW",
+                                stderr="NameError: RAW", exit_code=1) for _ in range(4)]
+        client = Mock()
+        fence = chr(96) * 3
+        replies = iter([ModelReply(answer=f"[文件名: main.py]\n{fence}python\nprint({n})\n{fence}", model="mock")
+                        for n in range(1, 5)])
+        client.complete.side_effect = lambda *args, **kwargs: next(replies)
+        with patch("app.services.python_sandbox.run_python_sandbox", side_effect=failures) as run:
+            result = debug_python(self.settings, client, "task", "print(unknown)", PythonTest())
+        self.assertEqual(client.complete.call_count, 3)
+        self.assertEqual(run.call_count, 4)
+        self.assertEqual(result.attempts, 4)
+        self.assertIn("自动修复 3 次仍未通过", result.detail)
+
+    def test_sample_data_keeps_output_local_but_still_repairs_mismatch(self):
+        first = PythonCheck(status="mismatch", detail="diff", stdout="USER_ANSWER", stderr="", exit_code=0,
+                            case_results=[CaseResult(name="正常", status="mismatch", stdin="21\n",
+                                                     expected="42", stdout="USER_ANSWER")])
+        second = PythonCheck(status="passed", detail="ok", stdout="USER_ANSWER", exit_code=0,
+                             case_results=[CaseResult(name="正常", status="passed", stdin="21\n",
+                                                      expected="42", stdout="USER_ANSWER")])
         client = Mock()
         fence = chr(96) * 3
         client.complete.return_value = ModelReply(
             answer=f"[文件名: main.py]\n{fence}python\nprint(42)\n{fence}", model="mock")
-        with patch("app.services.python_sandbox.run_python_sandbox", side_effect=[first, second]) as run:
-            result = debug_python(self.settings, client, "打印结果", "print(unknown)", PythonTest())
-        self.assertEqual(result.repaired_code, "print(42)\n")
+        test = PythonTest(cases=[CaseSpec(name="正常", stdin="21\n", expected="42")])
+        with patch("app.services.python_sandbox.run_python_sandbox", side_effect=[first, second]):
+            result = debug_python(self.settings, client, "打印结果", "print(0)", test)
+        self.assertEqual(result.status, "passed")
         self.assertEqual(result.attempts, 2)
-        self.assertEqual(run.call_count, 2)
-        client.complete.assert_called_once()
-        self.assertNotIn("PRIVATE_DATA", repr(client.complete.call_args))
+        payload = json.loads(client.complete.call_args.args[0][1]["content"])
+        self.assertNotIn("stdout", payload)
+        self.assertNotIn("stderr", payload)
+        self.assertEqual(payload["status"], "mismatch")
+        self.assertEqual(payload["failed_cases"], [{"name": "正常", "status": "mismatch"}])
+        self.assertTrue(payload["error_type"])
 
-    def test_approved_file_and_sandbox_limits_never_trigger_cloud_repair(self):
+    def test_limit_and_infrastructure_states_never_trigger_repair(self):
         client = Mock()
-        for check, test in (
-            (PythonCheck(status="failed", detail="failure", stderr="NameError: input"),
-             PythonTest(approved_file=ApprovedFile(filename="test.txt", content="secret"))),
-            (PythonCheck(status="limit", detail="limit", stderr="NameError: fake"), PythonTest()),
-            (PythonCheck(status="failed", detail="failure", stderr="PermissionError: denied"), PythonTest()),
-            (PythonCheck(status="mismatch", detail="different"), PythonTest(expected="42")),
+        for check in (
+            PythonCheck(status="limit", detail="limit", stderr="NameError: fake"),
+            PythonCheck(status="unavailable", detail="unavailable", attempts=0),
+            PythonCheck(status="busy", detail="busy", attempts=0),
         ):
             with patch("app.services.python_sandbox.run_python_sandbox", return_value=check) as run:
-                self.assertIs(debug_python(self.settings, client, "task", "code", test), check)
+                self.assertIs(debug_python(self.settings, client, "task", "code", PythonTest()), check)
                 run.assert_called_once()
         client.complete.assert_not_called()
 

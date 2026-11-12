@@ -1,4 +1,11 @@
-"""启动一次性 WASI Python 测试，校验输出并清理本轮文件。"""
+"""启动一次性 WASI Python 测试，校验输出并清理本轮文件。
+
+约定：
+- 自动运行只发生在 WASI 沙箱内；沙箱不可用就停止。
+- 验收样例支持多组用例，每组独立运行、逐组判定。
+- 试跑失败或输出不符时，最多回传 3 次结构化错误让模型修复。
+- 带验收样例时只回传异常类型与行号，stdout/stderr 不出本机。
+"""
 import json
 import logging
 import os
@@ -14,14 +21,26 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.config import Settings
 from app.services.deepseek import DeepSeekClient, DeepSeekError, TokenUsage
-from app.services.source_files import SAFE_FILENAME, WINDOWS_DEVICE, parse_generated_code, source_directory
+from app.services.source_files import (
+    SAFE_FILENAME, WINDOWS_DEVICE, ensure_workspace_path, parse_generated_code, source_directory,
+)
 
 logger = logging.getLogger(__name__)
 RUN_LOCK = Lock()
 WORKER = Path(__file__).with_name("python_wasi_worker.py")
+MAX_CASES = 8
+MAX_REPAIR_ATTEMPTS = 3
+AUTOFIX_STATUSES = {"failed", "mismatch"}
 REPAIRABLE_ERROR = re.compile(
     r"^(SyntaxError|IndentationError|TabError|NameError|UnboundLocalError|TypeError|ValueError|"
     r"IndexError|KeyError|AttributeError|ZeroDivisionError)(?=:|$)", re.MULTILINE,
+)
+ERROR_LINE = re.compile(r'File "[^"]*", line (\d+)')
+REPAIR_SYSTEM = (
+    "修复给出的单文件 Python 程序，保留题意与输入输出。"
+    "只返回 [文件名: main.py] 后接一个完整 python Markdown 代码块。"
+    "错误类别与行号只用于定位；题目禁止的内置函数或高级写法不得使用，改用 if、循环等基础语句实现。"
+    "生成普通标准库控制台程序。"
 )
 
 
@@ -46,11 +65,36 @@ class ApprovedFile(BaseModel):
         return content
 
 
+class CaseSpec(BaseModel):
+    """一组验收用例：输入 + 预期输出。"""
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(default="", max_length=40)
+    stdin: str = Field(default="", max_length=4096)
+    expected: str = Field(max_length=4096)
+
+
 class PythonTest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    # 兼容旧版单组样例；有 cases 时以 cases 为准。
     stdin: str = Field(default="", max_length=4096)
     expected: str | None = Field(default=None, max_length=4096)
     approved_file: ApprovedFile | None = None
+    cases: list[CaseSpec] = Field(default_factory=list, max_length=MAX_CASES)
+
+    @property
+    def has_local_data(self) -> bool:
+        """是否带验收数据；带了就不把 stdout/stderr 发给模型。"""
+        return bool(self.cases or self.stdin or self.expected is not None or self.approved_file)
+
+
+class CaseResult(BaseModel):
+    name: str
+    status: Literal["passed", "mismatch", "failed", "limit", "ran"]
+    stdin: str = ""
+    expected: str = ""
+    stdout: str = ""
+    stderr: str = ""
+    exit_code: int | None = None
 
 
 class PythonCheck(BaseModel):
@@ -62,9 +106,16 @@ class PythonCheck(BaseModel):
     attempts: int = 1
     repaired_code: str | None = None
     repair_usage: TokenUsage | None = None
+    case_results: list[CaseResult] | None = None
 
 
-def run_python_sandbox(settings: Settings, code: str, test: PythonTest) -> PythonCheck:
+def _compare(actual: str, expected: str) -> bool:
+    return actual.replace("\r\n", "\n").removesuffix("\n") == expected.replace("\r\n", "\n").removesuffix("\n")
+
+
+def _run_once(settings: Settings, code: str, stdin: str, expected: str | None,
+              approved_file: ApprovedFile | None) -> PythonCheck:
+    """跑一次独立沙箱。sandbox 不可用时立即返回，不做任何本机执行。"""
     try:
         runtime = settings.python_sandbox_runtime.resolve()
         if not (runtime / "python.wasm").is_file() or not (runtime / "lib").is_dir():
@@ -81,11 +132,12 @@ def run_python_sandbox(settings: Settings, code: str, test: PythonTest) -> Pytho
         with TemporaryDirectory(prefix="python-", dir=jobs) as directory:
             job = Path(directory)
             guest = source_directory(job, "guest")
+            # 沙箱本轮目录也必须留在 workspace 内。
+            ensure_workspace_path(guest, workspace)
             (guest / "program.py").write_text(code, encoding="utf-8")
-            (job / "stdin.txt").write_text(test.stdin, encoding="utf-8", newline="\n")
-            if test.approved_file:
-                file = test.approved_file
-                (guest / file.filename).write_text(file.content, encoding="utf-8", newline="\n")
+            (job / "stdin.txt").write_text(stdin, encoding="utf-8", newline="\n")
+            if approved_file:
+                (guest / approved_file.filename).write_text(approved_file.content, encoding="utf-8", newline="\n")
             # 子进程执行的是固定的可信 WASI 启动器。用户代码只作为沙箱输入文件。
             allowed_env = {"SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "TEMP", "TMP",
                            "PROCESSOR_ARCHITECTURE", "PROCESSOR_ARCHITEW6432"}
@@ -119,46 +171,106 @@ def run_python_sandbox(settings: Settings, code: str, test: PythonTest) -> Pytho
         if re.search(r"^(PermissionError|FileNotFoundError):", result["stderr"], re.MULTILINE):
             detail = "程序无法访问所需文件。若题目确实需要该文件，可在验收样例里授权，并用文件名读取。"
         return PythonCheck(status="failed", detail=detail, **data)
-    if test.expected is None:
+    if expected is None:
         return PythonCheck(status="ran", detail="已在沙箱运行。未提供预期输出，未判定题目正确性。", **data)
-    actual = result["stdout"].replace("\r\n", "\n").removesuffix("\n")
-    expected = test.expected.replace("\r\n", "\n").removesuffix("\n")
-    if actual == expected:
+    if _compare(result["stdout"], expected):
         return PythonCheck(status="passed", detail="沙箱输出与本轮预期输出一致。", **data)
     return PythonCheck(status="mismatch", detail="程序已运行，输出与预期不一致。", **data)
 
 
+def run_python_sandbox(settings: Settings, code: str, test: PythonTest) -> PythonCheck:
+    """有 cases 时逐组跑独立沙箱并汇总；否则沿用旧版单组样例。"""
+    if not test.cases:
+        return _run_once(settings, code, test.stdin, test.expected, test.approved_file)
+
+    results: list[CaseResult] = []
+    for index, case in enumerate(test.cases, 1):
+        name = case.name.strip() or f"用例{index}"
+        one = _run_once(settings, code, case.stdin, case.expected, test.approved_file)
+        results.append(CaseResult(name=name, status=one.status, stdin=case.stdin,
+                                  expected=case.expected, stdout=one.stdout, stderr=one.stderr,
+                                  exit_code=one.exit_code))
+        if one.status in {"unavailable", "busy"}:
+            return one.model_copy(update={"case_results": results})
+
+    broken = [row for row in results if row.status in {"failed", "limit"}]
+    wrong = [row for row in results if row.status == "mismatch"]
+    first_bad = (broken or wrong or [None])[0]
+    sample = first_bad or results[-1]
+    data = {"stdout": sample.stdout, "stderr": sample.stderr, "exit_code": sample.exit_code}
+    total = len(results)
+    if broken:
+        return PythonCheck(status="failed", detail=f"{len(broken)}/{total} 组运行失败（首个：{broken[0].name}）。",
+                           case_results=results, **data)
+    if wrong:
+        return PythonCheck(status="mismatch", detail=f"{len(wrong)}/{total} 组输出与预期不一致（首个：{wrong[0].name}）。",
+                           case_results=results, **data)
+    return PythonCheck(status="passed", detail=f"{total} 组断言全部通过。", case_results=results, **data)
+
+
+def _repair_payload(task: str, code: str, check: PythonCheck, local_data: bool) -> dict:
+    """把错误结构化回传模型；带验收数据时绝不带 stdout/stderr。"""
+    payload = {"task": task[:2000], "code": code, "status": check.status}
+    if local_data:
+        matches = REPAIRABLE_ERROR.findall(check.stderr)
+        payload["error_type"] = matches[-1] if matches else (
+            "OutputMismatch" if check.status == "mismatch" else "RuntimeError")
+        lines = ERROR_LINE.findall(check.stderr)
+        if lines:
+            payload["error_lines"] = [int(value) for value in lines[-3:]]
+        if check.status == "mismatch":
+            payload["hint"] = "程序可以运行，但输出与题目预期不一致，请检查计算逻辑或输出格式。"
+        if check.case_results:
+            payload["failed_cases"] = [
+                {"name": row.name, "status": row.status}
+                for row in check.case_results if row.status != "passed"
+            ]
+    else:
+        payload["stdout"] = check.stdout[-2000:]
+        payload["stderr"] = check.stderr[-2000:]
+        payload["exit_code"] = check.exit_code
+    return payload
+
+
 def debug_python(settings: Settings, client: DeepSeekClient, task: str, code: str,
                  test: PythonTest) -> PythonCheck:
-    first = run_python_sandbox(settings, code, test)
-    # 外部文件、样例输入和输出只用于本机验收。修复只发送原任务、源码和错误类型。
-    if (not settings.python_sandbox_auto_repair or first.status != "failed"
-            or test.approved_file or test.stdin or test.expected is not None):
-        return first
-    matches = REPAIRABLE_ERROR.findall(first.stderr)
-    if not matches:
-        return first
-    repair = None
-    try:
-        repair = client.complete([
-            {"role": "system", "content": "修复给出的单文件 Python 程序，保留题意与输入输出。"
-                "只返回 [文件名: main.py] 后接一个完整 python Markdown 代码块。"
-                "错误类别只用于定位。生成普通标准库控制台程序。"},
-            {"role": "user", "content": json.dumps({"task": task[:2000], "code": code, "error_type": matches[-1]},
-                                                  ensure_ascii=False)},
-        ], max_tokens=settings.video_max_tokens)
-        if repair.truncated:
-            return first.model_copy(update={"detail": "修复回复不完整，已保留初次运行结果。", "repair_usage": repair.usage})
-        name, replacement = parse_generated_code(repair.answer)
-        if Path(name).suffix != ".py" or replacement == code:
-            raise ValueError("unexpected repair")
-    except (DeepSeekError, ValueError):
-        return first.model_copy(update={"detail": "未取得可用的修复代码，已保留初次运行结果。",
-                                        "repair_usage": repair.usage if repair else None})
+    """试跑；失败或输出不符时最多自动修复 3 次，每次都在新沙箱复跑。"""
+    check = run_python_sandbox(settings, code, test)
+    if not settings.python_sandbox_auto_repair:
+        return check
 
-    second = run_python_sandbox(settings, replacement, test)
-    if second.status == "ran":
-        return second.model_copy(update={"attempts": 2, "repaired_code": replacement, "repair_usage": repair.usage,
-            "detail": "已修复一次，并在新沙箱试跑成功。未提供预期输出。"})
-    return second.model_copy(update={"attempts": 2, "repair_usage": repair.usage,
-        "detail": f"修复后的试跑未通过，保留原源码。{second.detail}"})
+    current, usage, repairs = code, None, 0
+    while repairs < MAX_REPAIR_ATTEMPTS and check.status in AUTOFIX_STATUSES:
+        payload = _repair_payload(task, current, check, test.has_local_data)
+        try:
+            reply = client.complete([
+                {"role": "system", "content": REPAIR_SYSTEM},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ], max_tokens=settings.video_max_tokens)
+        except DeepSeekError:
+            return check.model_copy(update={"attempts": repairs + 1, "repair_usage": usage,
+                                            "detail": f"{check.detail} 修复请求失败，已保留当前结果。"})
+        usage = reply.usage
+        if reply.truncated:
+            return check.model_copy(update={"attempts": repairs + 1, "repair_usage": usage,
+                                            "detail": "修复回复不完整，已保留当前结果。"})
+        try:
+            name, replacement = parse_generated_code(reply.answer)
+            if Path(name).suffix != ".py" or replacement == current:
+                raise ValueError("unexpected repair")
+        except ValueError:
+            return check.model_copy(update={"attempts": repairs + 1, "repair_usage": usage,
+                                            "detail": "未取得可用的修复代码，已保留当前结果。"})
+
+        current = replacement
+        check = run_python_sandbox(settings, current, test)
+        repairs += 1
+        if check.status in {"ran", "passed"}:
+            return check.model_copy(update={"attempts": repairs + 1, "repaired_code": current,
+                                            "repair_usage": usage,
+                                            "detail": f"{check.detail}（自动修复 {repairs} 次后通过）"})
+
+    if not repairs:
+        return check
+    detail = f"自动修复 {repairs} 次仍未通过，保留当前结果。{check.detail}"
+    return check.model_copy(update={"attempts": repairs + 1, "repair_usage": usage, "detail": detail})
