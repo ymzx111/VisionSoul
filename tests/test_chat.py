@@ -1,5 +1,6 @@
 """隔离 SQLite 与模拟 API，检查上下文、人格、原子保存和重复请求。"""
 from concurrent.futures import ThreadPoolExecutor
+from importlib.util import find_spec
 from io import BytesIO
 import json
 from pathlib import Path
@@ -45,6 +46,65 @@ class ChatTests(unittest.TestCase):
         buffer = BytesIO()
         Image.new("RGB", (24, 16), color).save(buffer, "PNG")
         return save_image(buffer.getvalue(), self.settings).image_id
+
+    def test_local_work_photo_saves_python_and_checks_sample_before_opening_editor(self):
+        if not find_spec("wasmtime") or not (self.settings.python_sandbox_runtime / "python.wasm").is_file():
+            self.skipTest("Python WASI runtime is optional")
+        root = Path(self.temp.name)
+        self.settings.local_source_workspace = root / "workspace"
+        launcher = root / "pycharm64.exe"
+        launcher.touch()
+        self.settings.local_pycharm = launcher
+        picture = self.image()
+        code = 'print(int(input()) * 2)\n'
+        fence = chr(96) * 3
+        source_reply = f"[语言: Python]\n[文件名: main.py]\n{fence}python\n{code}{fence}"
+
+        def handler(request):
+            payload = json.loads(request.content)
+            self.payloads.append(payload)
+            text = payload["messages"][-1]["content"][0]["text"]
+            answer = "这是一张绿色图片。" if text == "描述图片" else source_reply
+            return httpx.Response(200, json={"model": "test", "choices": [
+                {"message": {"content": answer}, "finish_reason": "stop"}]})
+
+        self.service.client = DeepSeekClient(self.settings, httpx.MockTransport(handler))
+        app.dependency_overrides[get_chat_service] = lambda: self.service
+        self.addCleanup(app.dependency_overrides.clear)
+
+        async def local_app(scope, receive, send):
+            await app({**scope, "client": ("127.0.0.1", 1234)}, receive, send)
+
+        base = "http://127.0.0.1:8765"
+        body = {"request_id": "1" * 32, "message": "按照片里的题目写 Python", "space": "work",
+                "image_id": picture, "open_in_ide": True, "python_test": {"stdin": "1234", "expected": "2468"}}
+        with TestClient(local_app, base_url=base) as client, patch("app.services.local_ide.launch_ide") as launch:
+            response = client.post("/api/chat/messages", json=body, headers={"Origin": base})
+            self.assertEqual(response.status_code, 200, response.text)
+            local = response.json()["local_source"]
+            self.assertEqual(local["status"], "opened")
+            self.assertEqual(local["python_check"]["status"], "passed")
+            saved = Path(local["path"])
+            self.assertEqual(saved.parent, root / "workspace" / "Python")
+            self.assertEqual(saved.read_text(encoding="utf-8"), code)
+            prompt = self.payloads[0]["messages"][0]["content"]
+            self.assertIn("[文件名: main.c]", prompt)
+            self.assertIn("main.py", prompt)
+            self.assertNotIn('"1234"', json.dumps(self.payloads[0]))
+            self.assertEqual(self.payloads[0]["messages"][-1]["content"][1]["type"], "image_url")
+            self.assertEqual(list((root / "workspace" / ".sandbox-jobs").iterdir()), [])
+            for data, origin in [
+                (body, base),
+                ({**body, "request_id": "2" * 32, "message": "描述图片"}, base),
+                ({**body, "request_id": "3" * 32, "space": "companion"}, base),
+                ({**body, "request_id": "4" * 32}, "https://example.invalid"),
+            ]:
+                with self.subTest(request_id=data["request_id"]):
+                    response = client.post("/api/chat/messages", json=data, headers={"Origin": origin})
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertIsNone(response.json()["local_source"])
+            launch.assert_called_once_with([str(launcher), str(saved)], saved.parent)
+        self.assertEqual(len(self.payloads), 4)
 
     def test_two_turn_context_fixed_persona_and_persistence(self):
         first = self.send("我叫小夏")

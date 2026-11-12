@@ -3,8 +3,9 @@ import argparse
 import hashlib
 from io import BytesIO
 from pathlib import Path, PurePosixPath
+import shutil
 import stat
-from tempfile import TemporaryDirectory
+from uuid import uuid4
 from urllib.request import Request, urlopen
 from zipfile import ZipFile
 
@@ -31,21 +32,28 @@ def main():
 
     base = Path(__file__).resolve().parents[1] / "backend" / "storage" / "sandbox-runtime"
     base.mkdir(parents=True, exist_ok=True)
+    base = base.resolve()
     target = base / VERSION
     if target.exists():
         raise SystemExit(f"运行时目录已存在：{target}")
-    with TemporaryDirectory(prefix=".install-", dir=base) as temporary, ZipFile(BytesIO(data)) as archive:
-        staging = Path(temporary) / VERSION
-        staging.mkdir()
-        for item in archive.infolist():
-            name = PurePosixPath(item.filename)
-            if item.filename not in {"LICENSE", "python.wasm"} and not item.filename.startswith("lib/"):
-                continue
-            if (name.is_absolute() or ".." in name.parts or "\\" in item.filename or ":" in item.filename
-                    or stat.S_ISLNK(item.external_attr >> 16)):
-                raise SystemExit("CPython WASI 压缩包包含不允许的路径。")
-            archive.extract(item, staging)
+    # A sibling directory inherits the runtime parent's Windows ACL. A private
+    # TemporaryDirectory can retain its restricted ACL when renamed into place.
+    staging = base / f".install-{uuid4().hex}"
+    staging.mkdir()
+    try:
+        with ZipFile(BytesIO(data)) as archive:
+            for item in archive.infolist():
+                name = PurePosixPath(item.filename)
+                if item.filename not in {"LICENSE", "python.wasm"} and not item.filename.startswith("lib/"):
+                    continue
+                if (name.is_absolute() or ".." in name.parts or "\\" in item.filename or ":" in item.filename
+                        or stat.S_ISLNK(item.external_attr >> 16)):
+                    raise SystemExit("CPython WASI 压缩包包含不允许的路径。")
+                archive.extract(item, staging)
         staging.rename(target)
+    finally:
+        if staging.is_dir() and staging.resolve().parent == base:
+            shutil.rmtree(staging)
     print(f"CPython WASI 已安装：{target}")
 
 

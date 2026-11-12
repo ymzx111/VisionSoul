@@ -1,4 +1,4 @@
-"""将已保存的单份视频解题回复交给本机 IDE。"""
+"""将已保存的单份图片或视频解题回复交给本机 IDE。"""
 import ast
 from collections.abc import Callable
 from importlib.util import find_spec

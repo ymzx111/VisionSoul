@@ -138,7 +138,8 @@ class ChatService:
                         roles = RoleStore(self.settings.roles_path)
                         video_prompt, persona_prompt, persona_version = load_persona(self.settings, roles)
                         memory_text = roles.memory_context(target, message, allowed_conversations=self.store.companion_ids())
-                    source_delivery = bool(effective_space == "work" and attached_video and not inspect_video and not debug_code)
+                    source_delivery = bool(effective_space == "work" and (attached or attached_video)
+                                           and not inspect_video and not debug_code)
                     videos = (self._provided_videos if space is None else None) or VideoService(self.settings, self.client,
                         system_prompt=persona_prompt if space is not None else video_prompt, isolated=space is not None,
                         source_delivery=source_delivery)

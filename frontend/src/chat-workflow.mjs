@@ -127,7 +127,7 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
     if (mode === 'video' || (mode === 'media' && (videoId || state.videoId))) body.video_id = videoId || state.videoId;
     if (body.video_id && inspectVideo) body.inspect_video = true;
     if (body.video_id && debugCode) body.debug_code = true;
-    if (mode === 'media' && space === 'work' && body.video_id && !inspectVideo && !debugCode) {
+    if (mode === 'media' && space === 'work' && (imageId || state.imageId || body.video_id) && !inspectVideo && !debugCode) {
       body.open_in_ide = true;
       if (pythonTest) body.python_test = pythonTest;
     }

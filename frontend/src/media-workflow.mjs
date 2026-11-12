@@ -118,7 +118,9 @@ export function createMediaWorkflow({ fetcher = globalThis.fetch, storage = glob
     if (!content && !current.conversationId) {
       if (debugCode) content = '请结合视频中的源码和终端错误，给出有依据的可能原因与修改步骤。';
       else if (inspectVideo) content = '请概括视频画面与对白，分别说明能确认和不确定的内容。';
-      else if (imageId) content = '请说明这张图片的主要内容和可见细节。';
+      else if (imageId) content = space === 'work'
+        ? '请分析这张图片。如果是条件明确、要求编写完整程序的题目，请解题并交付可运行源码；其他图片请说明主要内容和可见细节。'
+        : '请说明这张图片的主要内容和可见细节。';
     }
     return chat.send(content, imageId, { videoId, imageCount: imageId ? 1 : 0, uploadReady: true, inspectVideo, debugCode, pythonTest });
   }

@@ -74,7 +74,7 @@ class ChatSpaceTests(unittest.TestCase):
             first = self.send(message="工作专用上下文", image_id=image)
             self.send(message="继续解释", conversation=first["conversation_id"])
         self.assertIn("工作专用上下文", self.serialized())
-        self.assertEqual(self.calls[-1]["messages"][0]["content"], WORK_PROMPT)
+        self.assertTrue(self.calls[-1]["messages"][0]["content"].startswith(WORK_PROMPT + "\n"))
         self.assertNotIn("小灵", self.serialized())
         self.assertEqual(self.settings.roles_path.read_bytes(), before)
         self.assertEqual(first["space"], "work")

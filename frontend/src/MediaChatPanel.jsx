@@ -13,7 +13,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
   const [readingFile, setReadingFile] = useState(false);
   const fileInput = useRef(null);
   const busy = readingFile || workflow.busy();
-  const workVideo = !companion && state.kind === 'video';
+  const workMedia = !companion && (state.kind === 'image' || state.kind === 'video');
   const check = chat.localSource?.python_check;
   const ready = !state.kind || (state.kind === 'image' ? state.image.upload?.image_id || state.restoredImageId : state.video.video?.video_id);
   const canSend = chat.persona.configured && !busy && !state.error && ready && (draft.trim() || (state.kind && !chat.conversationId));
@@ -24,11 +24,11 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
     setApprovedFile(null); setTestError('');
     if (fileInput.current) fileInput.current.value = '';
   }
-  useEffect(clearTest, [state.video.video?.video_id]);
+  useEffect(clearTest, [state.kind, state.image.upload?.image_id, state.restoredImageId, state.video.video?.video_id]);
   const send = async () => {
     if (busy) return;
     let pythonTest = null;
-    if (workVideo && (sampleInput || compareOutput || approvedFile)) {
+    if (workMedia && (sampleInput || compareOutput || approvedFile)) {
       pythonTest = { stdin: sampleInput, expected: compareOutput ? expectedOutput : null };
       if (approvedFile) {
         setReadingFile(true);
@@ -97,7 +97,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
       </p>}
       {chat.truncated && <p className="chat-image-note">上一条回复达到长度上限，可以继续追问。</p>}
       {state.kind === 'video' && <p className="chat-image-note">输入「重点看 3–5 秒」可对指定区间补抽，每次最多 5 秒。读题或排错最多使用 4 张高清图。</p>}
-      {workVideo && <details className="python-test">
+      {workMedia && <details className="python-test">
         <summary>Python 验收样例（可选）</summary>
         <p className="chat-image-note">样例仅在本机使用。留空时，常见 Python 异常可能触发一次额外的模型修复请求。</p>
         <label htmlFor="python-stdin">样例输入</label>
@@ -113,6 +113,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
       <textarea id="media-message" maxLength={2000} disabled={busy} value={draft} onChange={event => setDraft(event.target.value)}
         placeholder={chat.conversationId ? '继续追问，或补充你的说明…'
           : state.kind === 'video' ? '输入你的要求，或留空，让助手从视频里判断。'
+          : state.kind === 'image' && workMedia ? '例如：请按照片里的题目写完整的 Python 程序。'
           : '可选：你想了解什么？不填写也可以开始分析。'}/>
       <div className="question-actions media-chat-actions"><span className="cost-note">点击后才调用模型{chat.usage ? chat.replayed ? ' · 已恢复原回复' : ` · 本次${chat.usage.total_tokens} token` : ''}</span>
         <button className="button button-primary" disabled={!canSend} onClick={() => void send()}>{chat.sending ? '正在回复…' : chat.conversationId || !state.kind ? '发送消息 →' : '开始分析 →'}</button>

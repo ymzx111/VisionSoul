@@ -65,9 +65,13 @@ class PythonCheck(BaseModel):
 
 
 def run_python_sandbox(settings: Settings, code: str, test: PythonTest) -> PythonCheck:
-    runtime = settings.python_sandbox_runtime.resolve()
-    if not (runtime / "python.wasm").is_file() or not (runtime / "lib").is_dir():
-        return PythonCheck(status="unavailable", detail="本机 Python 沙箱未就绪，本轮未运行。", attempts=0)
+    try:
+        runtime = settings.python_sandbox_runtime.resolve()
+        if not (runtime / "python.wasm").is_file() or not (runtime / "lib").is_dir():
+            return PythonCheck(status="unavailable", detail="本机 Python 沙箱未就绪，本轮未运行。", attempts=0)
+    except OSError:
+        logger.warning("Python 沙箱运行时不可读", exc_info=True)
+        return PythonCheck(status="unavailable", detail="本机 Python 沙箱运行时不可读，请检查权限。", attempts=0)
     if not RUN_LOCK.acquire(blocking=False):
         return PythonCheck(status="busy", detail="已有 Python 沙箱任务运行中，本轮未运行。", attempts=0)
     try:

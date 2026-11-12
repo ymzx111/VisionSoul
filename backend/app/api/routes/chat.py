@@ -175,8 +175,8 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
     local_browser = (request.client and request.client.host in loopback
                      and request.url.hostname in loopback
                      and origin == f"{request.url.scheme}://{request.url.netloc}")
-    if (body.open_in_ide and local_browser and turn["space"] == "work" and turn["video_id"]
-            and not body.inspect_video and not body.debug_code and not turn["replayed"] and not turn["truncated"]):
+    if (body.open_in_ide and local_browser and turn["space"] == "work"
+            and (turn["image_id"] or turn["video_id"]) and not body.inspect_video and not body.debug_code and not turn["replayed"] and not turn["truncated"]):
         def verify_python(code: str) -> PythonCheck:
             return debug_python(service.settings, service.client, turn["user_message"]["content"],
                                 code, body.python_test or PythonTest())

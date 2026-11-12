@@ -123,15 +123,16 @@ test('legacy classification is blocked while paid request is pending', async () 
   await finish(); await sent;
 });
 
-test('only video in the work space requests the IDE and displays its saved path', async () => {
+test('work photos and videos request the IDE and pass sample data', async () => {
   const videoId = '9'.repeat(64);
+  const imageId = '8'.repeat(32);
   const calls = [];
   const localSource = { status: 'opened', detail: '已发送到 PyCharm。', path: 'G:\\VisionSoul\\workspace\\main.py' };
   const fetcher = async (url, options = {}) => {
     if (url.endsWith('/messages')) {
       const body = JSON.parse(options.body);
       calls.push(body);
-      return response({ space: body.space, video_id: body.video_id, conversation_id: workId,
+      return response({ space: body.space, image_id: body.image_id, video_id: body.video_id, conversation_id: workId,
         user_message: { id: 1, role: 'user', content: body.message },
         assistant_message: { id: 2, role: 'assistant', content: '完整程序' },
         local_source: body.open_in_ide ? localSource : null });
@@ -141,13 +142,14 @@ test('only video in the work space requests the IDE and displays its saved path'
   for (const space of ['work', 'companion']) {
     const flow = createChatWorkflow({ fetcher, storage: memory(), mode: 'media', space, makeId: () => workId });
     const pythonTest = { stdin: '21', expected: '42' };
-    assert.equal(await flow.send('请编写程序', null, { videoId, pythonTest }), true);
-    assert.deepEqual(flow.getState().localSource, space === 'work' ? localSource : null);
-    flow.newConversation();
-    assert.equal(flow.getState().localSource, null);
+    for (const [image, video] of [[null, videoId], [imageId, null], [null, null]]) {
+      assert.equal(await flow.send('请编写程序', image, { videoId: video, pythonTest }), true);
+      assert.deepEqual(flow.getState().localSource, space === 'work' && (image || video) ? localSource : null);
+      flow.newConversation();
+      assert.equal(flow.getState().localSource, null);
+    }
   }
-  assert.equal(calls[0].open_in_ide, true);
-  assert.equal(calls[1].open_in_ide, undefined);
-  assert.deepEqual(calls[0].python_test, { stdin: '21', expected: '42' });
-  assert.equal(calls[1].python_test, undefined);
+  assert.deepEqual(calls.map(call => call.open_in_ide), [true, true, undefined, undefined, undefined, undefined]);
+  assert.deepEqual(calls[1].python_test, { stdin: '21', expected: '42' });
+  assert.equal(calls[4].python_test, undefined);
 });

@@ -536,15 +536,15 @@ API：`GET /api/videos/{video_id}/audio` 返回原始、当前对白及版本；
 
 局部候选在本机解码和评分。概览按每秒一帧采样，模型请求最多使用 4 张高清，邻近帧和锐化图占用原高清名额。结果页标注来源，回看、画面观察和音画引用使用实际送入模型的帧时间。局部比对属于启发式方法，实拍中应核对容易误读的字符。用原话题发送“请重新读题”，或点击“细看并比对”可重新分析。详见 [P033](prompts/P033_视频邻近清晰帧与锐化兜底.md)。
 
-## 视频解题与本机编程
+## 图片、视频解题与本机编程
 
-在工作解析上传视频并要求编写完整程序。分析成功且语言和文件声明可校验时，源码按本机日期保存到 workspace/C 或 workspace/Python，例如 2026.11.12.main.c；同日重名加 -2、-3。C++ 与 C 同目录，Visual Studio 工程文件保存在 backend/storage/ide_projects。分析后会自动打开本机编辑器。C/C++ 使用 LOCAL_VISUAL_STUDIO 指定的 Visual Studio，按 Ctrl+F5 运行生成的控制台项目。Python 默认用当前解释器的 IDLE，选择 Run → Run Module，也可用 LOCAL_PYCHARM 指定 PyCharm。
+在工作解析上传题目照片或视频，并要求编写完整程序。分析成功且语言和文件声明可校验时，源码按本机日期保存到 workspace/C 或 workspace/Python，例如 2026.11.12.main.c；同日重名加 -2、-3。C++ 与 C 同目录，Visual Studio 工程文件保存在 backend/storage/ide_projects。分析后会自动打开本机编辑器。C/C++ 使用 LOCAL_VISUAL_STUDIO 指定的 Visual Studio，按 Ctrl+F5 运行生成的控制台项目。Python 默认用当前解释器的 IDLE，选择 Run → Run Module，也可用 LOCAL_PYCHARM 指定 PyCharm。
 
 路径写入 backend/.env，参照 backend/.env.example。网页返回源码绝对路径。详见 [P043](prompts/P043_视频解题打开本机编程界面.md)。
 
 ## Python 隔离试跑（P045）
 
-在“工作解析”上传视频并要求写 Python。分析得到完整源码后，自动在本机 WASI 沙箱运行，页面显示退出状态、输出和错误。需要对照题目样例时，发送前展开“Python 验收样例（可选）”，填写标准输入，勾选并填写预期输出。可明确选取一个 TXT、CSV 或 JSON 文件供本轮只读使用，代码通过文件名读取它。验收数据不会发给模型。
+在“工作解析”上传题目照片或视频并要求写 Python。分析得到完整源码后，自动在本机 WASI 沙箱运行，页面显示退出状态、输出和错误。需要对照题目样例时，发送前展开“Python 验收样例（可选）”，填写标准输入，勾选并填写预期输出。可明确选取一个 TXT、CSV 或 JSON 文件供本轮只读使用，代码通过文件名读取它。验收数据不会发给模型。
 
 试跑使用临时目录，禁用联网、宿主文件访问和子进程，限制时间、内存与输出，结束后清理。沙箱不可用时停止试跑。默认仅在未提交验收数据且出现可识别的常见 Python 异常时，最多发起一次 DeepSeek 修复请求。修复版在新沙箱中运行成功后另存，初版仍保留。没有预期输出时仅报告运行情况。首版面向常规 Python 标准库控制台练习。
 
