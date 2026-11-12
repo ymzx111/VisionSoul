@@ -13,7 +13,10 @@ from xml.sax.saxutils import escape
 
 from app.core.config import Settings
 from app.services.python_sandbox import PythonCheck
-from app.services.source_files import FILE_DECLARATION, parse_generated_code, save_dated_source, source_directory, write_source
+from app.services.source_files import (
+    CODE_REQUEST, FENCE_BLOCK, FILE_DECLARATION, parse_generated_code, parse_generated_code_or_infer,
+    save_dated_source, source_directory, write_source,
+)
 
 logger = logging.getLogger(__name__)
 CODE_DELIVERY_TASK = (Path(__file__).resolve().parents[1] / "prompts" / "code_delivery.md").read_text(encoding="utf-8").strip()
@@ -76,10 +79,21 @@ def open_generated_source(settings: Settings, turn: dict,
                           verify_python: Callable[[str], PythonCheck] | None = None,
                           verify_c: Callable[[str, str], PythonCheck] | None = None) -> dict | None:
     reply = turn["assistant_message"]["content"]
-    if not FILE_DECLARATION.search(reply):
-        return None
+    requested = bool(CODE_REQUEST.search(((turn.get("user_message") or {}).get("content") or "")))
+    declared = bool(FILE_DECLARATION.search(reply))
+    if declared:
+        parser, required = parse_generated_code, True
+    elif FENCE_BLOCK.search(reply):
+        # 只有代码块没有文件名：按语言推断；用户没要代码时解析失败就安静跳过。
+        parser, required = parse_generated_code_or_infer, requested
+    else:
+        if not requested:
+            return None
+        return {"status": "error", "detail": (
+            "本次回复没有给出完整源码（需要 [文件名: main.py] 加一个完整代码块），未保存也未打开编辑器；"
+            "回复“请给出完整源码”可以重试。")}
     try:
-        filename, code = parse_generated_code(reply)
+        filename, code = parser(reply)
         extension = Path(filename).suffix
         if extension == ".py":
             if verify_python is None:
@@ -100,7 +114,11 @@ def open_generated_source(settings: Settings, turn: dict,
         target = save_dated_source(workspace, filename, code,
                                    encoding="utf-8-sig" if ide == "Visual Studio" else "utf-8")
     except ValueError as exc:
-        return {"status": "error", "detail": str(exc)}
+        if not required:
+            return None
+        # 明确告诉用户为什么没有跳到编辑器，并给出可以直接重试的说法。
+        return {"status": "error",
+                "detail": f"{exc} 本轮未保存也未打开编辑器，回复“请给出完整源码”可以重试。"}
     except OSError:
         logger.warning("本机源码写入失败", exc_info=True)
         return {"status": "error", "detail": "源码写入失败，请检查 workspace 写入权限。"}

@@ -104,9 +104,11 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
     <div className="chat-composer">
       {chat.persona.configured === false && <p className="notice notice-warning">模型尚未配置。</p>}
       {chat.error && <div className="notice notice-error" role="alert">{chat.error}</div>}
-      {chat.localSource && <p className="chat-image-note" role="status">
-        {chat.localSource.detail}{chat.localSource.path && <> <code>{chat.localSource.path}</code></>}
-      </p>}
+      {chat.localSource && (chat.localSource.status === 'error'
+        ? <p className="notice notice-error" role="alert">{chat.localSource.detail}</p>
+        : <p className="chat-image-note" role="status">
+            {chat.localSource.detail}{chat.localSource.path && <> <code>{chat.localSource.path}</code></>}
+          </p>)}
       {chat.truncated && <p className="chat-image-note">上一条回复达到长度上限，可以继续追问。</p>}
       {state.kind === 'video' && <p className="chat-image-note">输入「重点看 3–5 秒」可对指定区间补抽，每次最多 5 秒。读题或排错最多使用 4 张高清图。</p>}
       {workMedia && <details className="python-test">

@@ -32,7 +32,7 @@ from app.services.video_debug import CodeDebugReport, debug_reply
 from app.services.video_tasks import AUTO_VIDEO_TASK, task_prompt
 from app.services.local_ide import CODE_DELIVERY_TASK
 from app.services.video_reading import DetailSelection, FrameAdjustment, READING_TASK, parse_focus_range, valid_focus_range, wants_text_detail
-from app.services.video_result import decode_video_result, result_failure
+from app.services.video_result import decode_video_result, result_failure, sanitize_video_result
 
 logger = logging.getLogger(__name__)
 VIDEO_TASK = (Path(__file__).resolve().parents[1] / "prompts" / "video.md").read_text(encoding="utf-8").strip()
@@ -338,7 +338,7 @@ class VideoService:
         try:
             if reply.truncated:
                 raise ValueError("truncated")
-            raw = decode_video_result(reply.answer)
+            raw = sanitize_video_result(decode_video_result(reply.answer))
             stage = "schema"
             content = VideoContent.model_validate(raw)
             stage = "evidence"

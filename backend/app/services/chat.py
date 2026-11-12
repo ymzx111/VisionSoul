@@ -77,10 +77,12 @@ class ChatService:
             if effective_space not in {"work", "companion"}:
                 raise DeepSeekError("请选择工作解析或角色对话。", 422)
             if not message.strip():
-                if conversation_id or not video_id or image_id or inspect_video or debug_code:
-                    raise DeepSeekError("请填写消息，或上传新视频后点击开始分析。", 422)
+                # 新上传的图片或视频允许留空：直接按素材内容分析，不用先想问题。
+                fresh_media = bool(video_id or image_id) and not conversation_id
+                if not fresh_media or inspect_video or debug_code:
+                    raise DeepSeekError("请填写消息，或上传新的图片/视频后再开始分析。", 422)
                 message = ""
-            display_message = message or "分析这段视频"
+            display_message = message or ("分析这段视频" if video_id else "分析这张图片" if image_id else "分析")
             self.store.initialize()
             body = {"conversation_id": conversation_id, "message": message, "image_id": image_id}
             if space is not None:

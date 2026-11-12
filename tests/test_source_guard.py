@@ -6,7 +6,8 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from app.services.source_files import (
-    UnsafeWorkspacePath, ensure_workspace_path, parse_generated_code, save_dated_source,
+    UnsafeWorkspacePath, ensure_workspace_path, parse_generated_code,
+    parse_generated_code_or_infer, save_dated_source,
 )
 
 
@@ -50,6 +51,18 @@ class WorkspacePathGuardTests(unittest.TestCase):
             text = f"[文件名: {filename}]\n{fence}{language}\nclass A {{}}\n{fence}"
             with self.subTest(filename=filename), self.assertRaises(ValueError):
                 parse_generated_code(text)
+
+    def test_missing_filename_is_inferred_from_single_code_block(self):
+        fence = chr(96) * 3
+        self.assertEqual(parse_generated_code_or_infer(f"完整源码如下：\n{fence}python\nprint(1)\n{fence}\n"),
+                         ("main.py", "print(1)\n"))
+        self.assertEqual(parse_generated_code_or_infer(f"{fence}c\nint main(void){{return 0;}}\n{fence}\n")[0],
+                         "main.c")
+        with self.assertRaises(ValueError):
+            parse_generated_code_or_infer(f"{fence}java\nclass A {{}}\n{fence}\n")
+        with self.assertRaises(ValueError):
+            parse_generated_code_or_infer(
+                f"{fence}c\nint main(void){{return 0;}}\n{fence}\n{fence}python\nprint(1)\n{fence}\n")
 
 
 if __name__ == "__main__":

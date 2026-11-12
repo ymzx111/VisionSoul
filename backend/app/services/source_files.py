@@ -24,6 +24,15 @@ DECLARED_LANGUAGES = {"c语言": "c", "c++语言": "cpp", "python语言": "pytho
 FILE_DECLARATION = re.compile(r"^[ \t]*\[文件名[ \t]*[:：]", re.MULTILINE)
 SAFE_FILENAME = re.compile(r"[\w-][\w .-]{0,119}")
 WINDOWS_DEVICE = re.compile(r"CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³]", re.IGNORECASE)
+# 模型漏写文件名时，用唯一代码块的语言推断文件名。
+FENCE_BLOCK = re.compile(
+    r"^[ \t]*(?P<fence>`{3,})[ \t]*(?P<language>[\w+#-]*)[ \t]*\n(?P<code>[\s\S]*?)^[ \t]*(?P=fence)[ \t]*(?:\n|\Z)",
+    re.MULTILINE,
+)
+INFER_FILENAMES = {"python": "main.py", "py": "main.py", "c": "main.c",
+                   "cpp": "main.cpp", "c++": "main.cpp", "cc": "main.cpp"}
+# 用户是否明确要代码；只在这类请求没有拿到源码时才提示，不打扰普通提问。
+CODE_REQUEST = re.compile(r"代码|源码|程序|写出|编写|补全|填空|实现")
 
 
 def parse_generated_code(text: str) -> tuple[str, str]:
@@ -52,6 +61,27 @@ def parse_generated_code(text: str) -> tuple[str, str]:
         raise ValueError("代码块是空的。")
 
     return filename, code
+
+
+def parse_generated_code_or_infer(text: str) -> tuple[str, str]:
+    """先按标准声明解析；模型漏写文件名时，按唯一代码块的语言推断文件名。
+
+    只在"整段回复里恰好一个带语言标签的代码块"时兜底，避免猜错多份源码。
+    """
+    try:
+        return parse_generated_code(text)
+    except ValueError as strict_error:
+        blocks = list(FENCE_BLOCK.finditer(text.replace("\r\n", "\n")))
+        if len(blocks) != 1:
+            raise strict_error
+        block = blocks[0]
+        language = block["language"].strip()
+        filename = INFER_FILENAMES.get(language.lower())
+        code = block["code"]
+        if not filename or not code.strip() or "```" in code:
+            raise strict_error
+        declared = f"[文件名: {filename}]\n```{language}\n{code}```\n"
+        return parse_generated_code(declared)
 
 
 def source_directory(parent: Path, name: str) -> Path:

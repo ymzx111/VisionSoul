@@ -41,6 +41,33 @@ def decode_video_result(answer: str) -> dict:
     return payload
 
 
+OBSERVATION_FIELDS = {"frame_index", "keywords", "description", "uncertain"}
+
+
+def sanitize_video_result(payload: dict) -> dict:
+    """修掉可无损恢复的类型与长度问题，其余仍交给严格校验。
+
+    只做「字符串写成单值关键词」「说明条数超限」「概述或回复超长」这三类兜底；
+    多余字段、非法观察行、依据条数超限仍按原规则报错，避免把模型漂移静默吞掉。
+    """
+    data = dict(payload)
+    observations = data.get("observations")
+    if isinstance(observations, list):
+        fixed = []
+        for row in observations:
+            if isinstance(row, dict) and isinstance(row.get("keywords"), str) and row["keywords"].strip():
+                row = {**row, "keywords": [row["keywords"].strip()[:30]]}
+            fixed.append(row)
+        data["observations"] = fixed
+    if isinstance(data.get("evidence_notes"), list):
+        data["evidence_notes"] = [str(note)[:120] for note in data["evidence_notes"]][:8]
+    for field, limit in (("summary", 240), ("reply", 6000)):
+        value = data.get(field)
+        if isinstance(value, str) and len(value) > limit:
+            data[field] = value[:limit]
+    return data
+
+
 SAFE_FIELDS = {"observations", "frame_index", "keywords", "description", "uncertain", "summary", "reply",
                "comparison", "audio_links", "evidence_notes", "code_debug", "candidate_id", "segment_id",
                "frame_time", "relation", "detail", "content_visible", "target", "category", "verdict",

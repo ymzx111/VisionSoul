@@ -538,7 +538,7 @@ API：`GET /api/videos/{video_id}/audio` 返回原始、当前对白及版本；
 
 ## 图片、视频解题与本机编程
 
-在工作解析上传题目照片或视频，并要求编写完整程序。分析成功且语言和文件声明可校验时，源码按本机日期保存到 workspace/C 或 workspace/Python，例如 2026.11.12.main.c；同日重名加 -2、-3。题目是补全/填空题时，交付的源码会原样保留题面骨架、注释与待填标记，只在空处补全，方便对照原题核对。保存前会校验目标路径必须留在 workspace 目录内，文件名含 ../、绝对路径或跳出目录时直接拦截并报错，不写入任何文件。C++ 与 C 同目录，Visual Studio 工程文件保存在 backend/storage/ide_projects。分析后会自动打开本机编辑器。C/C++ 使用 LOCAL_VISUAL_STUDIO 指定的 Visual Studio，按 Ctrl+F5 运行生成的控制台项目。Python 默认用当前解释器的 IDLE，选择 Run → Run Module，也可用 LOCAL_PYCHARM 指定 PyCharm。
+在工作解析上传题目照片或视频，并要求编写完整程序。新上传的图片或视频可以不写任何文字直接发送，系统按素材内容分析；继续追问、重新细看或代码排错时才需要填写文字。分析成功且语言和文件声明可校验时，源码按本机日期保存到 workspace/C 或 workspace/Python，例如 2026.11.12.main.c；同日重名加 -2、-3。模型漏写文件名但只给了一个带语言的代码块时，会按语言推断文件名后继续保存；确实没有可用源码时页面会明确说明原因，并提示回复"请给出完整源码"重试。题目是补全/填空题时，交付的源码会原样保留题面骨架、注释与待填标记，只在空处补全，方便对照原题核对。保存前会校验目标路径必须留在 workspace 目录内，文件名含 ../、绝对路径或跳出目录时直接拦截并报错，不写入任何文件。C++ 与 C 同目录，Visual Studio 工程文件保存在 backend/storage/ide_projects。分析后会自动打开本机编辑器。C/C++ 使用 LOCAL_VISUAL_STUDIO 指定的 Visual Studio，按 Ctrl+F5 运行生成的控制台项目。Python 默认用当前解释器的 IDLE，选择 Run → Run Module，也可用 LOCAL_PYCHARM 指定 PyCharm。
 
 路径写入 backend/.env，参照 backend/.env.example。网页返回源码绝对路径。详见 [P043](prompts/P043_视频解题打开本机编程界面.md)。
 
