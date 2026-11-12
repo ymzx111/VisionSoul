@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     local_source_workspace: Path = Path(__file__).resolve().parents[3] / "workspace"
     local_pycharm: Path | None = None
     local_visual_studio: Path | None = None
+    python_sandbox_enabled: bool = True
+    python_sandbox_auto_repair: bool = True
+    python_sandbox_runtime: Path = Path(__file__).resolve().parents[2] / "storage" / "sandbox-runtime" / "3.13.17"
 
     @field_validator("video_max_frames", mode="before")
     @classmethod

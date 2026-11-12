@@ -1,4 +1,6 @@
 """命令行和本机编程入口共用的源码提取与写入。"""
+from datetime import date
+from itertools import count
 from pathlib import Path
 import re
 
@@ -76,4 +78,22 @@ def write_source(target: Path, code: str, *, encoding: str = "utf-8") -> Path:
             target.unlink(missing_ok=True)
         raise
     return target
+
+
+def save_dated_source(workspace: Path, filename: str, code: str, *, encoding: str = "utf-8") -> Path:
+    """按语言保存源码，并为同日同名的结果分配序号。文件名需先通过提取校验。"""
+    source = Path(filename)
+    if source.suffix == ".py":
+        folder = source_directory(workspace, "Python")
+    elif source.suffix in {".c", ".cpp", ".cc", ".cxx"}:
+        folder = source_directory(workspace, "C")
+    else:
+        folder = workspace  # 保留命令行原有的其他语言支持。
+    dated_stem = f"{date.today():%Y.%m.%d}.{source.stem}"
+    for number in count(1):
+        stem = dated_stem if number == 1 else f"{dated_stem}-{number}"
+        try:
+            return write_source(folder / f"{stem}{source.suffix}", code, encoding=encoding)
+        except FileExistsError:
+            continue
 

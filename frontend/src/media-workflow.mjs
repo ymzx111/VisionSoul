@@ -107,7 +107,7 @@ export function createMediaWorkflow({ fetcher = globalThis.fetch, storage = glob
     reconciling = false; return true;
   }
 
-  async function send(message, { inspectVideo = false, debugCode = false } = {}) {
+  async function send(message, { inspectVideo = false, debugCode = false, pythonTest = null } = {}) {
     if (disposed || busy() || own.error) return false;
     const current = chat.getState();
     const imageId = own.kind === 'image' ? image.getState().upload?.image_id || own.restoredImageId : null;
@@ -120,7 +120,7 @@ export function createMediaWorkflow({ fetcher = globalThis.fetch, storage = glob
       else if (inspectVideo) content = '请概括视频画面与对白，分别说明能确认和不确定的内容。';
       else if (imageId) content = '请说明这张图片的主要内容和可见细节。';
     }
-    return chat.send(content, imageId, { videoId, imageCount: imageId ? 1 : 0, uploadReady: true, inspectVideo, debugCode });
+    return chat.send(content, imageId, { videoId, imageCount: imageId ? 1 : 0, uploadReady: true, inspectVideo, debugCode, pythonTest });
   }
 
   return { image, video, chat, getState: () => snapshot, subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },

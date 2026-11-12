@@ -538,6 +538,19 @@ API：`GET /api/videos/{video_id}/audio` 返回原始、当前对白及版本；
 
 ## 视频解题与本机编程
 
-在工作解析上传视频并要求编写完整程序。分析成功且语言和文件声明可校验时，源码保存到项目的 workspace 下，并自动打开本机编辑器。C/C++ 使用 LOCAL_VISUAL_STUDIO 指定的 Visual Studio，按 Ctrl+F5 运行生成的控制台项目。Python 默认用当前解释器的 IDLE，选择 Run → Run Module，也可用 LOCAL_PYCHARM 指定 PyCharm。
+在工作解析上传视频并要求编写完整程序。分析成功且语言和文件声明可校验时，源码按本机日期保存到 workspace/C 或 workspace/Python，例如 2026.11.12.main.c；同日重名加 -2、-3。C++ 与 C 同目录，Visual Studio 工程文件保存在 backend/storage/ide_projects。分析后会自动打开本机编辑器。C/C++ 使用 LOCAL_VISUAL_STUDIO 指定的 Visual Studio，按 Ctrl+F5 运行生成的控制台项目。Python 默认用当前解释器的 IDLE，选择 Run → Run Module，也可用 LOCAL_PYCHARM 指定 PyCharm。
 
 路径写入 backend/.env，参照 backend/.env.example。网页返回源码绝对路径。详见 [P043](prompts/P043_视频解题打开本机编程界面.md)。
+
+## Python 隔离试跑（P045）
+
+在“工作解析”上传视频并要求写 Python。分析得到完整源码后，自动在本机 WASI 沙箱运行，页面显示退出状态、输出和错误。需要对照题目样例时，发送前展开“Python 验收样例（可选）”，填写标准输入，勾选并填写预期输出。可明确选取一个 TXT、CSV 或 JSON 文件供本轮只读使用，代码通过文件名读取它。验收数据不会发给模型。
+
+试跑使用临时目录，禁用联网、宿主文件访问和子进程，限制时间、内存与输出，结束后清理。沙箱不可用时停止试跑。默认仅在未提交验收数据且出现可识别的常见 Python 异常时，最多发起一次 DeepSeek 修复请求。修复版在新沙箱中运行成功后另存，初版仍保留。没有预期输出时仅报告运行情况。首版面向常规 Python 标准库控制台练习。
+
+首次安装从项目根目录运行：
+
+    .\.venv\Scripts\python.exe -m pip install -r .\backend\requirements-sandbox.txt
+    .\.venv\Scripts\python.exe .\tools\install_python_sandbox.py
+
+安装脚本校验运行时压缩包的 SHA-256。沙箱运行时保存在忽略目录 backend/storage 下。可在 backend/.env 设置 PYTHON_SANDBOX_ENABLED=false 或 PYTHON_SANDBOX_AUTO_REPAIR=false。详见 [P045](prompts/P045_Python隔离试跑与自动修复.md)。

@@ -107,7 +107,7 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
       usage: null, truncated: false, replayed: false, localSource: null, error: '', hasOlder: false });
     return true;
   }
-  async function send(message, imageId = null, { imageCount = imageId ? 1 : 0, uploadReady = true, videoId = null, inspectVideo = false, debugCode = false } = {}) {
+  async function send(message, imageId = null, { imageCount = imageId ? 1 : 0, uploadReady = true, videoId = null, inspectVideo = false, debugCode = false, pythonTest = null } = {}) {
     if (state.sending || state.loading || disposed) return false;
     if (inspectVideo && debugCode) { publish({ error: '一次请选择一种视频分析任务。' }); return false; }
     if ((mode === 'video' || (mode === 'media' && !imageId && (videoId || state.videoId))) && (!uploadReady || (!videoId && !state.videoId))) {
@@ -127,7 +127,10 @@ export function createChatWorkflow({ fetcher = globalThis.fetch, storage = brows
     if (mode === 'video' || (mode === 'media' && (videoId || state.videoId))) body.video_id = videoId || state.videoId;
     if (body.video_id && inspectVideo) body.inspect_video = true;
     if (body.video_id && debugCode) body.debug_code = true;
-    if (mode === 'media' && space === 'work' && body.video_id && !inspectVideo && !debugCode) body.open_in_ide = true;
+    if (mode === 'media' && space === 'work' && body.video_id && !inspectVideo && !debugCode) {
+      body.open_in_ide = true;
+      if (pythonTest) body.python_test = pythonTest;
+    }
     const fingerprint = JSON.stringify(body);
     if (!retry || retry.fingerprint !== fingerprint) retry = { fingerprint, request_id: makeId() };
     const current = epoch;

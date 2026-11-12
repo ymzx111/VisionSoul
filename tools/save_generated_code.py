@@ -4,17 +4,17 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
-from app.services.source_files import parse_generated_code, source_directory, write_source
+from app.services.source_files import parse_generated_code, save_dated_source, source_directory
 
 
 def save_generated_code(text: str) -> Path:
     filename, code = parse_generated_code(text)
     workspace = source_directory(Path.cwd().resolve(), "workspace")
-    return write_source(workspace / filename, code)
+    return save_dated_source(workspace, filename, code)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="提取 AI 回复中的代码并保存到当前目录的 workspace。")
+    parser = argparse.ArgumentParser(description="提取 AI 回复中的代码，按语言和日期保存到当前目录的 workspace。")
     parser.add_argument("reply", nargs="?", type=Path, help="保存了 AI 回复的 UTF-8 文本文件，省略时从标准输入读取。")
     args = parser.parse_args()
 

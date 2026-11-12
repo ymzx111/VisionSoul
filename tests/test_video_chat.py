@@ -1,4 +1,5 @@
 """视频配文、持久话题记忆、一次调用与旧库迁移验证；模型使用模拟传输。"""
+from datetime import date
 from io import BytesIO
 import json
 from pathlib import Path
@@ -202,6 +203,7 @@ class VideoChatTests(unittest.TestCase):
         launcher = root / "pycharm64.exe"
         launcher.touch()
         self.settings.local_pycharm = launcher
+        self.settings.python_sandbox_enabled = False
         self.settings.local_source_workspace = root / "workspace"
         fence = chr(96) * 3
         code = 'print("VisionSoul")\n'
@@ -223,6 +225,8 @@ class VideoChatTests(unittest.TestCase):
             source = response["local_source"]
             self.assertEqual(source["status"], "opened")
             target = Path(source["path"])
+            self.assertEqual(target.parent, root / "workspace" / "Python")
+            self.assertEqual(target.name, f"{date.today():%Y.%m.%d}.main.py")
             self.assertEqual(target.read_text(encoding="utf8"), code)
             self.assertEqual(launch.call_args.args[0], [str(launcher), str(target)])
             self.assertIn("[文件名: main.c]", self.calls[0]["messages"][0]["content"])
@@ -234,6 +238,50 @@ class VideoChatTests(unittest.TestCase):
                                   headers={"Origin": "https://example.invalid"}).json()
             self.assertIsNone(foreign["local_source"])
             launch.assert_called_once()
+
+    def test_python_test_is_local_and_repaired_source_uses_new_file(self):
+        from app.services.python_sandbox import PythonCheck
+
+        root = Path(self.temp.name)
+        launcher = root / "pycharm64.exe"
+        launcher.touch()
+        self.settings.local_pycharm = launcher
+        self.settings.local_source_workspace = root / "workspace"
+        fence = chr(96) * 3
+        original, revised = "print(unknown)\n", "print(42)\n"
+        self.payload["reply"] = f"[文件名: main.py]\n{fence}python\n{original}{fence}"
+        app.dependency_overrides[get_chat_service] = lambda: self.chat
+        self.addCleanup(app.dependency_overrides.clear)
+
+        async def local_app(scope, receive, send):
+            await app({**scope, "client": ("127.0.0.1", 1234)}, receive, send)
+
+        body = {"request_id": "1" * 32, "message": "", "space": "work",
+                "video_id": self.video.video_id, "open_in_ide": True,
+                "python_test": {"approved_file": {"filename": "sample.txt", "content": "LOCAL-CANARY"}}}
+        with TestClient(local_app, base_url="http://127.0.0.1:8765") as client, \
+                patch("app.services.local_ide.launch_ide") as launch, \
+                patch("app.api.routes.chat.debug_python", side_effect=[
+                    PythonCheck(status="passed", detail="通过验收"),
+                    PythonCheck(status="ran", detail="运行成功", attempts=2, repaired_code=revised),
+                ]) as verify:
+            origin = {"Origin": "http://127.0.0.1:8765"}
+            first = client.post("/api/chat/messages", json=body, headers=origin)
+            response = client.post("/api/chat/messages", json={**body, "request_id": "2" * 32, "python_test": None},
+                                   headers=origin)
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.json()["local_source"]["python_check"]["status"], "passed")
+        self.assertEqual(response.status_code, 200, response.text)
+        source = response.json()["local_source"]
+        target = Path(source["path"])
+        self.assertEqual(target.read_text(encoding="utf8"), revised)
+        originals = [file for file in target.parent.glob("*.py") if file != target]
+        self.assertEqual([file.read_text(encoding="utf8") for file in originals], [original, original])
+        self.assertEqual(source["python_check"]["attempts"], 2)
+        self.assertEqual(verify.call_args_list[0].args[-1].approved_file.content, "LOCAL-CANARY")
+        self.assertIsNone(verify.call_args_list[1].args[-1].approved_file)
+        self.assertNotIn("LOCAL-CANARY", repr(self.calls))
+        self.assertEqual(launch.call_args.args[0], [str(launcher), str(target)])
 
     def test_native_source_has_buildable_project_and_falls_back_on_launch_error(self):
         from app.services.local_ide import open_generated_source
@@ -252,8 +300,29 @@ class VideoChatTests(unittest.TestCase):
         self.assertEqual(source["status"], "saved")
         target = Path(source["path"])
         self.assertEqual(target.read_text(encoding="utf-8-sig"), code)
-        self.assertIn('ClCompile Include="main.c"', target.with_name("VisionSoulCode.vcxproj").read_text(encoding="utf8"))
-        self.assertTrue(target.with_name("VisionSoulCode.sln").is_file())
+        self.assertEqual(target.parent, root / "workspace" / "C")
+        self.assertEqual(target.name, f"{date.today():%Y.%m.%d}.main.c")
+        project_dir = root / "ide_projects" / ("a" * 32 + "-2")
+        self.assertIn(f'ClCompile Include="{target}"', (project_dir / "VisionSoulCode.vcxproj").read_text(encoding="utf8"))
+        self.assertTrue((project_dir / "VisionSoulCode.sln").is_file())
+
+    def test_generated_sources_keep_dated_language_paths_and_duplicate_names(self):
+        from app.services.source_files import save_dated_source
+        workspace = Path(self.temp.name) / "workspace"
+        workspace.mkdir()
+        legacy = workspace / "old.c"
+        legacy.write_text("old code", encoding="utf8")
+        with patch("app.services.source_files.date") as calendar:
+            calendar.today.return_value = date(2026, 11, 12)
+            first = save_dated_source(workspace, "main.c", "first")
+            second = save_dated_source(workspace, "main.c", "second")
+            cpp = save_dated_source(workspace, "main.cpp", "cpp")
+            python = save_dated_source(workspace, "main.py", "python")
+        self.assertEqual([path.relative_to(workspace).as_posix() for path in (first, second, cpp, python)],
+                         ["C/2026.11.12.main.c", "C/2026.11.12.main-2.c",
+                          "C/2026.11.12.main.cpp", "Python/2026.11.12.main.py"])
+        self.assertEqual([path.read_text(encoding="utf8") for path in (first, second, legacy)],
+                         ["first", "second", "old code"])
 
     def test_migration_preserves_legacy_rows_and_is_idempotent(self):
         path = Path(self.temp.name) / "legacy.sqlite3"

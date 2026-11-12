@@ -16,6 +16,7 @@ from app.services.deepseek import DeepSeekError, TokenUsage, has_api_key
 from app.services.videos import VideoService, VideoError
 from app.services.audio_evidence import current_context
 from app.services.local_ide import open_generated_source
+from app.services.python_sandbox import PythonCheck, PythonTest, debug_python
 
 router = APIRouter(prefix="/api/chat", tags=["伙伴对话"])
 Identifier = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
@@ -29,6 +30,7 @@ class SendMessage(BaseModel):
     space: ChatSpace = Field(default="companion", title="对话空间", description="工作解析不读取角色或记忆；同话题不能跨空间。")
     inspect_video: bool = Field(default=False,title="重新细看视频并比较候选",description="显式重新发送画面，可能增加模型用量；普通追问为false。")
     open_in_ide: bool = Field(default=False, title="在本机打开生成的源码")
+    python_test: PythonTest | None = Field(default=None, title="本轮本机 Python 验收样例")
     debug_code: bool = Field(default=False,title="从视频辅助排查代码报错",description="显式读取最多4张高清并生成建议，不执行代码；产生API用量。")
     image_id: Identifier | None = Field(default=None, title="可选图片编号", description="一段话题最多关联一张图片。")
     video_id: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None = Field(default=None, title="可选视频编号", description="先上传视频，再与文字一起发送；同话题后续可不再填写。")
@@ -57,6 +59,7 @@ class LocalSourceResult(BaseModel):
     detail: str
     path: str | None = None
     ide: str | None = None
+    python_check: PythonCheck | None = None
 
 
 class ChatTurn(BaseModel):
@@ -162,7 +165,7 @@ def classify_conversation(conversation_id: Annotated[str, Path(pattern=r"^[0-9a-
 @router.post("/messages", response_model=ChatTurn, summary="发送消息给小灵（产生 API 用量）")
 def send_message(body: SendMessage, request: Request, service: Annotated[ChatService, Depends(get_chat_service)]) -> dict:
     try:
-        turn = service.send(**body.model_dump(exclude={"open_in_ide"}))
+        turn = service.send(**body.model_dump(exclude={"open_in_ide", "python_test"}))
     except DeepSeekError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
 
@@ -174,5 +177,10 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
                      and origin == f"{request.url.scheme}://{request.url.netloc}")
     if (body.open_in_ide and local_browser and turn["space"] == "work" and turn["video_id"]
             and not body.inspect_video and not body.debug_code and not turn["replayed"] and not turn["truncated"]):
-        turn["local_source"] = open_generated_source(service.settings, turn)
+        def verify_python(code: str) -> PythonCheck:
+            return debug_python(service.settings, service.client, turn["user_message"]["content"],
+                                code, body.python_test or PythonTest())
+
+        turn["local_source"] = open_generated_source(
+            service.settings, turn, verify_python if service.settings.python_sandbox_enabled else None)
     return turn

@@ -1,5 +1,6 @@
 """将已保存的单份视频解题回复交给本机 IDE。"""
 import ast
+from collections.abc import Callable
 from importlib.util import find_spec
 import logging
 import os
@@ -11,16 +12,17 @@ from uuid import NAMESPACE_URL, uuid5
 from xml.sax.saxutils import escape
 
 from app.core.config import Settings
-from app.services.source_files import FILE_DECLARATION, parse_generated_code, source_directory, write_source
+from app.services.python_sandbox import PythonCheck
+from app.services.source_files import FILE_DECLARATION, parse_generated_code, save_dated_source, source_directory, write_source
 
 logger = logging.getLogger(__name__)
 CODE_DELIVERY_TASK = (Path(__file__).resolve().parents[1] / "prompts" / "code_delivery.md").read_text(encoding="utf-8").strip()
 
 
-def visual_studio_solution(source: Path) -> Path:
+def visual_studio_solution(source: Path, folder: Path) -> Path:
     """为单文件 C/C++ 源码创建可运行的 Win32 控制台项目。"""
-    project = source.with_name("VisionSoulCode.vcxproj")
-    guid = "{" + str(uuid5(NAMESPACE_URL, str(source.parent))).upper() + "}"
+    project = folder / "VisionSoulCode.vcxproj"
+    guid = "{" + str(uuid5(NAMESPACE_URL, str(folder))).upper() + "}"
     write_source(project, f'''<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
@@ -35,11 +37,11 @@ def visual_studio_solution(source: Path) -> Path:
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.props" />
   <ItemDefinitionGroup><Link><SubSystem>Console</SubSystem></Link></ItemDefinitionGroup>
-  <ItemGroup><ClCompile Include="{escape(source.name)}" /></ItemGroup>
+  <ItemGroup><ClCompile Include="{escape(str(source))}" /></ItemGroup>
   <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.targets" />
 </Project>
 ''')
-    solution = source.with_name("VisionSoulCode.sln")
+    solution = folder / "VisionSoulCode.sln"
     write_source(solution, f'''Microsoft Visual Studio Solution File, Format Version 11.00
 # Visual Studio 2010
 Project("{{BC8A1FFA-BEE3-4634-8014-F334798102B3}}") = "VisionSoulCode", "{project.name}", "{guid}"
@@ -70,7 +72,8 @@ def launch_ide(args: list[str], folder: Path) -> None:
     )
 
 
-def open_generated_source(settings: Settings, turn: dict) -> dict | None:
+def open_generated_source(settings: Settings, turn: dict,
+                          verify_python: Callable[[str], PythonCheck] | None = None) -> dict | None:
     reply = turn["assistant_message"]["content"]
     if not FILE_DECLARATION.search(reply):
         return None
@@ -78,10 +81,11 @@ def open_generated_source(settings: Settings, turn: dict) -> dict | None:
         filename, code = parse_generated_code(reply)
         extension = Path(filename).suffix
         if extension == ".py":
-            try:
-                ast.parse(code)
-            except SyntaxError as exc:
-                raise ValueError("Python 代码语法不完整，未生成源文件。") from exc
+            if verify_python is None:
+                try:
+                    ast.parse(code)
+                except SyntaxError as exc:
+                    raise ValueError("Python 代码语法不完整，未生成源文件。") from exc
             launcher = settings.local_pycharm or Path(sys.executable).with_name("pythonw.exe")
             ide = "PyCharm" if settings.local_pycharm else "Python IDLE"
         elif extension in {".c", ".cpp", ".cc", ".cxx"}:
@@ -92,29 +96,38 @@ def open_generated_source(settings: Settings, turn: dict) -> dict | None:
             raise ValueError("自动打开支持 C、C++ 和 Python。")
         root = settings.local_source_workspace
         workspace = source_directory(root.parent.resolve(), root.name)
-        folder = source_directory(workspace, f'{turn["conversation_id"]}-{turn["assistant_message"]["id"]}')
-        target = write_source(folder / filename, code, encoding="utf-8-sig" if ide == "Visual Studio" else "utf-8")
+        target = save_dated_source(workspace, filename, code,
+                                   encoding="utf-8-sig" if ide == "Visual Studio" else "utf-8")
     except ValueError as exc:
         return {"status": "error", "detail": str(exc)}
     except OSError:
         logger.warning("本机源码写入失败", exc_info=True)
         return {"status": "error", "detail": "源码写入失败，请检查 workspace 写入权限。"}
 
-    result = {"path": str(target), "ide": ide}
+    check = verify_python(code) if extension == ".py" and verify_python else None
+    if check and check.repaired_code:
+        try:
+            target = save_dated_source(workspace, filename, check.repaired_code)
+        except (OSError, ValueError):
+            logger.warning("修复版源码保存失败", exc_info=True)
+            check = check.model_copy(update={"detail": "修复版在沙箱试跑成功，但写入失败。当前打开的是原始源码。"})
+    result = {"path": str(target), "ide": ide, "python_check": check}
     if (not launcher or not launcher.is_absolute() or launcher.suffix.lower() != ".exe" or not launcher.is_file()
             or (ide == "Python IDLE" and not (find_spec("idlelib") and find_spec("tkinter")))):
         return {**result, "status": "saved", "detail": f"已保存源码，未找到已配置的 {ide}。"}
     try:
         if ide == "Visual Studio":
-            entry = visual_studio_solution(target)
+            projects = source_directory(settings.chat_database_path.parent.resolve(), "ide_projects")
+            folder = source_directory(projects, f'{turn["conversation_id"]}-{turn["assistant_message"]["id"]}')
+            entry = visual_studio_solution(target, folder)
             file_argument = f'"{target}"' if any(char.isspace() for char in str(target)) else str(target)
             args = [str(launcher), str(entry), "/Command", f"File.OpenFile {file_argument}"]
         elif ide == "Python IDLE":
             args = [str(launcher), "-m", "idlelib", "-e", str(target)]
         else:
             args = [str(launcher), str(target)]
-        launch_ide(args, folder)
-    except (OSError, subprocess.SubprocessError):
+        launch_ide(args, target.parent)
+    except (OSError, ValueError, subprocess.SubprocessError):
         logger.warning("本机 IDE 启动失败", exc_info=True)
         return {**result, "status": "saved", "detail": f"已保存源码，{ide} 打开失败，可手动打开文件。"}
     return {**result, "status": "opened", "detail": f"已发送到 {ide}。"}

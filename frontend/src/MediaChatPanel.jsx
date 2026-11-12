@@ -5,14 +5,50 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
   const chat = state.chat;
   const companion = state.space === 'companion';
   const [legacyId, setLegacyId] = useState('');
-  const busy = workflow.busy();
+  const [sampleInput, setSampleInput] = useState('');
+  const [expectedOutput, setExpectedOutput] = useState('');
+  const [compareOutput, setCompareOutput] = useState(false);
+  const [approvedFile, setApprovedFile] = useState(null);
+  const [testError, setTestError] = useState('');
+  const [readingFile, setReadingFile] = useState(false);
+  const fileInput = useRef(null);
+  const busy = readingFile || workflow.busy();
+  const workVideo = !companion && state.kind === 'video';
+  const check = chat.localSource?.python_check;
   const ready = !state.kind || (state.kind === 'image' ? state.image.upload?.image_id || state.restoredImageId : state.video.video?.video_id);
   const canSend = chat.persona.configured && !busy && !state.error && ready && (draft.trim() || (state.kind && !chat.conversationId));
   const messages = chat.pending ? [...chat.messages, { ...chat.pending, id: 'pending' }] : chat.messages;
   useEffect(() => { if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, [chat.messages, chat.pending]);
+  function clearTest() {
+    setSampleInput(''); setExpectedOutput(''); setCompareOutput(false);
+    setApprovedFile(null); setTestError('');
+    if (fileInput.current) fileInput.current.value = '';
+  }
+  useEffect(clearTest, [state.video.video?.video_id]);
   const send = async () => {
-    const sent = await workflow.send(draft);
-    if (sent) setDraft(value => value === draft ? '' : value);
+    if (busy) return;
+    let pythonTest = null;
+    if (workVideo && (sampleInput || compareOutput || approvedFile)) {
+      pythonTest = { stdin: sampleInput, expected: compareOutput ? expectedOutput : null };
+      if (approvedFile) {
+        setReadingFile(true);
+        try {
+          if (approvedFile.size > 8192 || !/\.(txt|csv|json)$/i.test(approvedFile.name)) throw new Error();
+          const content = new TextDecoder('utf-8', { fatal: true }).decode(await approvedFile.arrayBuffer());
+          pythonTest.approved_file = { filename: approvedFile.name, content };
+        } catch {
+          setTestError('请选择不超过 8 KiB 的 UTF-8 TXT、CSV 或 JSON 文件。');
+          return;
+        } finally {
+          setReadingFile(false);
+        }
+      }
+    }
+    const sent = await workflow.send(draft, { pythonTest });
+    if (sent) {
+      setDraft(value => value === draft ? '' : value);
+      clearTest();
+    }
   };
   return <section className="panel chat-panel video-chat-panel" aria-labelledby="media-chat-heading">
     <div className="panel-heading"><div className="section-heading"><span className="step">02</span><h2 id="media-chat-heading">{companion ? `${chat.persona.name}的对话` : '分析与对话'}</h2></div>
@@ -40,6 +76,14 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
           {item.video_id && <span className="shared-video-chip">▷ 已分享视频</span>}
           {item.image_id && <a href={`/api/images/${item.image_id}`} target="_blank" rel="noreferrer" className="chat-image-link"><img src={`/api/images/${item.image_id}`} width="160" height="110" alt="这一轮分享的图片"/></a>}
           <p data-testid={item.role === 'assistant' ? 'media-analysis-message' : undefined}>{item.content}</p>
+          {check && item.id === chat.messages.at(-1)?.id && <details className="python-check">
+            <summary>Python 隔离验收 · {check.detail}</summary>
+            {check.exit_code != null && <p>退出码 {check.exit_code} · 试跑 {check.attempts} 次</p>}
+            {check.stdout && <><strong>运行输出</strong><pre>{check.stdout}</pre></>}
+            {check.stderr && <><strong>错误输出</strong><pre>{check.stderr}</pre></>}
+            {check.repaired_code && <><strong>修复版源码</strong><pre>{check.repaired_code}</pre></>}
+            {check.repair_usage && <p>修复模型用量 {check.repair_usage.total_tokens} token</p>}
+          </details>}
         </article>)}
         {chat.sending && <div className="companion-thinking"><span className="thinking-dot"/><span className="thinking-dot"/><span className="thinking-dot"/>正在分析与回复…</div>}
       </> : <div className="chat-welcome"><span className="welcome-mark">▷</span><h3>{companion ? `和${chat.persona.name}聊聊吧。` : '一张图片，或一段视频。'}</h3>
@@ -53,6 +97,18 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
       </p>}
       {chat.truncated && <p className="chat-image-note">上一条回复达到长度上限，可以继续追问。</p>}
       {state.kind === 'video' && <p className="chat-image-note">输入「重点看 3–5 秒」可对指定区间补抽，每次最多 5 秒。读题或排错最多使用 4 张高清图。</p>}
+      {workVideo && <details className="python-test">
+        <summary>Python 验收样例（可选）</summary>
+        <p className="chat-image-note">样例仅在本机使用。留空时，常见 Python 异常可能触发一次额外的模型修复请求。</p>
+        <label htmlFor="python-stdin">样例输入</label>
+        <textarea id="python-stdin" maxLength={4096} value={sampleInput} disabled={busy} onChange={event => setSampleInput(event.target.value)}/>
+        <label><input type="checkbox" checked={compareOutput} disabled={busy} onChange={event => setCompareOutput(event.target.checked)}/> 比对预期输出</label>
+        {compareOutput && <textarea aria-label="预期输出" maxLength={4096} value={expectedOutput} disabled={busy} onChange={event => setExpectedOutput(event.target.value)}/>}
+        <label htmlFor="python-test-file">本轮允许读取的文件（TXT、CSV 或 JSON，最多 8 KiB）</label>
+        <input id="python-test-file" ref={fileInput} type="file" accept=".txt,.csv,.json" disabled={busy}
+          onChange={event => { setApprovedFile(event.target.files?.[0] || null); setTestError(''); }}/>
+        {testError && <p className="notice notice-error" role="alert">{testError}</p>}
+      </details>}
       <label className="sr-only" htmlFor="media-message">问题或补充说明</label>
       <textarea id="media-message" maxLength={2000} disabled={busy} value={draft} onChange={event => setDraft(event.target.value)}
         placeholder={chat.conversationId ? '继续追问，或补充你的说明…'

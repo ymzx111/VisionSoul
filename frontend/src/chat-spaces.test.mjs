@@ -140,11 +140,14 @@ test('only video in the work space requests the IDE and displays its saved path'
   };
   for (const space of ['work', 'companion']) {
     const flow = createChatWorkflow({ fetcher, storage: memory(), mode: 'media', space, makeId: () => workId });
-    assert.equal(await flow.send('请编写程序', null, { videoId }), true);
+    const pythonTest = { stdin: '21', expected: '42' };
+    assert.equal(await flow.send('请编写程序', null, { videoId, pythonTest }), true);
     assert.deepEqual(flow.getState().localSource, space === 'work' ? localSource : null);
     flow.newConversation();
     assert.equal(flow.getState().localSource, null);
   }
   assert.equal(calls[0].open_in_ide, true);
   assert.equal(calls[1].open_in_ide, undefined);
+  assert.deepEqual(calls[0].python_test, { stdin: '21', expected: '42' });
+  assert.equal(calls[1].python_test, undefined);
 });
