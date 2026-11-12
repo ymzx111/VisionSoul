@@ -90,7 +90,7 @@ class VideoEvidence(BaseModel):
     summary: str = Field(min_length=1, max_length=240, title="视频概述")
     comparison: Comparison | None = Field(default=None, title="多视角辨识与候选比对")
     audio_links: list[AudioLink] = Field(default_factory=list, max_length=MAX_AUDIO_LINKS, title="音画依据关系（模型判断）")
-    evidence_notes: list[str] = Field(default_factory=list, max_length=4, title="依据处理说明")
+    evidence_notes: list[str] = Field(default_factory=list, max_length=8, title="依据处理说明")
     code_debug: CodeDebugReport | None = None
     detail_selection: DetailSelection | None = None
 
@@ -342,13 +342,16 @@ class VideoService:
             stage = "schema"
             content = VideoContent.model_validate(raw)
             stage = "evidence"
-            content.audio_links, content.evidence_notes = normalize_model_links(content.audio_links, info.audio, frames)
+            normalized_links, auto_notes = normalize_model_links(content.audio_links, info.audio, frames)
+            content.audio_links = normalized_links
+            # 保留模型自己写的依据说明，再把本机校验产生的说明追加在后面。
+            content.evidence_notes = list(content.evidence_notes) + auto_notes
             if transcript_warnings(info.audio):
                 content.evidence_notes.append('部分自动转写待校对，分析已遮蔽异常文字；可回听并校对白。')
             if len(content.audio_links) > 4:
                 content.evidence_notes.append(f"已保存{len(content.audio_links)}条音画依据，页面默认展示前4条，其余可展开。")
-            # evidence_notes 上限 4 条，保留最前面的关键提示，避免写回时超限。
-            content.evidence_notes = content.evidence_notes[:4]
+            # evidence_notes 上限 8 条，保留最前面的关键提示，避免写回时超限。
+            content.evidence_notes = content.evidence_notes[:8]
             if debug_code and content.code_debug is None:
                 raise ValueError('missing code debug report')
             if inspect and not debug_code and content.comparison is None:

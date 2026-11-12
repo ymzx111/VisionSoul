@@ -39,12 +39,26 @@ class ModelNormalizationTests(unittest.TestCase):
         result = self.videos.analyze(self.info.video_id)
         self.assertEqual(result.audio_links, [])
         self.assertTrue(any('未给出对白依据' in note for note in result.evidence_notes))
-        self.assertLessEqual(len(result.evidence_notes), 4)
+        self.assertLessEqual(len(result.evidence_notes), 8)
         self.assertEqual(len(self.calls), 1)
         # 缓存回读仍按严格规则校验，不因本轮放宽而改变旧记录要求。
         restored = VideoService(self.settings, self.client).analyze(self.info.video_id)
         self.assertTrue(restored.cached)
         self.assertEqual(restored.audio_links, [])
+
+    def test_audio_prompt_requires_links_and_allows_no_speech_note(self):
+        from app.services.audio_evidence import audio_prompt
+        text = audio_prompt(self.audio, self.videos.info(self.info.video_id).frames)
+        self.assertIn('audio_links', text)
+        self.assertIn('画面已足够', text)
+        self.assertIn('最多 8 条', text)
+        self.assertIn('evidence_notes', text)
+
+    def test_model_may_return_up_to_eight_evidence_notes(self):
+        self.payload['evidence_notes'] = [f'说明{i}' for i in range(6)]
+        result = self.videos.analyze(self.info.video_id)
+        self.assertTrue(any(note.startswith('说明') for note in result.evidence_notes))
+        self.assertLessEqual(len(result.evidence_notes), 8)
 
     def test_invalid_fifth_link_cannot_hide_behind_ui_limit(self):
         self.payload['audio_links'] = [deepcopy(self.link) for _ in range(4)] + [{**self.link, 'candidate_id': 0, 'frame_time': 0}]

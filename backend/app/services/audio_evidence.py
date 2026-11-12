@@ -189,7 +189,18 @@ def audio_prompt(transcript: AudioTranscript, frames):
         rows.append(f"{row}\n近:{labels('primary')}；补:{labels('secondary')}")
     label = "用户校对白（优先于旧转写与历史回复，仍需按画面核对）" if transcript.source == "corrected" else "自动转写（可能有误）"
     warning = '部分分段存在重复/时间密度异常，已遮蔽待校对文字；不得猜测原文。\n' if warnings else ''
-    return warning + label + "（原视频秒数；近±1.5秒，补±3秒，仅为时间候选）：\n" + "\n".join(rows)
+    requirement = (
+        '\n输出要求：JSON 顶层加 "audio_links" 数组，元素形如 '
+        '{"segment_id":0,"candidate_id":0,"relation":"supports","detail":"不超过40字的依据","content_visible":false}。\n'
+        '- segment_id 只能用上面的 S 编号；画面位置优先写 candidate_id（C 编号），也可写 frame_index 与 frame_time，'
+        '但必须取自同一段列出的候选，不要自己算时间。\n'
+        '- relation 取 supports（对白与画面一致）/contradicts（冲突）/uncertain（存疑）/audio_only（只有对白、画面未验证）；'
+        'audio_only 不要带 candidate_id、frame_index 或 frame_time。\n'
+        '- 只凭对白理解的内容写 audio_only，不要当成已经看见的画面；detail 写具体依据，不要编造对白。最多 8 条，按重要性排序。\n'
+        '- 若判断画面已足够、无需引用对白，audio_links 返回 []（不要硬凑依据），并在 evidence_notes 写一条短说明，'
+        '例如"画面已足够，未引用对白"；evidence_notes 每项不超过40字，最多4条。'
+    )
+    return warning + label + "（原视频秒数；近±1.5秒，补±3秒，仅为时间候选）：\n" + "\n".join(rows) + requirement
 
 
 def add_time_citations(reply: str, question: str, transcript: AudioTranscript, links) -> str:
