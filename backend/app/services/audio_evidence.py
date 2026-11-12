@@ -100,10 +100,9 @@ def frame_candidates(segment: SpeechSegment, frames):
 
 
 def validate_links(links, transcript: AudioTranscript, frames):
+    """校验每条引用的有效性；没给依据不算错误，由调用方标注提醒。"""
     if len(links) > MAX_AUDIO_LINKS:
         raise ValueError("音画依据数量过多")
-    if transcript.status == "ready" and not links:
-        raise ValueError("缺少对白依据")
     for link in links:
         if link.segment_id >= len(transcript.segments):
             raise ValueError("引用了不存在的对白")
@@ -126,7 +125,12 @@ def validate_links(links, transcript: AudioTranscript, frames):
 
 def normalize_model_links(links, transcript: AudioTranscript, frames):
     """仅在新模型回复入口保守清理；缓存读取仍严格校验，不修改原始对白。"""
-    if not links or len(links) > MAX_AUDIO_LINKS:
+    if not links:
+        # 有语音但模型没给对白依据时不再整轮丢弃：保留本轮结果并明确标注。
+        if transcript.status == "ready":
+            return [], ["视频有语音，但本轮回复未给出对白依据；结论只依据画面与你的文字，如需以语音为准可指出时间或先校对白。"]
+        return [], []
+    if len(links) > MAX_AUDIO_LINKS:
         validate_links(links, transcript, frames)
     normalized = []
     cleared = 0

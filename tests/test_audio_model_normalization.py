@@ -5,6 +5,7 @@ import unittest
 import test_audio_evidence as audio_tests
 from app.services.audio_evidence import AudioLink, normalize_model_links, validate_links
 from app.services.deepseek import DeepSeekError
+from app.services.videos import VideoService
 
 
 class ModelNormalizationTests(unittest.TestCase):
@@ -32,6 +33,18 @@ class ModelNormalizationTests(unittest.TestCase):
         self.assertIsNone(link.frame_time)
         self.assertIn('去除多余画面绑定', result.evidence_notes[0])
         self.assertEqual(len(self.calls), 1)
+
+    def test_missing_audio_links_keeps_result_with_boundary_note(self):
+        self.payload.pop('audio_links', None)
+        result = self.videos.analyze(self.info.video_id)
+        self.assertEqual(result.audio_links, [])
+        self.assertTrue(any('未给出对白依据' in note for note in result.evidence_notes))
+        self.assertLessEqual(len(result.evidence_notes), 4)
+        self.assertEqual(len(self.calls), 1)
+        # 缓存回读仍按严格规则校验，不因本轮放宽而改变旧记录要求。
+        restored = VideoService(self.settings, self.client).analyze(self.info.video_id)
+        self.assertTrue(restored.cached)
+        self.assertEqual(restored.audio_links, [])
 
     def test_invalid_fifth_link_cannot_hide_behind_ui_limit(self):
         self.payload['audio_links'] = [deepcopy(self.link) for _ in range(4)] + [{**self.link, 'candidate_id': 0, 'frame_time': 0}]

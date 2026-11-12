@@ -347,6 +347,8 @@ class VideoService:
                 content.evidence_notes.append('部分自动转写待校对，分析已遮蔽异常文字；可回听并校对白。')
             if len(content.audio_links) > 4:
                 content.evidence_notes.append(f"已保存{len(content.audio_links)}条音画依据，页面默认展示前4条，其余可展开。")
+            # evidence_notes 上限 4 条，保留最前面的关键提示，避免写回时超限。
+            content.evidence_notes = content.evidence_notes[:4]
             if debug_code and content.code_debug is None:
                 raise ValueError('missing code debug report')
             if inspect and not debug_code and content.comparison is None:

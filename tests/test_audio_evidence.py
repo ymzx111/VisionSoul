@@ -78,8 +78,8 @@ class AlignmentTests(unittest.TestCase):
                      AudioLink(segment_id=0, frame_index=0, frame_time=11, relation="audio_only", detail="伪造来源")]:
             with self.assertRaises(ValueError):
                 validate_links([link], audio, frames)
-        with self.assertRaises(ValueError):
-            validate_links([], audio, frames)
+        # 没有给出对白依据不算无效引用：由 normalize_model_links 标注提醒，不丢弃整轮结果。
+        validate_links([], audio, frames)
 
     def test_transcript_rejects_nan_nonmonotonic_and_wrong_status(self):
         for payload in [{"status": "ready", "segments": []}, {"status": "no_speech", "segments": [{"id": 0, "start": 0, "end": 1, "text": "词"}]},
