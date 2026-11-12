@@ -6,7 +6,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from app.services.source_files import (
-    UnsafeWorkspacePath, ensure_workspace_path, save_dated_source,
+    UnsafeWorkspacePath, ensure_workspace_path, parse_generated_code, save_dated_source,
 )
 
 
@@ -39,6 +39,17 @@ class WorkspacePathGuardTests(unittest.TestCase):
             ensure_workspace_path(self.workspace / ".." / "main.py", self.workspace)
         self.assertEqual(ensure_workspace_path(self.workspace / "Python" / "main.py", self.workspace),
                          self.workspace / "Python" / "main.py")
+
+    def test_only_python_c_and_cpp_are_accepted(self):
+        fence = chr(96) * 3
+        for filename, language in (("main.py", "python"), ("main.c", "c"), ("main.cpp", "c++")):
+            text = f"[文件名: {filename}]\n{fence}{language}\nint main(void){{return 0;}}\n{fence}"
+            with self.subTest(filename=filename):
+                self.assertEqual(parse_generated_code(text)[0], filename)
+        for filename, language in (("main.cs", "csharp"), ("main.cs", "c#"), ("main.java", "java")):
+            text = f"[文件名: {filename}]\n{fence}{language}\nclass A {{}}\n{fence}"
+            with self.subTest(filename=filename), self.assertRaises(ValueError):
+                parse_generated_code(text)
 
 
 if __name__ == "__main__":

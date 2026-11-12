@@ -1,4 +1,4 @@
-"""C 隔离编译验收：宿主机编译成 wasm，WASI 沙箱运行，多组断言与三次修复。"""
+"""C / C++ 隔离编译验收：宿主机编译成 wasm，WASI 沙箱运行，多组断言与三次修复。"""
 import json
 from pathlib import Path
 import sys
@@ -12,7 +12,7 @@ from app.services.c_sandbox import debug_c, run_c_sandbox
 from app.services.deepseek import ModelReply
 from app.services.python_sandbox import CaseSpec, PythonCheck, PythonTest
 
-GOOD_CODE = """#include <stdio.h>
+C_CODE = """#include <stdio.h>
 int main(void)
 {
     char ch;
@@ -28,6 +28,30 @@ int main(void)
     return 0;
 }
 """
+
+CPP_CODE = """#include <iostream>
+
+int main()
+{
+    char ch;
+    if (!(std::cin >> ch)) {
+        return 0;
+    }
+    if (ch >= 'A' && ch <= 'Z') {
+        ch = (char)(ch - 'A' + 'a');
+    } else if (ch >= 'a' && ch <= 'z') {
+        ch = (char)(ch - 'a' + 'A');
+    }
+    std::cout << ch << std::endl;
+    return 0;
+}
+"""
+
+CASES = [
+    CaseSpec(name="小写转大写", stdin="a", expected="A"),
+    CaseSpec(name="大写转小写", stdin="Q", expected="q"),
+    CaseSpec(name="非字母不变", stdin="5", expected="5"),
+]
 
 
 class CSandboxTests(unittest.TestCase):
@@ -47,24 +71,26 @@ class CSandboxTests(unittest.TestCase):
 
     def test_compiles_and_runs_multiple_cases(self):
         self.require_compiler()
-        test = PythonTest(cases=[
-            CaseSpec(name="小写转大写", stdin="a", expected="A"),
-            CaseSpec(name="大写转小写", stdin="Q", expected="q"),
-            CaseSpec(name="非字母不变", stdin="5", expected="5"),
-        ])
-        result = run_c_sandbox(self.settings, GOOD_CODE, test)
+        result = run_c_sandbox(self.settings, C_CODE, "c", PythonTest(cases=CASES))
         self.jobs_empty()
         self.assertEqual(result.status, "passed", result.detail)
         self.assertEqual([row.status for row in result.case_results], ["passed"] * 3)
 
-        wrong = run_c_sandbox(self.settings, GOOD_CODE,
+        wrong = run_c_sandbox(self.settings, C_CODE, "c",
                               PythonTest(cases=[CaseSpec(name="故意错", stdin="a", expected="a")]))
         self.assertEqual(wrong.status, "mismatch")
 
+    def test_cpp_compiles_and_runs_multiple_cases(self):
+        self.require_compiler()
+        result = run_c_sandbox(self.settings, CPP_CODE, "cpp", PythonTest(cases=CASES))
+        self.jobs_empty()
+        self.assertEqual(result.status, "passed", result.detail)
+        self.assertEqual([row.status for row in result.case_results], ["passed"] * 3)
+
     def test_compile_error_is_reported_without_running(self):
         self.require_compiler()
-        broken = GOOD_CODE.replace('printf("%c\\n", ch);', 'printf("%c\\n", ch)')
-        result = run_c_sandbox(self.settings, broken, PythonTest())
+        broken = C_CODE.replace('printf("%c\\n", ch);', 'printf("%c\\n", ch)')
+        result = run_c_sandbox(self.settings, broken, "c", PythonTest())
         self.assertEqual(result.status, "failed")
         self.assertEqual(result.phase, "compile")
         self.assertTrue(result.stderr)
@@ -73,7 +99,7 @@ class CSandboxTests(unittest.TestCase):
     def test_missing_compiler_stops_sandbox(self):
         self.settings.c_sandbox_compiler = self.root / "absent" / "zig.exe"
         with patch("app.services.c_sandbox.subprocess.run") as launch:
-            result = run_c_sandbox(self.settings, GOOD_CODE, PythonTest())
+            result = run_c_sandbox(self.settings, C_CODE, "c", PythonTest())
         self.assertEqual(result.status, "unavailable")
         self.assertEqual(result.attempts, 0)
         launch.assert_not_called()
@@ -87,11 +113,21 @@ class CSandboxTests(unittest.TestCase):
                                    model="mock") for n in range(1, 5)])
         client.complete.side_effect = lambda *args, **kwargs: next(replies)
         with patch("app.services.c_sandbox.run_c_sandbox", side_effect=failures) as run:
-            result = debug_c(self.settings, client, "task", "int main(void){", PythonTest())
+            result = debug_c(self.settings, client, "task", "int main(void){", "c", PythonTest())
         self.assertEqual(client.complete.call_count, 3)
         self.assertEqual(run.call_count, 4)
         self.assertEqual(result.attempts, 4)
         self.assertIn("自动修复 3 次仍未通过", result.detail)
+
+    def test_cpp_repair_rejects_c_extension(self):
+        failure = PythonCheck(status="failed", detail="failure", phase="compile", stderr="main.cpp:1:1: error: x")
+        client = Mock()
+        fence = chr(96) * 3
+        client.complete.return_value = ModelReply(
+            answer=f"[文件名: main.c]\n{fence}c\nint main(void){{return 0;}}\n{fence}", model="mock")
+        with patch("app.services.c_sandbox.run_c_sandbox", return_value=failure):
+            result = debug_c(self.settings, client, "task", CPP_CODE, "cpp", PythonTest())
+        self.assertEqual(result.detail, "未取得可用的修复代码，已保留当前结果。")
 
     def test_sample_data_is_not_sent_with_runtime_failure(self):
         failed = PythonCheck(status="mismatch", detail="diff", phase="run", stdout="USER_ANSWER",
@@ -103,7 +139,7 @@ class CSandboxTests(unittest.TestCase):
         client.complete.side_effect = lambda *args, **kwargs: next(replies)
         test = PythonTest(cases=[CaseSpec(name="正常", stdin="a", expected="A")])
         with patch("app.services.c_sandbox.run_c_sandbox", side_effect=[failed] * 4):
-            result = debug_c(self.settings, client, "task", GOOD_CODE, test)
+            result = debug_c(self.settings, client, "task", C_CODE, "c", test)
         self.assertEqual(client.complete.call_count, 3)
         payload = json.loads(client.complete.call_args.args[0][1]["content"])
         self.assertNotIn("stdout", payload)

@@ -1,4 +1,4 @@
-"""编译并运行单文件 C 程序：编译在宿主机受限执行，运行只发生在 WASI 沙箱内。
+"""编译并运行单文件 C / C++ 程序：编译在宿主机受限执行，运行只发生在 WASI 沙箱内。
 
 安全边界：
 - 编译器是固定路径的 Zig，参数固定，不接受用户额外开关；
@@ -24,19 +24,26 @@ from app.services.source_files import ensure_workspace_path, parse_generated_cod
 logger = logging.getLogger(__name__)
 RUN_LOCK = Lock()
 WORKER = Path(__file__).with_name("c_wasi_worker.py")
-COMPILE_TIMEOUT = 30
+COMPILE_TIMEOUT = 45
 RUN_TIMEOUT = 15
-OUTPUT_LIMIT_DETAIL = {"output": "输出超过 16 KiB 上限，沙箱已停止。",
-                       "resource": "达到沙箱时间、计算或内存边界，任务已停止。",
-                       "trap": "运行被隔离器终止。"}
-COMPILE_ERROR = re.compile(r"main\.c:(\d+):(\d+): error: (.+)")
-RUNTIME_LINE = re.compile(r"main\.c:(\d+)")
-REPAIR_SYSTEM = (
-    "修复给出的单文件 C 程序（C11 标准库，目标 wasm32-wasip1），保留题意与输入输出。"
-    "只返回 [文件名: main.c] 后接一个完整 c Markdown 代码块。"
-    "编译错误与行号只用于定位；题目禁止的库函数或高级写法不得使用，改用 if、循环等基础语句实现。"
-    "不使用网络、文件系统和命令行参数。"
-)
+LANGUAGES = {
+    "c": {"source": "main.c", "suffixes": {".c"}, "driver": "cc", "label": "C"},
+    "cpp": {"source": "main.cpp", "suffixes": {".cpp", ".cc", ".cxx"}, "driver": "c++", "label": "C++"},
+}
+LIMIT_DETAIL = {"output": "输出超过 16 KiB 上限，沙箱已停止。",
+                "resource": "达到沙箱时间、计算或内存边界，任务已停止。",
+                "trap": "运行被隔离器终止。"}
+COMPILE_ERROR = re.compile(r"main\.(?:c|cpp):(\d+):(\d+): error: (.+)")
+RUNTIME_LINE = re.compile(r"main\.(?:c|cpp):(\d+)")
+
+
+def _repair_system(language: str) -> str:
+    label = LANGUAGES[language]["label"]
+    suffix = LANGUAGES[language]["source"]
+    return (f"修复给出的单文件 {label} 程序（{label} 标准库，目标 wasm32-wasi），保留题意与输入输出。"
+            f"只返回 [文件名: {suffix}] 后接一个完整代码块。"
+            "编译错误与行号只用于定位；题目禁止的库函数或高级写法不得使用，改用 if、循环等基础语句实现。"
+            "不使用网络、文件系统和命令行参数。")
 
 
 def _compare(actual: str, expected: str) -> bool:
@@ -50,33 +57,35 @@ def _allowed_env() -> dict[str, str]:
     return {key: value for key, value in os.environ.items() if key.upper() in allowed}
 
 
-def _run_once(settings: Settings, code: str, stdin: str, expected: str | None,
-              approved_file) -> PythonCheck:
+def _run_once(settings: Settings, code: str, language: str, stdin: str, expected: str | None,
+              approved_file, cache_root: Path) -> PythonCheck:
+    spec = LANGUAGES[language]
     compiler = settings.c_sandbox_compiler
     if not compiler.is_file():
-        return PythonCheck(status="unavailable", detail="本机 C 沙箱编译器未安装，本轮未编译。", attempts=0)
+        return PythonCheck(status="unavailable", detail="本机 C/C++ 沙箱编译器未安装，本轮未编译。", attempts=0)
     if not RUN_LOCK.acquire(blocking=False):
-        return PythonCheck(status="busy", detail="已有 C 沙箱任务运行中，本轮未运行。", attempts=0)
+        return PythonCheck(status="busy", detail="已有 C/C++ 沙箱任务运行中，本轮未运行。", attempts=0)
     try:
         root = settings.local_source_workspace
         workspace = source_directory(root.parent.resolve(), root.name)
         jobs = source_directory(workspace, ".sandbox-jobs")
-        with TemporaryDirectory(prefix="c-", dir=jobs) as directory:
+        with TemporaryDirectory(prefix=f"{language}-", dir=jobs) as directory:
             job = Path(directory)
             guest = source_directory(job, "guest")
             ensure_workspace_path(guest, workspace)
-            (guest / "main.c").write_text(code, encoding="utf-8", newline="\n")
+            (guest / spec["source"]).write_text(code, encoding="utf-8", newline="\n")
             (job / "stdin.txt").write_text(stdin, encoding="utf-8", newline="\n")
             if approved_file:
                 (guest / approved_file.filename).write_text(
                     approved_file.content, encoding="utf-8", newline="\n")
             module = job / "program.wasm"
-            # Zig 用环境变量定位缓存；指到本轮临时目录，避免写入用户目录。
+            # Zig 用环境变量定位缓存；指到本轮共享缓存，避免写入用户目录，也让多组用例复用编译结果。
             compile_env = _allowed_env()
-            compile_env["ZIG_LOCAL_CACHE_DIR"] = str(job / "zig-cache")
-            compile_env["ZIG_GLOBAL_CACHE_DIR"] = str(job / "zig-global-cache")
+            compile_env["ZIG_LOCAL_CACHE_DIR"] = str(cache_root / "local")
+            compile_env["ZIG_GLOBAL_CACHE_DIR"] = str(cache_root / "global")
             compiled = subprocess.run(
-                [str(compiler), "cc", "-target", "wasm32-wasi", "-O1", "-o", str(module), "main.c"],
+                [str(compiler), spec["driver"], "-target", "wasm32-wasi", "-O1",
+                 "-o", str(module), spec["source"]],
                 cwd=guest, env=compile_env, stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -84,7 +93,7 @@ def _run_once(settings: Settings, code: str, stdin: str, expected: str | None,
             )
             if compiled.returncode != 0:
                 return PythonCheck(status="failed", phase="compile",
-                                   detail="C 程序编译失败，已保留编译器错误。",
+                                   detail=f"{spec['label']} 程序编译失败，已保留编译器错误。",
                                    stderr=compiled.stderr.decode("utf-8", "replace")[-4096:])
             executed = subprocess.run(
                 [sys.executable, "-I", "-B", str(WORKER), str(module), str(job)],
@@ -97,19 +106,19 @@ def _run_once(settings: Settings, code: str, stdin: str, expected: str | None,
     except subprocess.TimeoutExpired:
         return PythonCheck(status="limit", phase="run", detail="编译或运行超过时限，任务已结束。")
     except (OSError, ValueError, subprocess.SubprocessError):
-        logger.warning("C 沙箱编译或运行失败", exc_info=True)
-        return PythonCheck(status="unavailable", detail="C 沙箱无法完成任务，请检查本机配置。")
+        logger.warning("C/C++ 沙箱编译或运行失败", exc_info=True)
+        return PythonCheck(status="unavailable", detail="C/C++ 沙箱无法完成任务，请检查本机配置。")
     finally:
         RUN_LOCK.release()
 
     if result.get("unavailable"):
-        return PythonCheck(status="unavailable", detail="C 沙箱初始化失败，本轮未运行。", attempts=0)
+        return PythonCheck(status="unavailable", detail="C/C++ 沙箱初始化失败，本轮未运行。", attempts=0)
     data = {"stdout": result["stdout"], "stderr": result["stderr"], "exit_code": result["exit_code"],
             "phase": "run"}
     if result["limit"]:
-        return PythonCheck(status="limit", detail=OUTPUT_LIMIT_DETAIL[result["limit"]], **data)
+        return PythonCheck(status="limit", detail=LIMIT_DETAIL[result["limit"]], **data)
     if result["exit_code"] != 0:
-        return PythonCheck(status="failed", detail="C 程序退出失败，请查看错误输出。", **data)
+        return PythonCheck(status="failed", detail=f"{spec['label']} 程序退出失败，请查看错误输出。", **data)
     if expected is None:
         return PythonCheck(status="ran", detail="已在沙箱编译并运行。未提供预期输出，未判定题目正确性。", **data)
     if _compare(result["stdout"], expected):
@@ -117,9 +126,20 @@ def _run_once(settings: Settings, code: str, stdin: str, expected: str | None,
     return PythonCheck(status="mismatch", detail="程序已运行，输出与预期不一致。", **data)
 
 
-def run_c_sandbox(settings: Settings, code: str, test: PythonTest) -> PythonCheck:
-    return run_case_matrix(
-        lambda stdin, expected: _run_once(settings, code, stdin, expected, test.approved_file), test)
+def run_c_sandbox(settings: Settings, code: str, language: str, test: PythonTest) -> PythonCheck:
+    """同一份源码只编译一次，多组用例共用 Zig 缓存。"""
+    if language not in LANGUAGES:
+        raise ValueError("只支持 C 与 C++。")
+    compiler = settings.c_sandbox_compiler
+    if not compiler.is_file():
+        return PythonCheck(status="unavailable", detail="本机 C/C++ 沙箱编译器未安装，本轮未编译。", attempts=0)
+    root = settings.local_source_workspace
+    workspace = source_directory(root.parent.resolve(), root.name)
+    jobs = source_directory(workspace, ".sandbox-jobs")
+    with TemporaryDirectory(prefix="c-cache-", dir=jobs) as cache:
+        return run_case_matrix(
+            lambda stdin, expected: _run_once(settings, code, language, stdin, expected,
+                                              test.approved_file, Path(cache)), test)
 
 
 def _repair_payload(task: str, code: str, check: PythonCheck, local_data: bool) -> dict:
@@ -148,19 +168,20 @@ def _repair_payload(task: str, code: str, check: PythonCheck, local_data: bool) 
     return payload
 
 
-def debug_c(settings: Settings, client: DeepSeekClient, task: str, code: str,
+def debug_c(settings: Settings, client: DeepSeekClient, task: str, code: str, language: str,
             test: PythonTest) -> PythonCheck:
     """编译或运行失败、输出不符时最多自动修复 3 次，每次都在新沙箱重编重跑。"""
-    check = run_c_sandbox(settings, code, test)
+    check = run_c_sandbox(settings, code, language, test)
     if not settings.c_sandbox_auto_repair:
         return check
 
+    spec = LANGUAGES[language]
     current, usage, repairs = code, None, 0
     while repairs < MAX_REPAIR_ATTEMPTS and check.status in {"failed", "mismatch"}:
         payload = _repair_payload(task, current, check, test.has_local_data)
         try:
             reply = client.complete([
-                {"role": "system", "content": REPAIR_SYSTEM},
+                {"role": "system", "content": _repair_system(language)},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
             ], max_tokens=settings.video_max_tokens)
         except DeepSeekError:
@@ -172,14 +193,14 @@ def debug_c(settings: Settings, client: DeepSeekClient, task: str, code: str,
                                             "detail": "修复回复不完整，已保留当前结果。"})
         try:
             name, replacement = parse_generated_code(reply.answer)
-            if Path(name).suffix != ".c" or replacement == current:
+            if Path(name).suffix.lower() not in spec["suffixes"] or replacement == current:
                 raise ValueError("unexpected repair")
         except ValueError:
             return check.model_copy(update={"attempts": repairs + 1, "repair_usage": usage,
                                             "detail": "未取得可用的修复代码，已保留当前结果。"})
 
         current = replacement
-        check = run_c_sandbox(settings, current, test)
+        check = run_c_sandbox(settings, current, language, test)
         repairs += 1
         if check.status in {"ran", "passed"}:
             return check.model_copy(update={"attempts": repairs + 1, "repaired_code": current,

@@ -182,9 +182,9 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
             return debug_python(service.settings, service.client, turn["user_message"]["content"],
                                 code, body.python_test or PythonTest())
 
-        def verify_c(code: str) -> PythonCheck:
+        def verify_c(code: str, language: str) -> PythonCheck:
             return debug_c(service.settings, service.client, turn["user_message"]["content"],
-                           code, body.python_test or PythonTest())
+                           code, language, body.python_test or PythonTest())
 
         turn["local_source"] = open_generated_source(
             service.settings, turn,

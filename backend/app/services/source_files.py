@@ -19,11 +19,8 @@ EXTENSIONS = {
     "c++": {".cpp", ".cc", ".cxx"},
     "python": {".py"},
     "py": {".py"},
-    "csharp": {".cs"},
-    "cs": {".cs"},
-    "c#": {".cs"},
 }
-DECLARED_LANGUAGES = {"c语言": "c", "c++语言": "cpp", "python语言": "python", "c#语言": "cs"}
+DECLARED_LANGUAGES = {"c语言": "c", "c++语言": "cpp", "python语言": "python"}
 FILE_DECLARATION = re.compile(r"^[ \t]*\[文件名[ \t]*[:：]", re.MULTILINE)
 SAFE_FILENAME = re.compile(r"[\w-][\w .-]{0,119}")
 WINDOWS_DEVICE = re.compile(r"CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³]", re.IGNORECASE)
@@ -50,7 +47,7 @@ def parse_generated_code(text: str) -> tuple[str, str]:
         if extension not in EXTENSIONS.get(declared, set()):
             raise ValueError("语言声明、代码块和文件扩展名须一致。")
     if extension not in EXTENSIONS.get(language, set()):
-        raise ValueError("文件扩展名与代码块语言不匹配，支持 C、C++、C# 和 Python。")
+        raise ValueError("文件扩展名与代码块语言不匹配，目前只支持 C、C++ 和 Python。")
     if not code.strip():
         raise ValueError("代码块是空的。")
 
