@@ -145,7 +145,7 @@ print("secret-visible", "DEEPSEEK_API_KEY" in os.environ)
         self.assertNotIn("stdout", payload)
         self.assertNotIn("stderr", payload)
         self.assertEqual(payload["status"], "mismatch")
-        self.assertEqual(payload["failed_cases"], [{"name": "正常", "status": "mismatch"}])
+        self.assertEqual(payload["failed_cases"], [{"index": 1, "status": "mismatch"}])
         self.assertTrue(payload["error_type"])
 
     def test_limit_and_infrastructure_states_never_trigger_repair(self):

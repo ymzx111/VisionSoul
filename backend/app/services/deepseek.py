@@ -23,6 +23,14 @@ class TokenUsage(BaseModel):
     total_tokens: int = Field(ge=0, title="总用量", description="本次 token 总数，不是金额。")
 
 
+def add_usage(first: TokenUsage | None, second: TokenUsage | None) -> TokenUsage | None:
+    if first is None or second is None:
+        return first or second
+    return TokenUsage(prompt_tokens=first.prompt_tokens + second.prompt_tokens,
+                      completion_tokens=first.completion_tokens + second.completion_tokens,
+                      total_tokens=first.total_tokens + second.total_tokens)
+
+
 class ModelReply(BaseModel):
     answer: str
     model: str

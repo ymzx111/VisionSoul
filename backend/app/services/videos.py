@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from app.core.config import Settings
 from app.core.video_policy import MAX_DETAIL_FRAMES, MAX_EVIDENCE_FRAMES, MAX_SAMPLES, PIPELINE_VERSION, LEGACY_PIPELINE, LEGACY_HALF_PIPELINE
 from app.core.persona import PERSONA_CORE, load_persona
-from app.services.deepseek import DeepSeekClient, DeepSeekError, ModelReply, TokenUsage, has_api_key
+from app.services.deepseek import DeepSeekClient, DeepSeekError, ModelReply, TokenUsage, add_usage, has_api_key
 from app.services.video_comparison import Comparison, DETAIL_VERSION, compact_times
 from app.services.video_selection import select_from_directory
 from app.services.video_details import detail_path, adjustment_path, adjusted_path
@@ -331,16 +331,46 @@ class VideoService:
         if inspect or debug_code or reading:
             if not detailed:
                 prompt += "\n此视频只有旧版概览图，没有额外细节图；不要声称看到了叶脉、小字等缺失细节。必要时提示重新上传原视频。"
-        reply = self.client.complete([{"role": "system", "content": prompt},
+        messages = [{"role": "system", "content": prompt},
             *([{"role":"user","content":memory_text}] if memory_text else []), *(history or []),
-            {"role": "user", "content": parts}], json_mode=True, max_tokens=self.settings.video_max_tokens)
+            {"role": "user", "content": parts}]
+        reply = self.client.complete(messages, json_mode=True, max_tokens=self.settings.video_max_tokens)
         stage = "json"
-        try:
-            if reply.truncated:
+        retried = False
+
+        def decode_content(model_reply):
+            nonlocal stage
+            stage = "json"
+            if model_reply.truncated:
                 raise ValueError("truncated")
-            raw = sanitize_video_result(decode_video_result(reply.answer))
+            raw = sanitize_video_result(decode_video_result(model_reply.answer))
             stage = "schema"
-            content = VideoContent.model_validate(raw)
+            return VideoContent.model_validate(raw)
+
+        try:
+            try:
+                content = decode_content(reply)
+            except ValidationError as exc:
+                errors = exc.errors(include_input=False, include_context=False, include_url=False)
+                retryable = all(len(item["loc"]) == 1 and item["loc"][0] not in {"answer", "code", "language"}
+                                and item["type"] in {"extra_forbidden", "missing"}
+                                for item in errors)
+                if not self.source_delivery or inspect or debug_code or not retryable:
+                    raise
+                retried = True
+                first_usage = reply.usage
+                reminder = ("上次 JSON 根字段不符合要求。按原始任务与画面重新生成；必须包含 observations、summary 和 reply，"
+                            "仅使用规定字段。看不清可明确说明，不补造画面或对白依据。")
+                try:
+                    reply = self.client.complete(
+                        [{**messages[0], "content": prompt + "\\n" + reminder}, *messages[1:]],
+                        json_mode=True, max_tokens=self.settings.video_max_tokens)
+                except DeepSeekError as retry_error:
+                    logger.warning("视频格式重试请求失败 first_usage=%s status=%s", first_usage, retry_error.status_code)
+                    raise DeepSeekError(f"{retry_error} 本轮已尝试一次格式重试，首次分析可能已有用量。", retry_error.status_code) from retry_error
+                logger.info("视频格式重试用量 first=%s retry=%s", first_usage, reply.usage)
+                reply = reply.model_copy(update={"usage": add_usage(first_usage, reply.usage)})
+                content = decode_content(reply)
             stage = "evidence"
             normalized_links, auto_notes = normalize_model_links(content.audio_links, info.audio, frames)
             content.audio_links = normalized_links
@@ -380,6 +410,8 @@ class VideoService:
             report, message = result_failure(exc, reply, self.settings.video_storage_dir.parent, stage)
             logger.warning("视频分析校验失败 id=%s stage=%s reason=%s fields=%s chars=%s",
                            report["id"], report["stage"], report["reason"], report["fields"], report["output_chars"])
+            if retried:
+                message = message.replace("不会自动重试。", "本轮已重试一次。")
             raise DeepSeekError(message, 502) from exc
         payload = content.model_dump()
         payload["detail_selection"] = selection.model_dump()

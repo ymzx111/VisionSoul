@@ -47,6 +47,7 @@ def decode_timeline(source: Path, duration: float):
             return None
         video = container.streams.video[0]
         origin = float((video.start_time or 0) * video.time_base)
+        earliest = -max(2, min(30, origin) + 0.1)
         stream = container.streams.audio[0]
         if stream.codec_context.sample_rate > 192000 or stream.codec_context.channels > 8:
             raise ValueError("音频资源上限异常")
@@ -59,7 +60,7 @@ def decode_timeline(source: Path, duration: float):
             if frame.time is None:
                 raise ValueError("音频没有时间戳")
             timestamp = float(frame.time) - origin
-            if not math.isfinite(timestamp) or timestamp < previous or not -2 <= timestamp <= duration + 2:
+            if not math.isfinite(timestamp) or timestamp < previous or not earliest <= timestamp <= duration + 2:
                 raise ValueError("音频时间戳异常")
             previous = timestamp
             values = frame.to_ndarray().reshape(-1)

@@ -20,7 +20,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.config import Settings
-from app.services.deepseek import DeepSeekClient, DeepSeekError, TokenUsage
+from app.services.deepseek import DeepSeekClient, DeepSeekError, TokenUsage, add_usage
 from app.services.source_files import (
     SAFE_FILENAME, WINDOWS_DEVICE, ensure_workspace_path, parse_generated_code, source_directory,
 )
@@ -108,6 +108,7 @@ class PythonCheck(BaseModel):
     repaired_code: str | None = None
     repair_usage: TokenUsage | None = None
     case_results: list[CaseResult] | None = None
+    case_source: Literal["model"] | None = None
     # C 链路用：区分"编译失败"与"运行失败"。
     phase: Literal["compile", "run"] | None = None
 
@@ -197,7 +198,7 @@ def run_case_matrix(run_once, test: PythonTest) -> PythonCheck:
         results.append(CaseResult(name=name, status=one.status, stdin=case.stdin,
                                   expected=case.expected, stdout=one.stdout, stderr=one.stderr,
                                   exit_code=one.exit_code, phase=one.phase))
-        if one.status in {"unavailable", "busy"}:
+        if one.status in {"unavailable", "busy", "limit"} or one.phase == "compile":
             return one.model_copy(update={"case_results": results})
 
     broken = [row for row in results if row.status in {"failed", "limit"}]
@@ -221,27 +222,18 @@ def run_python_sandbox(settings: Settings, code: str, test: PythonTest) -> Pytho
         lambda stdin, expected: _run_once(settings, code, stdin, expected, test.approved_file), test)
 
 
-def _repair_payload(task: str, code: str, check: PythonCheck, local_data: bool) -> dict:
-    """把错误结构化回传模型；带验收数据时绝不带 stdout/stderr。"""
-    payload = {"task": task[:2000], "code": code, "status": check.status}
-    if local_data:
-        matches = REPAIRABLE_ERROR.findall(check.stderr)
-        payload["error_type"] = matches[-1] if matches else (
-            "OutputMismatch" if check.status == "mismatch" else "RuntimeError")
-        lines = ERROR_LINE.findall(check.stderr)
-        if lines:
-            payload["error_lines"] = [int(value) for value in lines[-3:]]
-        if check.status == "mismatch":
-            payload["hint"] = "程序可以运行，但输出与题目预期不一致，请检查计算逻辑或输出格式。"
-        if check.case_results:
-            payload["failed_cases"] = [
-                {"name": row.name, "status": row.status}
-                for row in check.case_results if row.status != "passed"
-            ]
-    else:
-        payload["stdout"] = check.stdout[-2000:]
-        payload["stderr"] = check.stderr[-2000:]
-        payload["exit_code"] = check.exit_code
+def _repair_payload(task: str, code: str, check: PythonCheck) -> dict:
+    matches = REPAIRABLE_ERROR.findall(check.stderr)
+    error_type = "OutputMismatch" if check.status == "mismatch" else (matches[-1] if matches else "RuntimeError")
+    payload = {"task": task[:2000], "code": code, "status": check.status, "error_type": error_type}
+    lines = ERROR_LINE.findall(check.stderr)
+    if lines:
+        payload["error_lines"] = [int(value) for value in lines[-3:]]
+    if check.case_results:
+        payload["failed_cases"] = [
+            {"index": index, "status": row.status}
+            for index, row in enumerate(check.case_results, 1) if row.status != "passed"
+        ]
     return payload
 
 
@@ -254,7 +246,7 @@ def debug_python(settings: Settings, client: DeepSeekClient, task: str, code: st
 
     current, usage, repairs = code, None, 0
     while repairs < MAX_REPAIR_ATTEMPTS and check.status in AUTOFIX_STATUSES:
-        payload = _repair_payload(task, current, check, test.has_local_data)
+        payload = _repair_payload(task, current, check)
         try:
             reply = client.complete([
                 {"role": "system", "content": REPAIR_SYSTEM},
@@ -263,7 +255,7 @@ def debug_python(settings: Settings, client: DeepSeekClient, task: str, code: st
         except DeepSeekError:
             return check.model_copy(update={"attempts": repairs + 1, "repair_usage": usage,
                                             "detail": f"{check.detail} 修复请求失败，已保留当前结果。"})
-        usage = reply.usage
+        usage = add_usage(usage, reply.usage)
         if reply.truncated:
             return check.model_copy(update={"attempts": repairs + 1, "repair_usage": usage,
                                             "detail": "修复回复不完整，已保留当前结果。"})

@@ -15,9 +15,9 @@ from app.services.chat_store import ChatStore, ChatConflict
 from app.services.deepseek import DeepSeekError, TokenUsage, has_api_key
 from app.services.videos import VideoService, VideoError
 from app.services.audio_evidence import current_context
-from app.services.local_ide import open_generated_source
-from app.services.c_sandbox import debug_c
-from app.services.python_sandbox import PythonCheck, PythonTest, debug_python
+from app.services.local_ide import open_generated_source, split_model_cases
+from app.services.c_sandbox import debug_c, run_c_sandbox
+from app.services.python_sandbox import PythonCheck, PythonTest, debug_python, run_python_sandbox
 
 router = APIRouter(prefix="/api/chat", tags=["伙伴对话"])
 Identifier = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
@@ -178,13 +178,23 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
                      and origin == f"{request.url.scheme}://{request.url.netloc}")
     if (body.open_in_ide and local_browser and turn["space"] == "work"
             and (turn["image_id"] or turn["video_id"]) and not body.inspect_video and not body.debug_code and not turn["replayed"] and not turn["truncated"]):
+        manual_test = body.python_test or PythonTest()
+        _, model_test = split_model_cases(turn["assistant_message"]["content"])
+        use_model_test = not manual_test.has_local_data and bool(model_test.cases)
+
+        def mark_model_check(check: PythonCheck) -> PythonCheck:
+            return check.model_copy(update={"case_source": "model",
+                "detail": f"AI 自测（预期输出由模型生成） · {check.detail}"})
+
         def verify_python(code: str) -> PythonCheck:
-            return debug_python(service.settings, service.client, turn["user_message"]["content"],
-                                code, body.python_test or PythonTest())
+            if use_model_test:
+                return mark_model_check(run_python_sandbox(service.settings, code, model_test))
+            return debug_python(service.settings, service.client, turn["user_message"]["content"], code, manual_test)
 
         def verify_c(code: str, language: str) -> PythonCheck:
-            return debug_c(service.settings, service.client, turn["user_message"]["content"],
-                           code, language, body.python_test or PythonTest())
+            if use_model_test:
+                return mark_model_check(run_c_sandbox(service.settings, code, language, model_test))
+            return debug_c(service.settings, service.client, turn["user_message"]["content"], code, language, manual_test)
 
         turn["local_source"] = open_generated_source(
             service.settings, turn,

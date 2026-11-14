@@ -86,7 +86,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
             <summary>沙箱验收 · {check.detail}</summary>
             {check.exit_code != null && <p>退出码 {check.exit_code} · 试跑 {check.attempts} 次</p>}
             {!!check.case_results?.length && <ul className="python-case-results">
-              {check.case_results.map(row => <li key={row.name}>
+              {check.case_results.map((row, index) => <li key={index}>
                 {row.status === 'passed' ? '通过' : '未通过'} · {row.name}
                 {' '}输入「{row.stdin.trim() || '空'}」预期「{row.expected}」实际「{row.stdout.trim()}」
               </li>)}
@@ -113,7 +113,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
       {state.kind === 'video' && <p className="chat-image-note">输入「重点看 3–5 秒」可对指定区间补抽，每次最多 5 秒。读题或排错最多使用 4 张高清图。</p>}
       {workMedia && <details className="python-test">
         <summary>验收样例（Python / C / C++，可选）</summary>
-        <p className="chat-image-note">每组用例独立运行、逐组判定，可覆盖正常、空值、边界。Python 在 WASI 沙箱里跑，C 与 C++ 先编译成 wasm 再在 WASI 里运行。样例仅在本机使用；失败或输出不符时最多自动修复 3 次，过程中不会把运行输出发给模型。</p>
+        <p className="chat-image-note">每组用例独立运行、逐组判定，可覆盖正常、空值、边界。Python 在 WASI 沙箱里跑，C 与 C++ 先编译成 wasm 再在 WASI 里运行。手填样例仅在本机使用，失败时最多自动修复 3 次。留空时可运行 AI 自测；其预期输出由模型生成，自测失败不会自动修复。</p>
         {cases.map((row, index) => <div className="python-case" key={index}>
           <label className="sr-only" htmlFor={`python-case-name-${index}`}>用例名称</label>
           <input id={`python-case-name-${index}`} placeholder={`用例${index + 1}`} maxLength={40} disabled={busy}
@@ -140,7 +140,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
           : state.kind === 'video' ? '输入你的要求，或留空，让助手从视频里判断。'
           : state.kind === 'image' && workMedia ? '例如：请按照片里的题目写完整的程序，语言按题面。'
           : '可选：你想了解什么？不填写也可以开始分析。'}/>
-      <div className="question-actions media-chat-actions"><span className="cost-note">点击后才调用模型{chat.usage ? chat.replayed ? ' · 已恢复原回复' : ` · 本次${chat.usage.total_tokens} token` : ''}</span>
+      <div className="question-actions media-chat-actions"><span className="cost-note">点击后才调用模型{workMedia && state.kind === 'video' ? ' · 格式错误时可能重试一次' : ''}{chat.usage ? chat.replayed ? ' · 已恢复原回复' : ` · 本次${chat.usage.total_tokens} token` : ''}</span>
         <button className="button button-primary" disabled={!canSend} onClick={() => void send()}>{chat.sending ? '正在回复…' : chat.conversationId || !state.kind ? '发送消息 →' : '开始分析 →'}</button>
       </div>
     </div>

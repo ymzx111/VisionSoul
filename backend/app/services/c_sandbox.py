@@ -17,7 +17,7 @@ from tempfile import TemporaryDirectory
 from threading import Lock
 
 from app.core.config import Settings
-from app.services.deepseek import DeepSeekClient, DeepSeekError
+from app.services.deepseek import DeepSeekClient, DeepSeekError, add_usage
 from app.services.python_sandbox import MAX_REPAIR_ATTEMPTS, PythonCheck, PythonTest, run_case_matrix
 from app.services.source_files import ensure_workspace_path, parse_generated_code, source_directory
 
@@ -75,26 +75,27 @@ def _run_once(settings: Settings, code: str, language: str, stdin: str, expected
             ensure_workspace_path(guest, workspace)
             (guest / spec["source"]).write_text(code, encoding="utf-8", newline="\n")
             (job / "stdin.txt").write_text(stdin, encoding="utf-8", newline="\n")
+            module = cache_root / "program.wasm"
+            if not module.is_file():
+                # Zig 用环境变量定位缓存；指到本轮共享缓存，避免写入用户目录，也让多组用例复用编译结果。
+                compile_env = _allowed_env()
+                compile_env["ZIG_LOCAL_CACHE_DIR"] = str(cache_root / "local")
+                compile_env["ZIG_GLOBAL_CACHE_DIR"] = str(cache_root / "global")
+                compiled = subprocess.run(
+                    [str(compiler), spec["driver"], "-target", "wasm32-wasi", "-O1",
+                     "-o", str(module), spec["source"]],
+                    cwd=guest, env=compile_env, stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    timeout=COMPILE_TIMEOUT, check=False,
+                )
+                if compiled.returncode != 0:
+                    return PythonCheck(status="failed", phase="compile",
+                                       detail=f"{spec['label']} 程序编译失败，已保留编译器错误。",
+                                       stderr=compiled.stderr.decode("utf-8", "replace")[-4096:])
             if approved_file:
                 (guest / approved_file.filename).write_text(
                     approved_file.content, encoding="utf-8", newline="\n")
-            module = job / "program.wasm"
-            # Zig 用环境变量定位缓存；指到本轮共享缓存，避免写入用户目录，也让多组用例复用编译结果。
-            compile_env = _allowed_env()
-            compile_env["ZIG_LOCAL_CACHE_DIR"] = str(cache_root / "local")
-            compile_env["ZIG_GLOBAL_CACHE_DIR"] = str(cache_root / "global")
-            compiled = subprocess.run(
-                [str(compiler), spec["driver"], "-target", "wasm32-wasi", "-O1",
-                 "-o", str(module), spec["source"]],
-                cwd=guest, env=compile_env, stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                timeout=COMPILE_TIMEOUT, check=False,
-            )
-            if compiled.returncode != 0:
-                return PythonCheck(status="failed", phase="compile",
-                                   detail=f"{spec['label']} 程序编译失败，已保留编译器错误。",
-                                   stderr=compiled.stderr.decode("utf-8", "replace")[-4096:])
             executed = subprocess.run(
                 [sys.executable, "-I", "-B", str(WORKER), str(module), str(job)],
                 cwd=job, env=_allowed_env(), stdin=subprocess.DEVNULL,
@@ -127,7 +128,7 @@ def _run_once(settings: Settings, code: str, language: str, stdin: str, expected
 
 
 def run_c_sandbox(settings: Settings, code: str, language: str, test: PythonTest) -> PythonCheck:
-    """同一份源码只编译一次，多组用例共用 Zig 缓存。"""
+    """同一轮同一份源码只编译一次，每组用例使用同一份临时 Wasm。"""
     if language not in LANGUAGES:
         raise ValueError("只支持 C 与 C++。")
     compiler = settings.c_sandbox_compiler
@@ -142,29 +143,22 @@ def run_c_sandbox(settings: Settings, code: str, language: str, test: PythonTest
                                               test.approved_file, Path(cache)), test)
 
 
-def _repair_payload(task: str, code: str, check: PythonCheck, local_data: bool) -> dict:
-    """编译错误整段回传（不含样例数据）；运行失败在带样例时只回传行号与用例名。"""
+def _repair_payload(task: str, code: str, check: PythonCheck) -> dict:
+    """仅发送失败类型、行号和用例序号。"""
     payload = {"task": task[:2000], "code": code, "status": check.status, "phase": check.phase or "run"}
     if check.phase == "compile":
-        errors = [f"{m.group(1)}:{m.group(2)}: {m.group(3)}" for m in COMPILE_ERROR.finditer(check.stderr)]
-        payload["compile_errors"] = errors[:10]
-        if not errors:
-            payload["compiler"] = check.stderr[-800:]
+        payload["error_type"] = "CompileError"
+        payload["error_lines"] = [int(match.group(1)) for match in COMPILE_ERROR.finditer(check.stderr)][:10]
         return payload
-    if local_data:
-        payload["error_type"] = "OutputMismatch" if check.status == "mismatch" else "RuntimeError"
-        lines = RUNTIME_LINE.findall(check.stderr)
-        if lines:
-            payload["error_lines"] = sorted({int(value) for value in lines})[-5:]
-        if check.status == "mismatch":
-            payload["hint"] = "程序可以运行，但输出与题目预期不一致，请检查计算逻辑或输出格式。"
-        if check.case_results:
-            payload["failed_cases"] = [{"name": row.name, "status": row.status}
-                                       for row in check.case_results if row.status != "passed"]
-    else:
-        payload["stdout"] = check.stdout[-2000:]
-        payload["stderr"] = check.stderr[-2000:]
-        payload["exit_code"] = check.exit_code
+    payload["error_type"] = "OutputMismatch" if check.status == "mismatch" else "RuntimeError"
+    lines = RUNTIME_LINE.findall(check.stderr)
+    if lines:
+        payload["error_lines"] = sorted({int(value) for value in lines})[-5:]
+    if check.status == "mismatch":
+        payload["hint"] = "程序可以运行，但输出与题目预期不一致，请检查计算逻辑或输出格式。"
+    if check.case_results:
+        payload["failed_cases"] = [{"index": index, "status": row.status}
+                                   for index, row in enumerate(check.case_results, 1) if row.status != "passed"]
     return payload
 
 
@@ -178,7 +172,7 @@ def debug_c(settings: Settings, client: DeepSeekClient, task: str, code: str, la
     spec = LANGUAGES[language]
     current, usage, repairs = code, None, 0
     while repairs < MAX_REPAIR_ATTEMPTS and check.status in {"failed", "mismatch"}:
-        payload = _repair_payload(task, current, check, test.has_local_data)
+        payload = _repair_payload(task, current, check)
         try:
             reply = client.complete([
                 {"role": "system", "content": _repair_system(language)},
@@ -187,7 +181,7 @@ def debug_c(settings: Settings, client: DeepSeekClient, task: str, code: str, la
         except DeepSeekError:
             return check.model_copy(update={"attempts": repairs + 1, "repair_usage": usage,
                                             "detail": f"{check.detail} 修复请求失败，已保留当前结果。"})
-        usage = reply.usage
+        usage = add_usage(usage, reply.usage)
         if reply.truncated:
             return check.model_copy(update={"attempts": repairs + 1, "repair_usage": usage,
                                             "detail": "修复回复不完整，已保留当前结果。"})

@@ -93,7 +93,13 @@ def extract(directory: Path, max_seconds: float, max_frames: int) -> dict:
             # 低帧率或可变帧率不重复同一源帧凑数。
             while target <= timestamp + 0.001:
                 target += interval
-        if not frames or previous_time + max(0.25, 2 / fps) < duration:
+        last_duration = float((last_frame.duration or 0) * last_frame.time_base) if last_frame is not None else 0
+        covered_until = previous_time + max(0, last_duration)
+        # Windows 剪辑可能含非零起点与编辑列表。只有所有声明帧均成功解码，
+        # 且偏差能由起点解释时，接受这种时长差，不放宽中途截断检查。
+        complete_edit = (last_frame is not None and decoded_count == stream.frames and origin > 0
+                         and covered_until + origin + max(0.25, 2 / fps) >= duration)
+        if not frames or (covered_until + max(0.25, 2 / fps) < duration and not complete_edit):
             raise ValueError("视频为空、已损坏或未能完整解码，请重新导出。")
         if last_frame is not None and previous_time > last_sample_time + 0.001:
             keep(last_frame, previous_time)

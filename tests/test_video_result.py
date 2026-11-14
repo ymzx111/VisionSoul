@@ -138,7 +138,7 @@ class VideoResultTests(unittest.TestCase):
                 self.send()
             self.assertIn(expected, str(error.exception))
             self.assertEqual(self.chat.store.recent(), [])
-        self.assertEqual(len(self.calls), 3)
+        self.assertEqual(len(self.calls), 4)  # Only the missing root fields trigger one retry.
 
     def test_schema_diagnostics_record_location_without_user_text(self):
         self.payload["observations"][0]["keywords"] = {"private-user-text":"do-not-log"}

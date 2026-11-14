@@ -1,5 +1,6 @@
 """将已保存的单份图片或视频解题回复交给本机 IDE。"""
 import ast
+import json
 from collections.abc import Callable
 from importlib.util import find_spec
 import logging
@@ -12,7 +13,7 @@ from uuid import NAMESPACE_URL, uuid5
 from xml.sax.saxutils import escape
 
 from app.core.config import Settings
-from app.services.python_sandbox import PythonCheck
+from app.services.python_sandbox import PythonCheck, PythonTest
 from app.services.source_files import (
     CODE_REQUEST, FENCE_BLOCK, FILE_DECLARATION, parse_generated_code, parse_generated_code_or_infer,
     save_dated_source, source_directory, write_source,
@@ -75,6 +76,27 @@ def launch_ide(args: list[str], folder: Path) -> None:
     )
 
 
+def split_model_cases(reply: str) -> tuple[str, PythonTest]:
+    # 只接受源码围栏之后独立出现的约定样例块。
+    blocks = list(FENCE_BLOCK.finditer(reply.replace("\r\n", "\n")))
+    if len(blocks) != 2 or blocks[1]["language"].lower() != "visionsoul-cases":
+        return reply, PythonTest()
+    block = blocks[1]
+    normalized = reply.replace("\r\n", "\n")
+    source_reply = normalized[:block.start()] + normalized[block.end():]
+    try:
+        data = json.loads(block["code"])
+        if not isinstance(data, list) or not 1 <= len(data) <= 3:
+            return source_reply, PythonTest()
+        test = PythonTest.model_validate({"cases": data})
+    except ValueError:
+        return source_reply, PythonTest()
+    unique = {case.stdin for case in test.cases}
+    if len(unique) != len(test.cases):
+        return source_reply, PythonTest()
+    return source_reply, test
+
+
 def open_generated_source(settings: Settings, turn: dict,
                           verify_python: Callable[[str], PythonCheck] | None = None,
                           verify_c: Callable[[str, str], PythonCheck] | None = None) -> dict | None:
@@ -93,7 +115,8 @@ def open_generated_source(settings: Settings, turn: dict,
             "本次回复没有给出完整源码（需要 [文件名: main.py] 加一个完整代码块），未保存也未打开编辑器；"
             "回复“请给出完整源码”可以重试。")}
     try:
-        filename, code = parser(reply)
+        source_reply, _ = split_model_cases(reply)
+        filename, code = parser(source_reply)
         extension = Path(filename).suffix
         if extension == ".py":
             if verify_python is None:
