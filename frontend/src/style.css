@@ -174,8 +174,6 @@ textarea:disabled { opacity: .7; }
 }
 @media (prefers-reduced-motion: reduce) { .thinking-dot { animation: none; } }
 
-.role-entry { font: inherit; font-size: 11px; color: #52715e; border: 1px solid #dbe5d5; border-radius: 6px; background: #f0f5eb; padding: 7px 10px; white-space: nowrap; }
-.role-entry:disabled { opacity: .5; }
 .role-workspace { flex: 1; min-height: 0; display: flex; flex-direction: column; width: 100%; max-width: 1580px; padding: 22px 4.2% 0; margin: 0 auto; }
 .role-page-title { display: flex; justify-content: space-between; gap: 15px; align-items: center; margin-bottom: 18px; flex-shrink: 0; }
 .role-page-title h1 { font-size: 20px; }
@@ -363,18 +361,11 @@ textarea:disabled { opacity: .7; }
 .detail-frame-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 10px; }
 .detail-frame-list > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 10px; color: #657a60; }
 .detail-frame-list img { width: 100%; height: 76px; object-fit: contain; background: #eff3ec; border-radius: 5px; }
-.space-switch { display: flex; align-items: center; gap: 16px; margin: 0 auto; padding: 10px 32px 0; width: 100%; max-width: 1600px; }
-.space-switch-buttons { display: flex; flex-shrink: 0; gap: 4px; padding: 4px; border: 1px solid #d9e3db; border-radius: 12px; background: #edf2eb; }
-.space-switch-buttons button { padding: 8px 16px; border-radius: 8px; font-size: 13px; color: #63745e; cursor: pointer; }
-.space-switch-buttons button[aria-pressed="true"] { color: #fff; background: #476940; box-shadow: 0 2px 5px #2646211a; }
-.space-switch-buttons button:disabled { opacity: .6; cursor: wait; }
-.space-switch > span { color: #657a60; font-size: 12px; line-height: 1.6; }
 .legacy-topics { flex-shrink: 0; border-bottom: 1px solid #d9e3db; padding: 10px 20px; font-size: 12px; color: #65745e; }
 .legacy-topics summary { cursor: pointer; }
 .legacy-topics p { margin: 8px 0; line-height: 1.7; }
 .legacy-topics > div { display: flex; gap: 8px; align-items: center; }
 .legacy-topics select { min-width: 0; flex: 1; padding: 8px; border: 1px solid #d9e3db; border-radius: 6px; }
-@media (max-width: 700px) { .space-switch { padding: 10px 16px 0; flex-wrap: wrap; gap: 6px; } .space-switch > span { width: 100%; } }
 
 .python-test, .python-check { font-size: 11px; line-height: 1.6; margin: 0 0 8px; }
 .python-test label { display: block; margin-top: 5px; }
