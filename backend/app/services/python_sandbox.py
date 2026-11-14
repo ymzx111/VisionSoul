@@ -132,6 +132,13 @@ def check_data_file(result: dict, approved_file: ApprovedFile | None, data: dict
     return None
 
 
+def denied_output_detail(result: dict) -> str | None:
+    if result.get("denied_write"):
+        prefix = "已读取所选数据文件，但" if result.get("file_read") else ""
+        return f"{prefix}程序尝试写入文件，导致试跑中断。请让程序将结果打印到桌面窗口后再试。"
+    return None
+
+
 def _compare(actual: str, expected: str) -> bool:
     return actual.replace("\r\n", "\n").removesuffix("\n") == expected.replace("\r\n", "\n").removesuffix("\n")
 
@@ -197,10 +204,10 @@ def _run_once(settings: Settings, code: str, stdin: str, expected: str | None,
         last_error = result["stderr"].rstrip().splitlines()[-1:]
         if last_error == ["EOFError: EOF when reading a line"]:
             return PythonCheck(status="awaiting_input", detail="等待输入：请补齐标准输入后再次试跑。", **data)
-        detail = "Python 程序退出失败，请查看错误输出。"
-        if re.search(r"^(PermissionError|FileNotFoundError):", result["stderr"], re.MULTILINE):
+        detail = denied_output_detail(result)
+        if detail is None and re.search(r"^(PermissionError|FileNotFoundError):", result["stderr"], re.MULTILINE):
             detail = "程序无法访问所需文件。若题目确实需要该文件，可在验收样例里授权，并用文件名读取。"
-        return PythonCheck(status="failed", detail=detail, **data)
+        return PythonCheck(status="failed", detail=detail or "Python 程序退出失败，请查看错误输出。", **data)
     if expected is None:
         return PythonCheck(status="ran", detail="已在沙箱运行。未提供预期输出，未判定题目正确性。", **data)
     if _compare(result["stdout"], expected):

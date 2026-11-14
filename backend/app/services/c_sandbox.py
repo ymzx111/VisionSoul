@@ -14,7 +14,9 @@ from threading import Lock
 
 from app.core.config import Settings
 from app.services.deepseek import DeepSeekClient, DeepSeekError, add_usage
-from app.services.python_sandbox import MAX_REPAIR_ATTEMPTS, PythonCheck, PythonTest, check_data_file, run_case_matrix
+from app.services.python_sandbox import (
+    MAX_REPAIR_ATTEMPTS, PythonCheck, PythonTest, check_data_file, denied_output_detail, run_case_matrix,
+)
 from app.services.source_files import ensure_workspace_path, parse_generated_code, source_directory
 
 logger = logging.getLogger(__name__)
@@ -156,7 +158,8 @@ def _run_once(settings: Settings, code: str, language: str, stdin: str, expected
     if result.get("awaiting_input"):
         return PythonCheck(status="awaiting_input", detail="程序需要标准输入。请按题目要求补充输入后试跑。", **data)
     if result["exit_code"] != 0:
-        return PythonCheck(status="failed", detail=f"{spec['label']} 程序退出失败，请查看错误输出。", **data)
+        detail = denied_output_detail(result) or f"{spec['label']} 程序退出失败，请查看错误输出。"
+        return PythonCheck(status="failed", detail=detail, **data)
     if expected is None:
         return PythonCheck(status="ran", detail="已在沙箱编译并运行。未提供预期输出，未判定题目正确性。", **data)
     if _compare(result["stdout"], expected):

@@ -1,8 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 
 async function readApprovedFile(file) {
-  if (file.size > 8192 || !/\.(txt|csv|json)$/i.test(file.name)) throw new Error();
-  const content = new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer());
+  if (!/\.(txt|csv|json)$/i.test(file.name)) throw new Error('请选择 TXT、CSV 或 JSON 文件。');
+  if (file.size > 8192) throw new Error('数据文件超过 8 KiB，请选择较小的文件。');
+  let bytes;
+  try { bytes = await file.arrayBuffer(); } catch { throw new Error('本机文件读取失败，请确认文件仍在原位置。'); }
+  let content;
+  try { content = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+  catch { throw new Error('文件不是 UTF-8 编码，请另存为 UTF-8 后再选择。'); }
   return { filename: file.name, content };
 }
 
@@ -24,6 +29,8 @@ function SandboxRun({ initial, runId, disabled }) {
   const [error, setError] = useState('');
   const filePicker = useRef(null);
   const result = latest || initial;
+  const waitingForFile = ['awaiting_file', 'file_unused'].includes(result.status);
+  const needsFile = waitingForFile || initial.status === 'awaiting_file' || Boolean(result.data_file);
 
   async function rerun(event) {
     event.preventDefault();
@@ -32,11 +39,15 @@ function SandboxRun({ initial, runId, disabled }) {
     setError('');
     try {
       const file = filePicker.current?.files[0];
+      if (needsFile && !file) {
+        setError('请先选择本轮要读取的数据文件。');
+        return;
+      }
       const body = { run_id: runId, stdin: input };
       if (file) {
         try { body.approved_file = await readApprovedFile(file); }
-        catch {
-          setError('请选择不超过 8 KiB 的 UTF-8 TXT、CSV 或 JSON 文件。');
+        catch (error) {
+          setError(error.message);
           return;
         }
       }
@@ -44,7 +55,11 @@ function SandboxRun({ initial, runId, disabled }) {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : '试跑请求无效，请检查输入。');
+      if (!response.ok) {
+        const fileRejected = Array.isArray(data.detail) && data.detail.some(item => item.loc?.includes('approved_file'));
+        throw new Error(fileRejected ? '文件名不符合本机试跑要求，请用字母、数字、中文、空格或连接号命名后重新选择。'
+          : typeof data.detail === 'string' ? data.detail : '试跑请求无效，请检查输入。');
+      }
       setLatest(data);
     } catch (error) {
       setError(error instanceof TypeError ? '连接中断，请重新试跑。' : error.message);
@@ -57,8 +72,8 @@ function SandboxRun({ initial, runId, disabled }) {
   return <div className="python-check python-run">
     <p role="status">{running ? '正在本机沙箱试跑…' : ['awaiting_input', 'awaiting_file', 'file_unused'].includes(result.status)
       ? result.detail : result.desktop_result_opened ? '试跑结果已发送到桌面。'
-        : '桌面结果窗口暂不可用。'}</p>
-    {!result.desktop_result_opened && <details>
+        : result.detail}</p>
+    {!waitingForFile && !result.desktop_result_opened && <details>
       <summary>查看备用输出</summary>
       {!!result.case_results?.length ? result.case_results.map((row, index) =>
         <div key={index}><strong>{row.name}</strong>
@@ -72,17 +87,17 @@ function SandboxRun({ initial, runId, disabled }) {
     </details>}
     {initial.repair_usage && <p>修复模型用量 {initial.repair_usage.total_tokens} token</p>}
     {error && <p className="notice notice-error" role="alert">{error}</p>}
-    <details open={['awaiting_input', 'awaiting_file', 'file_unused'].includes(result.status) ? true : undefined}>
-      <summary>补充输入并试跑</summary>
+    <details open={waitingForFile || result.status === 'awaiting_input' ? true : undefined}>
+      <summary>{needsFile ? '提供数据文件' : '补充输入并试跑'}</summary>
       <form onSubmit={rerun} className="python-test">
+        <label>{needsFile ? '选择数据文件（UTF-8 TXT、CSV 或 JSON，最多 8 KiB）' : '本轮只读文件（可选）'}
+          <input type="file" accept=".txt,.csv,.json" ref={filePicker} disabled={running || disabled}/>
+        </label>
         <label>标准输入
           <textarea rows={3} maxLength={4096} value={input} disabled={running || disabled}
             onChange={event => setInput(event.target.value)} placeholder="按题目格式一次填完所有输入"/>
         </label>
-        <label>本轮只读文件（可选）
-          <input type="file" accept=".txt,.csv,.json" ref={filePicker} disabled={running || disabled}/>
-        </label>
-        <button className="button button-secondary" type="submit" disabled={running || disabled}>本机试跑</button>
+        <button className="button button-secondary" type="submit" disabled={running || disabled}>{needsFile ? '授权并试跑' : '本机试跑'}</button>
       </form>
     </details>
   </div>;
@@ -129,8 +144,8 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
         setReadingFile(true);
         try {
           pythonTest.approved_file = await readApprovedFile(approvedFile);
-        } catch {
-          setTestError('请选择不超过 8 KiB 的 UTF-8 TXT、CSV 或 JSON 文件。');
+        } catch (error) {
+          setTestError(error.message);
           return;
         } finally {
           setReadingFile(false);
@@ -207,7 +222,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
           </p>)}
       {chat.truncated && <p className="chat-image-note">上一条回复达到长度上限，可以继续追问。</p>}
       {state.kind === 'video' && <p className="chat-image-note">输入「重点看 3–5 秒」可对指定区间补抽，每次最多 5 秒。读题或排错最多使用 4 张高清图。</p>}
-      {workMedia && <div className="python-test">
+      {workMedia && state.kind === 'image' && <div className="python-test">
         <label htmlFor="python-test-file">选择本轮数据文件（TXT、CSV 或 JSON，最多 8 KiB）</label>
         <input id="python-test-file" ref={fileInput} type="file" accept=".txt,.csv,.json" disabled={busy}
           onChange={event => { setApprovedFile(event.target.files?.[0] || null); setTestError(''); }}/>

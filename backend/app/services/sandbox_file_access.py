@@ -21,6 +21,7 @@ class FileAccess:
         self.awaiting_input = False
         self.file_read = False
         self.missing_file = False
+        self.denied_write = False
         self.descriptors = set()
         self.memory = None
         self.originals = []
@@ -56,6 +57,10 @@ class FileAccess:
                 raise Trap("stdin was not supplied")
             status = self.forwarders[name](self.store, *args)
             if name == "path_open":
+                # WASI oflags create/truncate, or rights_base FD_WRITE.
+                write_requested = bool(args[4] & 9 or args[5] & (1 << 6))
+                if status in {2, 44, 63, 69, 76} and write_requested:
+                    self.denied_write = True
                 path = self.data(args[2], args[3]) if 0 < args[3] <= 4096 else b""
                 normalized = path.replace(b"\\", b"/")
                 relative = normalized
@@ -65,7 +70,7 @@ class FileAccess:
                     target = int.from_bytes(self.data(args[-1], 4), "little")
                     if fd == self.guest_fd and relative == self.filename:
                         self.descriptors.add(target)
-                elif (fd == self.guest_fd and status in {2, 44, 63, 76}
+                elif (not write_requested and fd == self.guest_fd and status in {2, 44, 63, 76}
                       and normalized.lower().endswith((b".txt", b".csv", b".json"))
                       and not (self.python_runtime and relative == b"pybuilddir.txt")):
                     # No host path or file content is reported outside this worker.

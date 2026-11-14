@@ -270,6 +270,9 @@ class VideoChatTests(unittest.TestCase):
             first = client.post("/api/chat/messages", json=body, headers=origin)
             response = client.post("/api/chat/messages", json={**body, "request_id": "2" * 32, "python_test": None},
                                    headers=origin)
+            self.payload["reply"] = "[需要数据文件]\n" + self.payload["reply"]
+            pending = client.post("/api/chat/messages", json={**body, "request_id": "3" * 32, "python_test": None},
+                                  headers=origin)
         self.assertEqual(first.status_code, 200, first.text)
         self.assertEqual(first.json()["local_source"]["python_check"]["status"], "passed")
         self.assertEqual(response.status_code, 200, response.text)
@@ -277,14 +280,21 @@ class VideoChatTests(unittest.TestCase):
         target = Path(source["path"])
         self.assertEqual(target.read_text(encoding="utf8"), revised)
         originals = [file for file in target.parent.glob("*.py") if file != target]
-        self.assertEqual([file.read_text(encoding="utf8") for file in originals], [original, original])
+        self.assertEqual([file.read_text(encoding="utf8") for file in originals], [original] * 3)
+        self.assertEqual(pending.status_code, 200, pending.text)
+        check = pending.json()["local_source"]["python_check"]
+        self.assertEqual((check["status"], check["attempts"]), ("awaiting_file", 0))
+        self.assertIn("授权并试跑", check["detail"])
+        run.assert_called_once()
+        verify.assert_called_once()
         self.assertEqual(source["python_check"]["attempts"], 2)
         self.assertEqual(run.call_args.args[-1].approved_file.content, "LOCAL-CANARY")
         self.assertIsNone(verify.call_args.args[-1].approved_file)
         self.assertIn("sample.txt", self.calls[0]["messages"][0]["content"])
         self.assertNotIn("sample.txt", self.calls[1]["messages"][0]["content"])
         self.assertNotIn("LOCAL-CANARY", repr(self.calls))
-        self.assertEqual(launch.call_args.args[0], [str(launcher), str(target)])
+        self.assertIn(([str(launcher), str(target)], target.parent),
+                      [call.args for call in launch.call_args_list])
 
     def test_native_source_has_buildable_project_and_falls_back_on_launch_error(self):
         from app.services.local_ide import open_generated_source

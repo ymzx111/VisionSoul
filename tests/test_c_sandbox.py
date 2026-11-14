@@ -120,6 +120,38 @@ class CSandboxTests(unittest.TestCase):
         self.assertEqual((ignored.status, ignored.stdout, ignored.data_file), ("file_unused", "", None))
         self.jobs_empty()
 
+    def test_output_write_failure_is_distinct_from_missing_input(self):
+        self.require_compiler()
+        source = """#include <stdio.h>
+#include <stdlib.h>
+int main(void) {
+    FILE *in = fopen(getenv("VISIONSOUL_DATA_FILE"), "r");
+    if (!in) return 1;
+    int value = fgetc(in);
+    fclose(in);
+    FILE *output = fopen("sorted_books.txt", "w");
+    if (!output) return 1;
+    fputc(value, output);
+    fclose(output);
+    return 0;
+}
+"""
+        test = PythonTest(approved_file={"filename": "dataset.txt", "content": "Q"})
+        blocked = run_c_sandbox(self.settings, source, "c", test)
+        self.assertEqual((blocked.status, blocked.data_file), ("failed", "dataset.txt"))
+        self.assertIn("已读取所选数据文件", blocked.detail)
+        self.assertIn("尝试写入文件", blocked.detail)
+        self.assertEqual(run_c_sandbox(self.settings, source.replace(
+            'fopen(getenv("VISIONSOUL_DATA_FILE"), "r")',
+            'fopen("sorted_books.txt", "w")',
+        ), "c", PythonTest()).status, "failed")
+
+        compatible = source.replace('FILE *output =', 'if (getenv("VISIONSOUL_SANDBOX")) {\n'
+                                    '        putchar(value);\n        return 0;\n    }\n    FILE *output =')
+        result = run_c_sandbox(self.settings, compatible, "c", test)
+        self.assertEqual((result.status, result.stdout, result.data_file), ("ran", "Q", "dataset.txt"))
+        self.jobs_empty()
+
     def test_compile_error_is_reported_without_running(self):
         self.require_compiler()
         broken = C_CODE.replace('printf("%c\\n", ch);', 'printf("%c\\n", ch)')

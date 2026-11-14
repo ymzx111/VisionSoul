@@ -52,7 +52,10 @@ def execute(module_path: Path, job: Path, filename: str | None = None) -> dict:
 
     wasi = WasiConfig()
     wasi.argv = ["program"]
-    wasi.env = [("VISIONSOUL_DATA_FILE", filename)] if filename else []
+    environment = [("VISIONSOUL_SANDBOX", "1")]
+    if filename:
+        environment.append(("VISIONSOUL_DATA_FILE", filename))
+    wasi.env = environment
     wasi.preopen_dir(str(job / "guest"), ".", fs_mutable=False)
     wasi.stdin_file = str(job / "stdin.txt")
     wasi.stdout_custom = lambda data: output(stdout, data)
@@ -95,7 +98,7 @@ def execute(module_path: Path, job: Path, filename: str | None = None) -> dict:
         limit = "output"
     return {"exit_code": code, "limit": limit, "awaiting_input": access.awaiting_input, "stdout": stdout.decode("utf-8", "replace"),
             "stderr": stderr.decode("utf-8", "replace"),
-            "file_read": access.file_read, "missing_file": access.missing_file}
+            "file_read": access.file_read, "missing_file": access.missing_file, "denied_write": access.denied_write}
 
 
 def main():

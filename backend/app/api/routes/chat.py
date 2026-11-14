@@ -197,7 +197,7 @@ def rerun_source(body: SandboxRerun, request: Request, settings: Annotated[Setti
     code, source, language, requires_file = snapshot
     test = PythonTest(stdin=body.stdin, approved_file=body.approved_file)
     if requires_file and not body.approved_file:
-        check = PythonCheck(status="awaiting_file", detail="请选择并授权本轮要读取的数据文件。", attempts=0)
+        check = PythonCheck(status="awaiting_file", detail="这道题需要本地数据。请在文件选择器里打开存放数据的目录，选中文件并授权本轮试跑。", attempts=0)
     elif language == "python":
         if not settings.python_sandbox_enabled:
             raise HTTPException(503, "本机 Python 沙箱已关闭。")
@@ -235,7 +235,7 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
 
         def await_file() -> PythonCheck:
             return PythonCheck(status="awaiting_file", attempts=0,
-                               detail="这道题需要读取文件。请选择数据文件并授权本轮读取，再点击运行。")
+                               detail="分析完成，这道题需要本地数据。请在文件选择器里打开存放数据的目录，选中文件后点击「授权并试跑」。")
 
         def show_approved_file(check: PythonCheck) -> PythonCheck:
             if not approved:
@@ -247,7 +247,7 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
                 "detail": f"AI 自测（预期输出由模型生成） · {check.detail}"})
 
         def verify_python(code: str) -> PythonCheck:
-            if requires_file and not approved:
+            if not approved and (requires_file or "VISIONSOUL_DATA_FILE" in code):
                 return await_file()
             if use_model_test:
                 return mark_model_check(run_python_sandbox(service.settings, code, model_test))
@@ -256,7 +256,7 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
             return debug_python(service.settings, service.client, turn["user_message"]["content"], code, manual_test)
 
         def verify_c(code: str, language: str) -> PythonCheck:
-            if requires_file and not approved:
+            if not approved and (requires_file or "VISIONSOUL_DATA_FILE" in code):
                 return await_file()
             if use_model_test:
                 return mark_model_check(run_c_sandbox(service.settings, code, language, model_test))

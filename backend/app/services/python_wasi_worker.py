@@ -53,7 +53,7 @@ def execute(runtime: Path, job: Path, filename: str | None = None) -> dict:
 
     wasi = WasiConfig()
     wasi.argv = ["python", "-B", "-S", "-P", "program.py"]
-    environment = [("PYTHONHOME", "/runtime"), ("PYTHONIOENCODING", "utf-8")]
+    environment = [("PYTHONHOME", "/runtime"), ("PYTHONIOENCODING", "utf-8"), ("VISIONSOUL_SANDBOX", "1")]
     if filename:
         environment.append(("VISIONSOUL_DATA_FILE", filename))
     wasi.env = environment
@@ -96,7 +96,7 @@ def execute(runtime: Path, job: Path, filename: str | None = None) -> dict:
         limit = "output"
     return {"exit_code": code, "limit": limit, "stdout": stdout.decode("utf-8", "replace"),
             "stderr": stderr.decode("utf-8", "replace"),
-            "file_read": access.file_read, "missing_file": access.missing_file}
+            "file_read": access.file_read, "missing_file": access.missing_file, "denied_write": access.denied_write}
 
 
 def main():
