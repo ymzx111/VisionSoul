@@ -14,6 +14,7 @@ from xml.sax.saxutils import escape
 
 from app.core.config import Settings
 from app.services.python_sandbox import PythonCheck, PythonTest
+from app.services.python_reruns import remember_python
 from app.services.source_files import (
     CODE_REQUEST, FENCE_BLOCK, FILE_DECLARATION, parse_generated_code, parse_generated_code_or_infer,
     save_dated_source, source_directory, write_source,
@@ -155,10 +156,13 @@ def open_generated_source(settings: Settings, turn: dict,
     if check and check.repaired_code:
         try:
             target = save_dated_source(workspace, filename, check.repaired_code)
+            code = check.repaired_code
         except (OSError, ValueError):
             logger.warning("修复版源码保存失败", exc_info=True)
             check = check.model_copy(update={"detail": "修复版在沙箱试跑成功，但写入失败。当前打开的是原始源码。"})
     result = {"path": str(target), "ide": ide, "python_check": check}
+    if extension == ".py" and verify_python is not None:
+        result["python_run_id"] = remember_python(code)
     if (not launcher or not launcher.is_absolute() or launcher.suffix.lower() != ".exe" or not launcher.is_file()
             or (ide == "Python IDLE" and not (find_spec("idlelib") and find_spec("tkinter")))):
         return {**result, "status": "saved", "detail": f"已保存源码，未找到已配置的 {ide}。"}

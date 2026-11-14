@@ -106,6 +106,55 @@ class ChatTests(unittest.TestCase):
             launch.assert_called_once_with([str(launcher), str(saved)], saved.parent)
         self.assertEqual(len(self.payloads), 4)
 
+    def test_python_rerun_binds_generated_source_and_keeps_file_permission_single_use(self):
+        if not find_spec("wasmtime") or not (self.settings.python_sandbox_runtime / "python.wasm").is_file():
+            self.skipTest("Python WASI runtime is optional")
+        root = Path(self.temp.name)
+        self.settings.local_source_workspace = root / "workspace"
+        app.dependency_overrides[get_settings] = lambda: self.settings
+        app.dependency_overrides[get_chat_service] = lambda: self.service
+        self.addCleanup(app.dependency_overrides.clear)
+        fence = chr(96) * 3
+        code = """value = input('number? ')
+print(int(value) * 2)
+try:
+    with open('sample.txt') as sample:
+        print(sample.read())
+except FileNotFoundError:
+    pass
+"""
+        reply = f"[文件名: main.py]\n{fence}python\n{code}{fence}"
+        self.service.client.complete = lambda *args, **kwargs: ModelReply(answer=reply, model="test")
+
+        async def local_app(scope, receive, send):
+            await app({**scope, "client": ("127.0.0.1", 1234)}, receive, send)
+
+        base = "http://127.0.0.1:8765"
+        local = {"Origin": base}
+        body = {"request_id": "5" * 32, "message": "写 Python", "space": "work",
+                "image_id": self.image(), "open_in_ide": True}
+        with TestClient(local_app, base_url=base) as client, patch("app.services.local_ide.launch_ide"):
+            original = client.post("/api/chat/messages", json=body, headers=local)
+            self.assertEqual(original.status_code, 200, original.text)
+            source = original.json()["local_source"]
+            self.assertEqual(source["python_check"]["status"], "awaiting_input")
+            self.assertIn("number?", source["python_check"]["stdout"])
+            saved = Path(source["path"])
+            saved.write_text("raise RuntimeError('edited file')", encoding="utf8")
+            retry = {"run_id": source["python_run_id"], "stdin": "21"}
+            approved = {"filename": "sample.txt", "content": "LOCAL-ONLY"}
+            with patch("app.services.deepseek.DeepSeekClient.complete", side_effect=AssertionError("model called")):
+                result = client.post("/api/chat/python-runs", json={**retry, "approved_file": approved}, headers=local)
+                self.assertEqual(result.status_code, 200, result.text)
+                self.assertEqual(result.json()["stdout"], "number? 42\nLOCAL-ONLY\n")
+                result = client.post("/api/chat/python-runs", json=retry, headers=local)
+                self.assertEqual(result.json()["stdout"], "number? 42\n")
+            for extra in ({"code": "print(1)"}, {"path": str(saved)}):
+                self.assertEqual(client.post("/api/chat/python-runs", json={**retry, **extra}, headers=local).status_code, 422)
+            self.assertEqual(client.post("/api/chat/python-runs", json=retry, headers={"Origin": "https://example.invalid"}).status_code, 403)
+            self.assertEqual(client.post("/api/chat/python-runs", json={**retry, "run_id": "0" * 32}, headers=local).status_code, 404)
+            self.assertEqual(list((root / "workspace" / ".sandbox-jobs").iterdir()), [])
+
     def test_two_turn_context_fixed_persona_and_persistence(self):
         first = self.send("我叫小夏")
         second = self.send("我叫什么？", "2", first["conversation_id"])

@@ -99,7 +99,7 @@ class CaseResult(BaseModel):
 
 
 class PythonCheck(BaseModel):
-    status: Literal["ran", "passed", "mismatch", "failed", "limit", "unavailable", "busy"]
+    status: Literal["ran", "passed", "mismatch", "failed", "limit", "unavailable", "busy", "awaiting_input"]
     detail: str
     stdout: str = ""
     stderr: str = ""
@@ -171,6 +171,9 @@ def _run_once(settings: Settings, code: str, stdin: str, expected: str | None,
         }
         return PythonCheck(status="limit", detail=details[result["limit"]], **data)
     if result["exit_code"] != 0:
+        last_error = result["stderr"].rstrip().splitlines()[-1:]
+        if last_error == ["EOFError: EOF when reading a line"]:
+            return PythonCheck(status="awaiting_input", detail="等待输入：请补齐标准输入后再次试跑。", **data)
         detail = "Python 程序退出失败，请查看错误输出。"
         if re.search(r"^(PermissionError|FileNotFoundError):", result["stderr"], re.MULTILINE):
             detail = "程序无法访问所需文件。若题目确实需要该文件，可在验收样例里授权，并用文件名读取。"
@@ -195,7 +198,7 @@ def run_case_matrix(run_once, test: PythonTest) -> PythonCheck:
     for index, case in enumerate(test.cases, 1):
         name = case.name.strip() or f"用例{index}"
         one = run_once(case.stdin, case.expected)
-        if one.status in {"unavailable", "busy"}:
+        if one.status in {"unavailable", "busy", "awaiting_input"}:
             return one.model_copy(update={"case_results": results})
         results.append(CaseResult(name=name, status=one.status, stdin=case.stdin,
                                   expected=case.expected, stdout=one.stdout, stderr=one.stderr,

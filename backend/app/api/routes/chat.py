@@ -17,7 +17,8 @@ from app.services.videos import VideoService, VideoError
 from app.services.audio_evidence import current_context
 from app.services.local_ide import open_generated_source, split_model_cases
 from app.services.c_sandbox import debug_c, run_c_sandbox
-from app.services.python_sandbox import PythonCheck, PythonTest, debug_python, run_python_sandbox
+from app.services.python_reruns import python_snapshot
+from app.services.python_sandbox import ApprovedFile, PythonCheck, PythonTest, debug_python, run_python_sandbox
 
 router = APIRouter(prefix="/api/chat", tags=["伙伴对话"])
 Identifier = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
@@ -61,6 +62,7 @@ class LocalSourceResult(BaseModel):
     path: str | None = None
     ide: str | None = None
     python_check: PythonCheck | None = None
+    python_run_id: Identifier | None = None
 
 
 class ChatTurn(BaseModel):
@@ -163,6 +165,31 @@ def classify_conversation(conversation_id: Annotated[str, Path(pattern=r"^[0-9a-
         raise HTTPException(503, "旧话题暂时无法分类，请稍后重试。") from exc
 
 
+def is_local_browser(request: Request) -> bool:
+    loopback = {"127.0.0.1", "::1", "localhost"}
+    return bool(request.client and request.client.host in loopback and request.url.hostname in loopback
+                and request.headers.get("origin") == f"{request.url.scheme}://{request.url.netloc}")
+
+
+class PythonRerun(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    run_id: Identifier
+    stdin: str = Field(default="", max_length=4096)
+    approved_file: ApprovedFile | None = None
+
+
+@router.post("/python-runs", response_model=PythonCheck, summary="补充输入并在本机重新试跑 Python")
+def rerun_python(body: PythonRerun, request: Request, settings: Annotated[Settings, Depends(get_settings)]) -> PythonCheck:
+    if not is_local_browser(request):
+        raise HTTPException(403, "请从本机工作台发起试跑。")
+    if not settings.python_sandbox_enabled:
+        raise HTTPException(503, "本机 Python 沙箱已关闭。")
+    code = python_snapshot(body.run_id)
+    if code is None:
+        raise HTTPException(404, "这份源码的试跑入口已失效，请在新的代码回复中试跑。")
+    return run_python_sandbox(settings, code, PythonTest(stdin=body.stdin, approved_file=body.approved_file))
+
+
 @router.post("/messages", response_model=ChatTurn, summary="发送消息给小灵（产生 API 用量）")
 def send_message(body: SendMessage, request: Request, service: Annotated[ChatService, Depends(get_chat_service)]) -> dict:
     try:
@@ -170,13 +197,7 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
     except DeepSeekError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
 
-    # 桌面动作只由同源、本机网页的显式请求触发。
-    loopback = {"127.0.0.1", "::1", "localhost"}
-    origin = request.headers.get("origin")
-    local_browser = (request.client and request.client.host in loopback
-                     and request.url.hostname in loopback
-                     and origin == f"{request.url.scheme}://{request.url.netloc}")
-    if (body.open_in_ide and local_browser and turn["space"] == "work"
+    if (body.open_in_ide and is_local_browser(request) and turn["space"] == "work"
             and (turn["image_id"] or turn["video_id"]) and not body.inspect_video and not body.debug_code and not turn["replayed"] and not turn["truncated"]):
         manual_test = body.python_test or PythonTest()
         _, model_test = split_model_cases(turn["assistant_message"]["content"])

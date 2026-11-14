@@ -1,5 +1,83 @@
 import { useEffect, useRef, useState } from 'react';
 
+async function readApprovedFile(file) {
+  if (file.size > 8192 || !/\.(txt|csv|json)$/i.test(file.name)) throw new Error();
+  const content = new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer());
+  return { filename: file.name, content };
+}
+
+function PythonRun({ initial, runId, disabled }) {
+  const [latest, setLatest] = useState(null);
+  const [input, setInput] = useState('');
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState('');
+  const filePicker = useRef(null);
+  const result = latest || initial;
+
+  async function rerun(event) {
+    event.preventDefault();
+    if (running || disabled) return;
+    setRunning(true);
+    setError('');
+    try {
+      const file = filePicker.current?.files[0];
+      const body = { run_id: runId, stdin: input };
+      if (file) {
+        try { body.approved_file = await readApprovedFile(file); }
+        catch {
+          setError('请选择不超过 8 KiB 的 UTF-8 TXT、CSV 或 JSON 文件。');
+          return;
+        }
+      }
+      const response = await fetch('/api/chat/python-runs', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : '试跑请求无效，请检查输入。');
+      setLatest(data);
+    } catch (error) {
+      setError(error instanceof TypeError ? '连接中断，请重新试跑。' : error.message);
+    } finally {
+      if (filePicker.current) filePicker.current.value = '';
+      setRunning(false);
+    }
+  }
+
+  return <div className="python-check python-run">
+    <strong>Python 运行结果</strong>
+    <p role="status">{running ? '正在本机沙箱试跑…' : result.detail}</p>
+    {!!result.case_results?.length && result.status !== 'awaiting_input' ? <ul className="python-case-results">
+      {result.case_results.map((row, index) => <li key={index}>
+        <strong>{row.name} · {row.status === 'passed' ? '通过' : '未通过'}</strong>
+        <pre>输入：{row.stdin || '（空）'}</pre>
+        <pre>预期：{row.expected || '（空）'}</pre>
+        <pre>实际：{row.stdout || '（无输出）'}</pre>
+        {row.stderr && <pre>{row.stderr}</pre>}
+      </li>)}
+    </ul> : <>
+      <strong>实际输出</strong>
+      <pre>{result.stdout || '（无输出）'}</pre>
+      {result.stderr && result.status !== 'awaiting_input' && <><strong>错误输出</strong><pre>{result.stderr}</pre></>}
+    </>}
+    {initial.repair_usage && <p>修复模型用量 {initial.repair_usage.total_tokens} token</p>}
+    {initial.repaired_code && <details><summary>修复版源码</summary><pre>{initial.repaired_code}</pre></details>}
+    {error && <p className="notice notice-error" role="alert">{error}</p>}
+    <details open={result.status === 'awaiting_input' ? true : undefined}>
+      <summary>补充输入并试跑</summary>
+      <form onSubmit={rerun} className="python-test">
+        <label>标准输入
+          <textarea rows={3} maxLength={4096} value={input} disabled={running || disabled}
+            onChange={event => setInput(event.target.value)} placeholder="按题目格式一次填完所有输入"/>
+        </label>
+        <label>本轮只读文件（可选）
+          <input type="file" accept=".txt,.csv,.json" ref={filePicker} disabled={running || disabled}/>
+        </label>
+        <button className="button button-secondary" type="submit" disabled={running || disabled}>本机试跑</button>
+      </form>
+    </details>
+  </div>;
+}
+
 export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
   const scroll = useRef(null);
   const chat = state.chat;
@@ -39,9 +117,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
       if (approvedFile) {
         setReadingFile(true);
         try {
-          if (approvedFile.size > 8192 || !/\.(txt|csv|json)$/i.test(approvedFile.name)) throw new Error();
-          const content = new TextDecoder('utf-8', { fatal: true }).decode(await approvedFile.arrayBuffer());
-          pythonTest.approved_file = { filename: approvedFile.name, content };
+          pythonTest.approved_file = await readApprovedFile(approvedFile);
         } catch {
           setTestError('请选择不超过 8 KiB 的 UTF-8 TXT、CSV 或 JSON 文件。');
           return;
@@ -82,7 +158,9 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
           {item.video_id && <span className="shared-video-chip">▷ 已分享视频</span>}
           {item.image_id && <a href={`/api/images/${item.image_id}`} target="_blank" rel="noreferrer" className="chat-image-link"><img src={`/api/images/${item.image_id}`} width="160" height="110" alt="这一轮分享的图片"/></a>}
           <p data-testid={item.role === 'assistant' ? 'media-analysis-message' : undefined}>{item.content}</p>
-          {check && item.id === chat.messages.at(-1)?.id && <details className="python-check">
+          {check && chat.localSource?.python_run_id && item.id === chat.messages.at(-1)?.id &&
+            <PythonRun key={chat.localSource.python_run_id} initial={check} runId={chat.localSource.python_run_id} disabled={busy}/>}
+          {check && !chat.localSource?.python_run_id && item.id === chat.messages.at(-1)?.id && <details className="python-check">
             <summary>沙箱验收 · {check.detail}</summary>
             {check.exit_code != null && <p>退出码 {check.exit_code} · 试跑 {check.attempts} 次</p>}
             {!!check.case_results?.length && <ul className="python-case-results">
