@@ -12,7 +12,7 @@ async function readApprovedFile(file) {
 }
 
 function withoutDeliveredSource(content, delivered) {
-  if (delivered) content = content.replace(/^\s*\[需要数据文件\][ \t]*$/gm, '').trim();
+  if (delivered) content = content.replace(/^[ \t]*\[(?:需要数据文件|输出文件\s*[:：][^\]\r\n]+)\][ \t]*\r?\n?/gm, '').trim();
   const text = content.replace(/\r\n/g, '\n');
   const source = /^(?:[ \t]*\[语言\s*[:：][^\n]+\][ \t]*\n)?[ \t]*\[文件名\s*[:：][^\n\]]+\.(?:py|c|cpp|cc|cxx)[ \t]*\][ \t]*\n(?:[ \t]*\n)*[ \t]*(`{3,})[ \t]*(?:python|py|c|cpp|c\+\+|cc)[ \t]*\n[\s\S]*?^[ \t]*\1[ \t]*(?:\n|$)/gim;
   const fallback = /^[ \t]*(`{3,})[ \t]*(?:python|py|c|cpp|c\+\+|cc)[ \t]*\n[\s\S]*?^[ \t]*\1[ \t]*(?:\n|$)/gim;
@@ -73,6 +73,7 @@ function SandboxRun({ initial, runId, disabled }) {
     <p role="status">{running ? '正在本机沙箱试跑…' : ['awaiting_input', 'awaiting_file', 'file_unused'].includes(result.status)
       ? result.detail : result.desktop_result_opened ? '试跑结果已发送到桌面。'
         : result.detail}</p>
+    {result.output_path && <p>结果文件已保存 <code>{result.output_path}</code></p>}
     {!waitingForFile && !result.desktop_result_opened && <details>
       <summary>查看备用输出</summary>
       {!!result.case_results?.length ? result.case_results.map((row, index) =>

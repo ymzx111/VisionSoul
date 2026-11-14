@@ -24,6 +24,32 @@ from app.services.source_files import (
 
 logger = logging.getLogger(__name__)
 REQUIRES_DATA_FILE = re.compile(r"^\s*\[需要数据文件\]\s*$", re.MULTILINE)
+TEXT_FILE_MENTION = re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]+\.txt(?![A-Za-z0-9_-])", re.IGNORECASE)
+
+
+def reusable_file_task(clarification: str, prior_replies: list[str]) -> str | None:
+    """Reuse Python code only for an already-seen pair of whitespace-delimited TXT files."""
+    if FENCE_BLOCK.search(clarification) or "空格分隔" not in clarification:
+        return None
+    if not re.search(r"请(?:先)?确认[^。\n]*(?:字段|记录|分隔)", clarification):
+        return None
+    filenames = {name.casefold() for name in TEXT_FILE_MENTION.findall(clarification)}
+    if len(filenames) != 2:
+        return None
+    for reply in prior_replies:
+        try:
+            filename, code = parse_generated_code(reply)
+        except ValueError:
+            continue
+        if (Path(filename).suffix != ".py" or "VISIONSOUL_DATA_FILE" not in code
+                or not re.search(r"\.split\(\s*\)", code)
+                or not filenames.issubset({name.casefold() for name in TEXT_FILE_MENTION.findall(code)})):
+            continue
+        return (
+            "已沿用这段视频先前交付的空白分隔格式。请选择并授权本轮数据文件。\n\n"
+            f"[需要数据文件]\n[文件名: {filename}]\n```python\n{code}```\n"
+        )
+    return None
 CODE_DELIVERY_TASK = (Path(__file__).resolve().parents[1] / "prompts" / "code_delivery.md").read_text(encoding="utf-8").strip()
 
 
@@ -86,7 +112,7 @@ def show_sandbox_result(source: Path, check: PythonCheck, *, run_id: str | None 
     launcher = Path(sys.executable).with_name("pythonw.exe")
     if os.name != "nt" or not launcher.is_file() or not find_spec("tkinter"):
         return False
-    fields = {"detail", "status", "stdin", "stdout", "stderr", "phase", "case_source", "data_file"}
+    fields = {"detail", "status", "stdin", "stdout", "stderr", "phase", "case_source", "data_file", "output_path"}
     result = check.model_dump(include=fields)
     result["case_results"] = [row.model_dump(include={"name", "status", "stdin", "stdout", "stderr", "phase"})
                               for row in check.case_results or []]
@@ -141,7 +167,8 @@ def split_model_cases(reply: str) -> tuple[str, PythonTest]:
 def open_generated_source(settings: Settings, turn: dict,
                           verify_python: Callable[[str], PythonCheck] | None = None,
                           verify_c: Callable[[str, str], PythonCheck] | None = None, *,
-                          origin: str | None = None, requires_file: bool = False) -> dict | None:
+                          origin: str | None = None, requires_file: bool = False,
+                          output_name: str | None = None) -> dict | None:
     reply = turn["assistant_message"]["content"]
     requested = bool(CODE_REQUEST.search(((turn.get("user_message") or {}).get("content") or "")))
     declared = bool(FILE_DECLARATION.search(reply))
@@ -204,7 +231,7 @@ def open_generated_source(settings: Settings, turn: dict,
             check = check.model_copy(update={"detail": "修复版在沙箱试跑成功，但写入失败。当前打开的是原始源码。"})
     result = {"path": str(target), "ide": ide, "python_check": check}
     if check is not None:
-        run_id = remember_source(code, target, language, requires_file or check.status == 'awaiting_file')
+        run_id = remember_source(code, target, language, requires_file or check.status == 'awaiting_file', output_name)
         result["sandbox_run_id"] = run_id
         if language == "python":
             result["python_run_id"] = run_id

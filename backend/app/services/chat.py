@@ -15,7 +15,7 @@ from app.services.videos import VideoError, VideoService
 from app.services.role_store import RoleStore
 from app.services.audio_evidence import AudioTranscript, AudioLink, add_time_citations, current_context, model_context
 from app.services.video_reading import needs_text_refresh
-from app.services.local_ide import CODE_DELIVERY_TASK
+from app.services.local_ide import CODE_DELIVERY_TASK, reusable_file_task
 
 
 class TurnLocks:
@@ -170,6 +170,10 @@ class ChatService:
                         prior = context_messages(history,self.settings,message,len(memory_text),persona_prompt)
                         video_context, result = videos.start_conversation(attached_video,message,prior[1:],memory_text=memory_text)
                         video_context["opening_message"] = display_message
+                        if source_delivery and not conversation and not message and result and not result.truncated:
+                            reused = reusable_file_task(result.answer, self.store.prior_video_replies(attached_video))
+                            if reused:
+                                result = result.model_copy(update={"answer": reused})
                     elif attached_video and needs_text_refresh(message, video_context):
                         prior = context_messages(history, self.settings, message, len(memory_text), persona_prompt)
                         opening = video_context.get("opening_message", message)

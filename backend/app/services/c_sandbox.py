@@ -17,7 +17,7 @@ from app.services.deepseek import DeepSeekClient, DeepSeekError, add_usage
 from app.services.python_sandbox import (
     MAX_REPAIR_ATTEMPTS, PythonCheck, PythonTest, check_data_file, denied_output_detail, run_case_matrix,
 )
-from app.services.source_files import ensure_workspace_path, parse_generated_code, source_directory
+from app.services.source_files import WINDOWS_DEVICE, ensure_workspace_path, parse_generated_code, source_directory
 
 logger = logging.getLogger(__name__)
 RUN_LOCK = Lock()
@@ -42,6 +42,17 @@ LIMIT_DETAIL = {"output": "输出超过 16 KiB 上限，沙箱已停止。",
                 "trap": "运行被隔离器终止。"}
 COMPILE_ERROR = re.compile(r"main\.(?:c|cpp):(\d+):(\d+): error: (.+)")
 RUNTIME_LINE = re.compile(r"main\.(?:c|cpp):(\d+)")
+# A selected file can replace a single literal read-only input in older C source.
+LITERAL_INPUT = re.compile(r'\bfopen\s*\(\s*"([\w-][\w .-]{0,114}\.(?:txt|csv|json))"\s*,\s*"r[bt]?"\s*\)',
+                           re.IGNORECASE)
+
+
+def c_literal_input(code: str) -> str | None:
+    candidates = set(LITERAL_INPUT.findall(code))
+    if len(candidates) != 1:
+        return None
+    name = next(iter(candidates))
+    return None if WINDOWS_DEVICE.fullmatch(name.split(".", 1)[0].rstrip()) else name
 
 
 def _repair_system(language: str) -> str:
@@ -97,7 +108,7 @@ def run_compiler(bundle: Path, language: str, code: str, directory: Path) -> dic
 
 
 def _run_once(settings: Settings, code: str, language: str, stdin: str, expected: str | None,
-              approved_file, cache_root: Path) -> PythonCheck:
+              approved_file, cache_root: Path, *, compile_only: bool = False) -> PythonCheck:
     spec = LANGUAGES[language]
     compiler = settings.c_sandbox_compiler
     if not RUN_LOCK.acquire(blocking=False):
@@ -126,12 +137,17 @@ def _run_once(settings: Settings, code: str, language: str, stdin: str, expected
                     raise ValueError("invalid compiler artifact")
                 with module.open("xb") as output:
                     output.write(artifact)
+            if compile_only:
+                return PythonCheck(status="awaiting_file", phase="compile",
+                                   detail="代码已在沙箱编译通过。请选择真实数据文件，再点击「授权并试跑」。")
+            guest_filename = None
             if approved_file:
-                (guest / approved_file.filename).write_text(
+                guest_filename = (None if "VISIONSOUL_DATA_FILE" in code else c_literal_input(code)) or approved_file.filename
+                (guest / guest_filename).write_text(
                     approved_file.content, encoding="utf-8", newline="\n")
             executed = subprocess.run(
                 [sys.executable, "-I", "-B", str(WORKER), str(module), str(job),
-                 *([approved_file.filename] if approved_file else [])],
+                 *([guest_filename] if guest_filename else [])],
                 cwd=job, env=_allowed_env(), stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -160,6 +176,8 @@ def _run_once(settings: Settings, code: str, language: str, stdin: str, expected
     if result["exit_code"] != 0:
         detail = denied_output_detail(result) or f"{spec['label']} 程序退出失败，请查看错误输出。"
         return PythonCheck(status="failed", detail=detail, **data)
+    if approved_file and result.get("denied_write"):
+        return PythonCheck(status="failed", detail=denied_output_detail(result), **data)
     if expected is None:
         return PythonCheck(status="ran", detail="已在沙箱编译并运行。未提供预期输出，未判定题目正确性。", **data)
     if _compare(result["stdout"], expected):
@@ -167,7 +185,8 @@ def _run_once(settings: Settings, code: str, language: str, stdin: str, expected
     return PythonCheck(status="mismatch", detail="程序已运行，输出与预期不一致。", **data)
 
 
-def run_c_sandbox(settings: Settings, code: str, language: str, test: PythonTest) -> PythonCheck:
+def run_c_sandbox(settings: Settings, code: str, language: str, test: PythonTest,
+                  *, compile_only: bool = False) -> PythonCheck:
     """同一轮同一份源码只编译一次，每组用例使用同一份临时 Wasm。"""
     if language not in LANGUAGES:
         raise ValueError("只支持 C 与 C++。")
@@ -180,7 +199,7 @@ def run_c_sandbox(settings: Settings, code: str, language: str, test: PythonTest
     with TemporaryDirectory(prefix="c-cache-", dir=jobs) as cache:
         return run_case_matrix(
             lambda stdin, expected: _run_once(settings, code, language, stdin, expected,
-                                              test.approved_file, Path(cache)), test)
+                                              test.approved_file, Path(cache), compile_only=compile_only), test)
 
 
 def _repair_payload(task: str, code: str, check: PythonCheck) -> dict:

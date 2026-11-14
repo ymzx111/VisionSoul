@@ -17,9 +17,12 @@ from app.services.deepseek import DeepSeekError, TokenUsage, has_api_key
 from app.services.videos import VideoService, VideoError
 from app.services.audio_evidence import current_context
 from app.services.local_ide import REQUIRES_DATA_FILE, open_generated_source, show_sandbox_result, split_model_cases
-from app.services.c_sandbox import debug_c, run_c_sandbox
+from app.services.c_sandbox import c_literal_input, debug_c, run_c_sandbox
 from app.services.code_reruns import source_snapshot
-from app.services.python_sandbox import ApprovedFile, PythonCheck, PythonTest, debug_python, run_python_sandbox
+from app.services.python_sandbox import (
+    ApprovedFile, PythonCheck, PythonTest, check_python_before_data, debug_python, run_python_sandbox,
+)
+from app.services.sandbox_output import c_text_output, declared_text_output, python_text_output, save_sandbox_output
 
 router = APIRouter(prefix="/api/chat", tags=["伙伴对话"])
 Identifier = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
@@ -194,18 +197,21 @@ def rerun_source(body: SandboxRerun, request: Request, settings: Annotated[Setti
     snapshot = source_snapshot(body.run_id)
     if snapshot is None:
         raise HTTPException(404, "这份源码的试跑入口已失效，请在新的代码回复中试跑。")
-    code, source, language, requires_file = snapshot
+    code, source, language, requires_file, output_name = snapshot
     test = PythonTest(stdin=body.stdin, approved_file=body.approved_file)
     if requires_file and not body.approved_file:
         check = PythonCheck(status="awaiting_file", detail="这道题需要本地数据。请在文件选择器里打开存放数据的目录，选中文件并授权本轮试跑。", attempts=0)
     elif language == "python":
         if not settings.python_sandbox_enabled:
             raise HTTPException(503, "本机 Python 沙箱已关闭。")
+        code, output_name = python_text_output(code, output_name)
         check = run_python_sandbox(settings, code, test)
     else:
         if not settings.c_sandbox_enabled:
             raise HTTPException(503, "本机 C/C++ 沙箱已关闭。")
+        code, output_name = c_text_output(code, output_name)
         check = run_c_sandbox(settings, code, language, test)
+    check = save_sandbox_output(settings.local_source_workspace, output_name, check)
     if body.approved_file:
         check = check.model_copy(update={"detail": f"本轮选择：{body.approved_file.filename} · {check.detail}"})
     opened = body.open_result_window and show_sandbox_result(source, check, run_id=body.run_id,
@@ -227,15 +233,14 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
     if (local_delivery and turn["space"] == "work" and (turn["image_id"] or turn["video_id"])
             and not turn["replayed"] and not turn["truncated"]):
         manual_test = body.python_test or PythonTest()
-        _, model_test = split_model_cases(turn["assistant_message"]["content"])
+        reply = turn["assistant_message"]["content"]
+        _, model_test = split_model_cases(reply)
+        output_name = declared_text_output(reply)
+        workspace = service.settings.local_source_workspace
         file_in_request = re.search(
             r"(?:[a-zA-Z]:[\\/]|\\\\)[^\n]*?\.(?:txt|csv|json)\b", body.message, re.IGNORECASE)
         requires_file = bool(approved or file_in_request or REQUIRES_DATA_FILE.search(turn["assistant_message"]["content"]))
-        use_model_test = not requires_file and not manual_test.has_local_data and bool(model_test.cases)
-
-        def await_file() -> PythonCheck:
-            return PythonCheck(status="awaiting_file", attempts=0,
-                               detail="分析完成，这道题需要本地数据。请在文件选择器里打开存放数据的目录，选中文件后点击「授权并试跑」。")
+        use_model_test = not output_name and not requires_file and not manual_test.has_local_data and bool(model_test.cases)
 
         def show_approved_file(check: PythonCheck) -> PythonCheck:
             if not approved:
@@ -248,25 +253,29 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
 
         def verify_python(code: str) -> PythonCheck:
             if not approved and (requires_file or "VISIONSOUL_DATA_FILE" in code):
-                return await_file()
+                return check_python_before_data(code)
+            runtime_code, result_name = python_text_output(code, output_name)
+            if approved or result_name:
+                check = run_python_sandbox(service.settings, runtime_code, manual_test)
+                return show_approved_file(save_sandbox_output(workspace, result_name, check))
             if use_model_test:
                 return mark_model_check(run_python_sandbox(service.settings, code, model_test))
-            if approved:
-                return show_approved_file(run_python_sandbox(service.settings, code, manual_test))
             return debug_python(service.settings, service.client, turn["user_message"]["content"], code, manual_test)
 
         def verify_c(code: str, language: str) -> PythonCheck:
-            if not approved and (requires_file or "VISIONSOUL_DATA_FILE" in code):
-                return await_file()
+            runtime_code, result_name = c_text_output(code, output_name)
+            if not approved and (requires_file or "VISIONSOUL_DATA_FILE" in code or c_literal_input(code)):
+                return run_c_sandbox(service.settings, runtime_code, language, PythonTest(), compile_only=True)
+            if approved or result_name:
+                check = run_c_sandbox(service.settings, runtime_code, language, manual_test)
+                return show_approved_file(save_sandbox_output(workspace, result_name, check))
             if use_model_test:
                 return mark_model_check(run_c_sandbox(service.settings, code, language, model_test))
-            if approved:
-                return show_approved_file(run_c_sandbox(service.settings, code, language, manual_test))
             return debug_c(service.settings, service.client, turn["user_message"]["content"], code, language, manual_test)
 
         turn["local_source"] = open_generated_source(
             service.settings, turn,
             verify_python if service.settings.python_sandbox_enabled else None,
             verify_c if service.settings.c_sandbox_enabled else None,
-            origin=f"{request.url.scheme}://{request.url.netloc}", requires_file=requires_file)
+            origin=f"{request.url.scheme}://{request.url.netloc}", requires_file=requires_file, output_name=output_name)
     return turn

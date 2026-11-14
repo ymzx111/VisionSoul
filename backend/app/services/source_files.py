@@ -9,7 +9,8 @@ import re
 CODE_BLOCK = re.compile(
     r"^(?:[ \t]*\[语言[ \t]*[:：][ \t]*(?P<declared>[^\]\n]+)\][ \t]*\n)?"
     r"[ \t]*\[文件名[ \t]*[:：][ \t]*(?P<filename>[^\]\n]+)\][ \t]*\n"
-    r"(?:[ \t]*\n)*[ \t]*(?P<fence>`{3,})[ \t]*(?P<language>[\w+#-]+)[ \t]*\n"
+    r"(?:[ \t]*(?:\[(?:需要数据文件|输出文件[ \t]*[:：][^\]\n]+)\][ \t]*)?\n)*"
+    r"[ \t]*(?P<fence>`{3,})[ \t]*(?P<language>[\w+#-]+)[ \t]*\n"
     r"(?P<code>[\s\S]*?)^[ \t]*(?P=fence)[ \t]*(?:\n|\Z)",
     re.MULTILINE,
 )

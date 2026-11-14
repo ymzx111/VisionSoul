@@ -148,6 +148,36 @@ class VideoChatTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
         self.assertFalse(pictures(self.calls[0]))
 
+    def test_same_work_video_reuses_python_file_delivery_after_format_question(self):
+        fence = chr(96) * 3
+        code = (
+            "import os\n"
+            "with open(os.getenv('VISIONSOUL_DATA_FILE', 'inventory.txt')) as data:\n"
+            "    records = [line.split() for line in data]\n"
+            "with open('restock_order.txt', 'w') as output:\n"
+            "    output.write(str(records))\n"
+        )
+        self.payload["reply"] = f"[文件名: main.py]\n{fence}python\n{code}{fence}"
+        def send(request, video_id=None, space="work"):
+            return self.chat.send(conversation_id=None, request_id=request * 32, message="",
+                                  image_id=None, video_id=video_id or self.video.video_id, space=space)
+        send("1")
+        question = "读取inventory.txt并写出restock_order.txt及屏幕统计。请先确认库存记录是否空格分隔。"
+        self.payload["reply"] = question
+        reused = send("2")["assistant_message"]["content"]
+        self.assertIn("[需要数据文件]", reused)
+        self.assertIn(code, reused)
+        self.assertEqual(len(self.calls), 2)
+        self.assertNotIn("output.write", json.dumps(self.calls[-1]["messages"], ensure_ascii=False))
+
+        other_path = Path(self.temp.name) / "other.mp4"
+        other_path.write_bytes(self.data + b"\x00")
+        with other_path.open("rb") as file:
+            other = self.videos.upload(file)
+        self.assertNotEqual(other.video_id, self.video.video_id)
+        self.assertEqual(send("3", other.video_id)["assistant_message"]["content"], question)
+        self.assertEqual(send("4", space="companion")["assistant_message"]["content"], question)
+
     def test_opening_share_survives_recent_window_and_latest_correction_is_included(self):
         first = self.send()
         for index in range(2, 9):
@@ -207,7 +237,7 @@ class VideoChatTests(unittest.TestCase):
         self.settings.local_source_workspace = root / "workspace"
         fence = chr(96) * 3
         code = 'print("VisionSoul")\n'
-        self.payload["reply"] = f"[语言: Python]\n[文件名: main.py]\n\n{fence}python\n{code}{fence}"
+        self.payload["reply"] = f"[语言: Python]\n[文件名: main.py]\n[需要数据文件]\n\n{fence}python\n{code}{fence}"
         app.dependency_overrides[get_chat_service] = lambda: self.chat
         self.addCleanup(app.dependency_overrides.clear)
 
@@ -229,7 +259,12 @@ class VideoChatTests(unittest.TestCase):
             self.assertEqual(target.name, f"{date.today():%Y.%m.%d}.main.py")
             self.assertEqual(target.read_text(encoding="utf8"), code)
             self.assertEqual(launch.call_args.args[0], [str(launcher), str(target)])
-            self.assertIn("[文件名: main.c]", self.calls[0]["messages"][0]["content"])
+            prompt = self.calls[0]["messages"][0]["content"]
+            self.assertIn("[文件名: main.c]", prompt)
+            self.assertIn("按时间顺序检查本轮全部提供的画面", prompt)
+            self.assertIn("能确定读入什么、怎样处理和应交付什么，就直接生成代码", prompt)
+            self.assertIn("用户说稍后提供数据时，继续按可读的题面生成完整源码", prompt)
+            self.assertIn("只有对照预期输出通过后，才把运行结果称为已验收", prompt)
             replay = client.post("/api/chat/messages", json=body, headers=origin).json()
             self.assertTrue(replay["replayed"])
             self.assertIsNone(replay["local_source"])
@@ -284,6 +319,8 @@ class VideoChatTests(unittest.TestCase):
         self.assertEqual(pending.status_code, 200, pending.text)
         check = pending.json()["local_source"]["python_check"]
         self.assertEqual((check["status"], check["attempts"]), ("awaiting_file", 0))
+        self.assertEqual(check["phase"], "compile")
+        self.assertIn("通过语法检查", check["detail"])
         self.assertIn("授权并试跑", check["detail"])
         run.assert_called_once()
         verify.assert_called_once()

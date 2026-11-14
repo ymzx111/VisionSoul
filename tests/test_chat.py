@@ -172,9 +172,20 @@ if os.path.isfile('sample.txt'):
         app.dependency_overrides[get_chat_service] = lambda: self.service
         self.addCleanup(app.dependency_overrides.clear)
         source = (
+            "OUT_FILE = 'restock_order.txt'\n"
+            "with open('inventory.txt', encoding='utf-8') as data:\n"
+            "    rows = [line for line in data if int(line.split()[1]) < 5]\n"
             "import os\n"
-            "with open(os.getenv('VISIONSOUL_DATA_FILE', 'from-video.txt')) as data:\n"
-            "    print(data.read())\n"
+            "if os.getenv('VISIONSOUL_SANDBOX') == '1':\n"
+            "    print('[VISIONSOUL_OUTPUT_BEGIN]')\n"
+            "    print(''.join(rows), end='')\n"
+            "    print('[VISIONSOUL_OUTPUT_END]')\n"
+            "else:\n"
+            "    with open(OUT_FILE, 'w', encoding='utf-8') as output:\n"
+            "        output.writelines(rows)\n"
+            "print('需要补货的物资列表：')\n"
+            "print(''.join(rows), end='')\n"
+            "print('低库存：', len(rows))\n"
         )
         fence = chr(96) * 3
         reply = f"[需要数据文件]\n[文件名: main.py]\n{fence}python\n{source}{fence}"
@@ -198,11 +209,16 @@ if os.path.isfile('sample.txt'):
             rerun = {"run_id": delivery["sandbox_run_id"], "open_result_window": False}
             self.assertEqual(client.post("/api/chat/sandbox-runs", json=rerun).json()["status"], "awaiting_file")
             result = client.post("/api/chat/sandbox-runs", json={**rerun, "approved_file": {
-                "filename": "chosen.txt", "content": "LOCAL-ONLY",
+                "filename": "仓库数据.txt", "content": "杯子 3\n笔 12\n",
             }}).json()
             self.assertEqual(result["status"], "ran", result)
-            self.assertEqual(result["data_file"], "chosen.txt")
-            self.assertEqual(result["stdout"], "LOCAL-ONLY\n")
+            self.assertEqual(result["data_file"], "仓库数据.txt")
+            self.assertEqual(result["stdout"], "需要补货的物资列表：\n杯子 3\n低库存： 1\n")
+            output = Path(result["output_path"])
+            self.assertEqual(output.name, "restock_order.txt")
+            self.assertEqual(output.parent.parent, self.settings.local_source_workspace / "outputs")
+            self.assertEqual(output.read_text(encoding="utf-8"), "杯子 3\n")
+            self.assertEqual(Path(delivery["path"]).read_text(encoding="utf-8"), source)
 
     def test_c_and_cpp_desktop_delivery_and_local_rerun(self):
         if not self.settings.c_sandbox_compiler.is_file():

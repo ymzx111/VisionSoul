@@ -6,6 +6,7 @@
 - 试跑失败或输出不符时，最多回传 3 次结构化错误让模型修复。
 - 带验收样例时只回传异常类型与行号，stdout/stderr 不出本机。
 """
+import ast
 import json
 import logging
 import os
@@ -73,6 +74,31 @@ class CaseSpec(BaseModel):
     expected: str | None = Field(max_length=4096)
 
 
+def python_input_name(code: str, selected: str) -> str:
+    """Stage the approved file under one unambiguous literal input name."""
+    if "VISIONSOUL_DATA_FILE" in code:
+        return selected
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return selected
+    inputs = set()
+    for call in ast.walk(tree):
+        if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "open"
+                and call.args and isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str)):
+            continue
+        mode = call.args[1] if len(call.args) > 1 else next(
+            (kw.value for kw in call.keywords if kw.arg == "mode"), ast.Constant("r"))
+        if isinstance(mode, ast.Constant) and mode.value in ("r", "rt", "rb"):
+            inputs.add(call.args[0].value)
+    if len(inputs) != 1:
+        return selected
+    try:
+        return ApprovedFile.plain_text_filename(next(iter(inputs)))
+    except ValueError:
+        return selected
+
+
 class PythonTest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     # 兼容旧版单组样例；有 cases 时以 cases 为准。
@@ -111,6 +137,7 @@ class PythonCheck(BaseModel):
     case_results: list[CaseResult] | None = None
     case_source: Literal["model"] | None = None
     data_file: str | None = None
+    output_path: str | None = None
     # C 链路用：区分"编译失败"与"运行失败"。
     phase: Literal["compile", "run"] | None = None
 
@@ -120,7 +147,7 @@ def check_data_file(result: dict, approved_file: ApprovedFile | None, data: dict
     if approved_file:
         if not result.get("file_read") and (result.get("exit_code") == 0 or result.get("missing_file")):
             return PythonCheck(status="file_unused",
-                               detail=f"程序没有读取所选文件「{approved_file.filename}」。请核对源码里的文件名后再试。",
+                               detail=f"程序没有读取所选文件「{approved_file.filename}」。请检查代码是否使用了本轮数据文件，或要求重新生成完整代码后试跑。",
                                stderr=result["stderr"], exit_code=result["exit_code"], phase=data.get("phase"))
         if result.get("file_read"):
             data["data_file"] = approved_file.filename
@@ -137,6 +164,17 @@ def denied_output_detail(result: dict) -> str | None:
         prefix = "已读取所选数据文件，但" if result.get("file_read") else ""
         return f"{prefix}程序尝试写入文件，导致试跑中断。请让程序将结果打印到桌面窗口后再试。"
     return None
+
+
+def check_python_before_data(code: str) -> PythonCheck:
+    """Compile Python in memory to report syntax errors without executing it."""
+    try:
+        compile(code, "program.py", "exec", dont_inherit=True)
+    except SyntaxError as exc:
+        return PythonCheck(status="failed", phase="compile", detail="Python 源码检查未通过。",
+                           stderr=f"第 {exc.lineno or 1} 行：{exc.msg}")
+    return PythonCheck(status="awaiting_file", phase="compile", attempts=0,
+                       detail="代码已通过语法检查。请选择真实数据文件，再点击「授权并试跑」。")
 
 
 def _compare(actual: str, expected: str) -> bool:
@@ -166,15 +204,17 @@ def _run_once(settings: Settings, code: str, stdin: str, expected: str | None,
             ensure_workspace_path(guest, workspace)
             (guest / "program.py").write_text(code, encoding="utf-8")
             (job / "stdin.txt").write_text(stdin, encoding="utf-8", newline="\n")
+            guest_filename = None
             if approved_file:
-                (guest / approved_file.filename).write_text(approved_file.content, encoding="utf-8", newline="\n")
+                guest_filename = python_input_name(code, approved_file.filename)
+                (guest / guest_filename).write_text(approved_file.content, encoding="utf-8", newline="\n")
             # 子进程执行的是固定的可信 WASI 启动器。用户代码只作为沙箱输入文件。
             allowed_env = {"SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "TEMP", "TMP",
                            "PROCESSOR_ARCHITECTURE", "PROCESSOR_ARCHITEW6432"}
             env = {key: value for key, value in os.environ.items() if key.upper() in allowed_env}
             execution = subprocess.run(
                 [sys.executable, "-I", "-B", str(WORKER), str(runtime), str(job),
-                 *([approved_file.filename] if approved_file else [])],
+                 *([guest_filename] if guest_filename else [])],
                 cwd=job, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), timeout=15, check=True,
             )

@@ -11,6 +11,7 @@ from app.core.config import Settings
 from app.services.c_sandbox import debug_c, run_c_sandbox
 from app.services.deepseek import ModelReply
 from app.services.python_sandbox import CaseSpec, PythonCheck, PythonTest
+from app.services.sandbox_output import c_text_output, save_sandbox_output
 
 C_CODE = """#include <stdio.h>
 int main(void)
@@ -80,6 +81,16 @@ class CSandboxTests(unittest.TestCase):
                               PythonTest(cases=[CaseSpec(name="故意错", stdin="a", expected="a")]))
         self.assertEqual(wrong.status, "mismatch")
 
+    def test_file_task_compiles_without_running_before_permission(self):
+        self.require_compiler()
+        source = '#include <stdio.h>\nint main(void) { puts("must not run"); return 0; }'
+        check = run_c_sandbox(self.settings, source, "c", PythonTest(), compile_only=True)
+        self.assertEqual((check.status, check.phase, check.stdout), ("awaiting_file", "compile", ""))
+        failed = run_c_sandbox(self.settings, source.replace("return 0", "return missing"), "c",
+                               PythonTest(), compile_only=True)
+        self.assertEqual((failed.status, failed.phase), ("failed", "compile"))
+        self.jobs_empty()
+
     def test_cpp_compiles_and_runs_multiple_cases(self):
         self.require_compiler()
         result = run_c_sandbox(self.settings, CPP_CODE, "cpp", PythonTest(cases=CASES))
@@ -103,10 +114,21 @@ class CSandboxTests(unittest.TestCase):
     def test_no_stdin_keeps_approved_file_reads_working(self):
         self.require_compiler()
         source = '#include <stdio.h>\nint main(void){FILE *f=fopen("d.txt","r");if(!f)return 1;putchar(fgetc(f));return 0;}'
-        test = PythonTest(expected="Q", approved_file={"filename": "d.txt", "content": "Q"})
+        test = PythonTest(expected="本", approved_file={"filename": "演示使用.txt", "content": "本"})
+        source = source.replace("putchar(fgetc(f));", "int ch;while((ch=fgetc(f))!=EOF)putchar(ch);fclose(f);")
         result = run_c_sandbox(self.settings, source, "c", test)
         self.assertEqual(result.status, "passed", result)
+        self.assertEqual(result.data_file, "演示使用.txt")
         self.jobs_empty()
+
+    def test_multiple_literal_inputs_do_not_receive_the_same_selected_data(self):
+        self.require_compiler()
+        code = ('#include <stdio.h>\nint main(void){'
+                'FILE *a=fopen("a.txt","r");FILE *b=fopen("b.txt","r");'
+                'if (!a || !b) return 1;return 0;}')
+        result = run_c_sandbox(self.settings, code, "c",
+                               PythonTest(approved_file={"filename": "演示使用.txt", "content": "data"}))
+        self.assertEqual((result.status, result.data_file), ("file_unused", None))
 
     def test_file_task_cannot_present_demo_output_as_user_data(self):
         self.require_compiler()
@@ -150,7 +172,33 @@ int main(void) {
                                     '        putchar(value);\n        return 0;\n    }\n    FILE *output =')
         result = run_c_sandbox(self.settings, compatible, "c", test)
         self.assertEqual((result.status, result.stdout, result.data_file), ("ran", "Q", "dataset.txt"))
+        runtime, name = c_text_output(source)
+        result = save_sandbox_output(self.settings.local_source_workspace, name,
+                                     run_c_sandbox(self.settings, runtime, "c", test))
+        self.assertEqual(result.status, "ran", result)
+        self.assertEqual(Path(result.output_path).name, "sorted_books.txt")
+        self.assertEqual(Path(result.output_path).read_text(encoding="utf-8"), "Q")
+        self.assertEqual(result.stdout, "")
         self.jobs_empty()
+
+    def test_text_output_fallback_ignores_nonlocal_and_ambiguous_output(self):
+        for source in (
+            '/* FILE *out=fopen("example.txt","w"); fclose(out); */',
+            'FILE *out=fopen("../example.txt","w"); fclose(out);',
+            'FILE *out=fopen("NUL.txt","w"); fclose(out);',
+            'FILE *out=fopen("a.txt","w"); fclose(out); out=fopen("b.txt","w"); fclose(out);',
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(c_text_output(source), (source, None))
+
+    def test_optional_text_output_keeps_screen_statistics(self):
+        raw = PythonCheck(status="ran", detail="已运行",
+                          stdout="无高额消费记录\n[VISIONSOUL_NO_OUTPUT_FILE]\n总笔数：1\n")
+        result = save_sandbox_output(self.settings.local_source_workspace, "high_consumption.txt", raw)
+        self.assertEqual(result.status, "ran")
+        self.assertEqual(result.stdout, "无高额消费记录\n总笔数：1\n")
+        self.assertIsNone(result.output_path)
+        self.assertFalse((self.settings.local_source_workspace / "outputs").exists())
 
     def test_compile_error_is_reported_without_running(self):
         self.require_compiler()

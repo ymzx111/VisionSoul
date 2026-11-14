@@ -96,6 +96,15 @@ class ChatStore:
             ).fetchall()
             return [dict(row) for row in reversed(rows)]
 
+    def prior_video_replies(self, video_id: str) -> list[str]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT m.content FROM conversations c JOIN messages m ON c.id=m.conversation_id "
+                "WHERE c.space='work' AND c.video_id=? AND m.role='assistant' "
+                "AND m.content LIKE '%[文件名%' ORDER BY m.id DESC LIMIT 8", (video_id,),
+            ).fetchall()
+            return [row["content"] for row in rows]
+
     def recent(self, kind: str | None = None, space: str | None = None) -> list[dict]:
         filters = ["c.video_id IS NOT NULL"] if kind == "video" else ["c.video_id IS NULL"] if kind == "image" else []
         if space is not None:

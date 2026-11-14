@@ -121,6 +121,8 @@ def output_panel(parent, mono):
 def show_result(text, result):
     text.configure(state="normal")
     text.delete("1.0", "end")
+    if result.get("output_path"):
+        text.insert("end", f"结果文件已保存\n{result['output_path']}\n\n", "label")
     if result["status"] in {"awaiting_file", "file_unused"}:
         text.insert("end", result["detail"], "label")
         text.configure(state="disabled")
