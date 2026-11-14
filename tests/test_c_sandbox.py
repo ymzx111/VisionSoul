@@ -87,6 +87,39 @@ class CSandboxTests(unittest.TestCase):
         self.assertEqual(result.status, "passed", result.detail)
         self.assertEqual([row.status for row in result.case_results], ["passed"] * 3)
 
+    def test_missing_stdin_pauses_and_probe_preserves_the_actual_word(self):
+        self.require_compiler()
+        source = '#include <stdio.h>\nint main(void){char word[20];puts("Word:");scanf("%19s",word);puts(word);return 0;}'
+        missing = run_c_sandbox(self.settings, source, "c", PythonTest())
+        self.assertEqual(missing.status, "awaiting_input", missing)
+        self.assertEqual(missing.stdout, "Word:\n")
+        probe = run_c_sandbox(self.settings, source, "c",
+                              PythonTest(cases=[CaseSpec(stdin="FOUND\n", expected=None)]))
+        self.assertEqual(probe.status, "ran", probe)
+        self.assertEqual(probe.case_results[0].stdin, "FOUND\n")
+        self.assertEqual(probe.stdout, "Word:\nFOUND\n")
+        self.jobs_empty()
+
+    def test_no_stdin_keeps_approved_file_reads_working(self):
+        self.require_compiler()
+        source = '#include <stdio.h>\nint main(void){FILE *f=fopen("d.txt","r");if(!f)return 1;putchar(fgetc(f));return 0;}'
+        test = PythonTest(expected="Q", approved_file={"filename": "d.txt", "content": "Q"})
+        result = run_c_sandbox(self.settings, source, "c", test)
+        self.assertEqual(result.status, "passed", result)
+        self.jobs_empty()
+
+    def test_file_task_cannot_present_demo_output_as_user_data(self):
+        self.require_compiler()
+        source = '#include <stdio.h>\nint main(void){FILE *f=fopen("d.txt","r");if(f)putchar(fgetc(f));else puts("DEMO");return 0;}'
+        missing = run_c_sandbox(self.settings, source, "c", PythonTest())
+        self.assertEqual((missing.status, missing.stdout), ("awaiting_file", ""))
+        test = PythonTest(approved_file={"filename": "d.txt", "content": "Q"})
+        loaded = run_c_sandbox(self.settings, source, "c", test)
+        self.assertEqual((loaded.status, loaded.data_file, loaded.stdout), ("ran", "d.txt", "Q"))
+        ignored = run_c_sandbox(self.settings, '#include <stdio.h>\nint main(void){puts("DEMO");return 0;}', "c", test)
+        self.assertEqual((ignored.status, ignored.stdout, ignored.data_file), ("file_unused", "", None))
+        self.jobs_empty()
+
     def test_compile_error_is_reported_without_running(self):
         self.require_compiler()
         broken = C_CODE.replace('printf("%c\\n", ch);', 'printf("%c\\n", ch)')

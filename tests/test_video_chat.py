@@ -261,10 +261,11 @@ class VideoChatTests(unittest.TestCase):
                 "python_test": {"approved_file": {"filename": "sample.txt", "content": "LOCAL-CANARY"}}}
         with TestClient(local_app, base_url="http://127.0.0.1:8765") as client, \
                 patch("app.services.local_ide.launch_ide") as launch, \
-                patch("app.api.routes.chat.debug_python", side_effect=[
-                    PythonCheck(status="passed", detail="通过验收"),
-                    PythonCheck(status="ran", detail="运行成功", attempts=2, repaired_code=revised),
-                ]) as verify:
+                patch("app.services.local_ide.show_sandbox_result", return_value=True), \
+                patch("app.api.routes.chat.run_python_sandbox",
+                      return_value=PythonCheck(status="passed", detail="通过验收")) as run, \
+                patch("app.api.routes.chat.debug_python",
+                      return_value=PythonCheck(status="ran", detail="运行成功", attempts=2, repaired_code=revised)) as verify:
             origin = {"Origin": "http://127.0.0.1:8765"}
             first = client.post("/api/chat/messages", json=body, headers=origin)
             response = client.post("/api/chat/messages", json={**body, "request_id": "2" * 32, "python_test": None},
@@ -278,8 +279,10 @@ class VideoChatTests(unittest.TestCase):
         originals = [file for file in target.parent.glob("*.py") if file != target]
         self.assertEqual([file.read_text(encoding="utf8") for file in originals], [original, original])
         self.assertEqual(source["python_check"]["attempts"], 2)
-        self.assertEqual(verify.call_args_list[0].args[-1].approved_file.content, "LOCAL-CANARY")
-        self.assertIsNone(verify.call_args_list[1].args[-1].approved_file)
+        self.assertEqual(run.call_args.args[-1].approved_file.content, "LOCAL-CANARY")
+        self.assertIsNone(verify.call_args.args[-1].approved_file)
+        self.assertIn("sample.txt", self.calls[0]["messages"][0]["content"])
+        self.assertNotIn("sample.txt", self.calls[1]["messages"][0]["content"])
         self.assertNotIn("LOCAL-CANARY", repr(self.calls))
         self.assertEqual(launch.call_args.args[0], [str(launcher), str(target)])
 
@@ -304,7 +307,7 @@ class VideoChatTests(unittest.TestCase):
         self.assertEqual(target.name, f"{date.today():%Y.%m.%d}.main.c")
         project_dir = root / "ide_projects" / ("a" * 32 + "-2")
         self.assertIn(f'ClCompile Include="{target}"', (project_dir / "VisionSoulCode.vcxproj").read_text(encoding="utf8"))
-        self.assertTrue((project_dir / "VisionSoulCode.sln").is_file())
+        self.assertTrue((project_dir / f"{Path(source['path']).name}.sln").is_file())
 
     def test_generated_sources_keep_dated_language_paths_and_duplicate_names(self):
         from app.services.source_files import save_dated_source

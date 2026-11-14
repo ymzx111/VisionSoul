@@ -70,7 +70,7 @@ class CaseSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(default="", max_length=40)
     stdin: str = Field(default="", max_length=4096)
-    expected: str = Field(max_length=4096)
+    expected: str | None = Field(max_length=4096)
 
 
 class PythonTest(BaseModel):
@@ -91,7 +91,7 @@ class CaseResult(BaseModel):
     name: str
     status: Literal["passed", "mismatch", "failed", "limit", "ran"]
     stdin: str = ""
-    expected: str = ""
+    expected: str | None = None
     stdout: str = ""
     stderr: str = ""
     exit_code: int | None = None
@@ -99,8 +99,9 @@ class CaseResult(BaseModel):
 
 
 class PythonCheck(BaseModel):
-    status: Literal["ran", "passed", "mismatch", "failed", "limit", "unavailable", "busy", "awaiting_input"]
+    status: Literal["ran", "passed", "mismatch", "failed", "limit", "unavailable", "busy", "awaiting_input", "awaiting_file", "file_unused"]
     detail: str
+    stdin: str | None = None
     stdout: str = ""
     stderr: str = ""
     exit_code: int | None = None
@@ -109,8 +110,26 @@ class PythonCheck(BaseModel):
     repair_usage: TokenUsage | None = None
     case_results: list[CaseResult] | None = None
     case_source: Literal["model"] | None = None
+    data_file: str | None = None
     # C 链路用：区分"编译失败"与"运行失败"。
     phase: Literal["compile", "run"] | None = None
+
+
+def check_data_file(result: dict, approved_file: ApprovedFile | None, data: dict,
+                    *, expected: str | None) -> PythonCheck | None:
+    if approved_file:
+        if not result.get("file_read") and (result.get("exit_code") == 0 or result.get("missing_file")):
+            return PythonCheck(status="file_unused",
+                               detail=f"程序没有读取所选文件「{approved_file.filename}」。请核对源码里的文件名后再试。",
+                               stderr=result["stderr"], exit_code=result["exit_code"], phase=data.get("phase"))
+        if result.get("file_read"):
+            data["data_file"] = approved_file.filename
+        else:
+            data["stdout"] = ""
+    elif result.get("missing_file") and (expected is None or result.get("exit_code") != 0):
+        return PythonCheck(status="awaiting_file", detail="程序需要数据文件。请选择并授权本轮读取的文件后再试。",
+                           phase=data.get("phase"))
+    return None
 
 
 def _compare(actual: str, expected: str) -> bool:
@@ -147,7 +166,8 @@ def _run_once(settings: Settings, code: str, stdin: str, expected: str | None,
                            "PROCESSOR_ARCHITECTURE", "PROCESSOR_ARCHITEW6432"}
             env = {key: value for key, value in os.environ.items() if key.upper() in allowed_env}
             execution = subprocess.run(
-                [sys.executable, "-I", "-B", str(WORKER), str(runtime), str(job)],
+                [sys.executable, "-I", "-B", str(WORKER), str(runtime), str(job),
+                 *([approved_file.filename] if approved_file else [])],
                 cwd=job, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), timeout=15, check=True,
             )
@@ -163,6 +183,7 @@ def _run_once(settings: Settings, code: str, stdin: str, expected: str | None,
     if result.get("unavailable"):
         return PythonCheck(status="unavailable", detail="Python 沙箱初始化失败，本轮未运行。", attempts=0)
     data = {"stdout": result["stdout"], "stderr": result["stderr"], "exit_code": result["exit_code"]}
+    file_check = check_data_file(result, approved_file, data, expected=expected)
     if result["limit"]:
         details = {
             "output": "输出超过 16 KiB 上限，沙箱已停止。",
@@ -170,6 +191,8 @@ def _run_once(settings: Settings, code: str, stdin: str, expected: str | None,
             "trap": "运行被隔离器终止。",
         }
         return PythonCheck(status="limit", detail=details[result["limit"]], **data)
+    if file_check is not None:
+        return file_check
     if result["exit_code"] != 0:
         last_error = result["stderr"].rstrip().splitlines()[-1:]
         if last_error == ["EOFError: EOF when reading a line"]:
@@ -192,13 +215,16 @@ def run_case_matrix(run_once, test: PythonTest) -> PythonCheck:
     mismatch，运行崩溃为 failed，环境不可用则立即返回。
     """
     if not test.cases:
-        return run_once(test.stdin, test.expected)
+        result = run_once(test.stdin, test.expected)
+        if result.phase != "compile" and result.status not in {"unavailable", "busy"}:
+            result.stdin = test.stdin
+        return result
 
     results: list[CaseResult] = []
     for index, case in enumerate(test.cases, 1):
         name = case.name.strip() or f"用例{index}"
         one = run_once(case.stdin, case.expected)
-        if one.status in {"unavailable", "busy", "awaiting_input"}:
+        if one.status in {"unavailable", "busy", "awaiting_input", "awaiting_file", "file_unused"}:
             return one.model_copy(update={"case_results": results})
         results.append(CaseResult(name=name, status=one.status, stdin=case.stdin,
                                   expected=case.expected, stdout=one.stdout, stderr=one.stderr,
@@ -210,13 +236,17 @@ def run_case_matrix(run_once, test: PythonTest) -> PythonCheck:
     wrong = [row for row in results if row.status == "mismatch"]
     first_bad = (broken or wrong or [None])[0]
     sample = first_bad or results[-1]
-    data = {"stdout": sample.stdout, "stderr": sample.stderr, "exit_code": sample.exit_code}
+    data = {"stdout": sample.stdout, "stderr": sample.stderr, "exit_code": sample.exit_code, "data_file": one.data_file}
     total = len(results)
     if broken:
         return PythonCheck(status="failed", detail=f"{len(broken)}/{total} 组运行失败（首个：{broken[0].name}）。",
                            phase=sample.phase, case_results=results, **data)
     if wrong:
         return PythonCheck(status="mismatch", detail=f"{len(wrong)}/{total} 组输出与预期不一致（首个：{wrong[0].name}）。",
+                           case_results=results, **data)
+    verified = sum(row.status == "passed" for row in results)
+    if verified < total:
+        return PythonCheck(status="ran", detail=f"{verified}/{total} 组有预期输出并通过，其他用例仅试跑。",
                            case_results=results, **data)
     return PythonCheck(status="passed", detail=f"{total} 组断言全部通过。", case_results=results, **data)
 

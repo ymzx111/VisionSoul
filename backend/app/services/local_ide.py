@@ -9,18 +9,21 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from tempfile import TemporaryFile
+from threading import Thread
 from uuid import NAMESPACE_URL, uuid5
 from xml.sax.saxutils import escape
 
 from app.core.config import Settings
 from app.services.python_sandbox import PythonCheck, PythonTest
-from app.services.python_reruns import remember_python
+from app.services.code_reruns import remember_source
 from app.services.source_files import (
     CODE_REQUEST, FENCE_BLOCK, FILE_DECLARATION, parse_generated_code, parse_generated_code_or_infer,
     save_dated_source, source_directory, write_source,
 )
 
 logger = logging.getLogger(__name__)
+REQUIRES_DATA_FILE = re.compile(r"^\s*\[需要数据文件\]\s*$", re.MULTILINE)
 CODE_DELIVERY_TASK = (Path(__file__).resolve().parents[1] / "prompts" / "code_delivery.md").read_text(encoding="utf-8").strip()
 
 
@@ -46,7 +49,7 @@ def visual_studio_solution(source: Path, folder: Path) -> Path:
   <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.targets" />
 </Project>
 ''')
-    solution = folder / "VisionSoulCode.sln"
+    solution = folder / f"{source.name}.sln"
     write_source(solution, f'''Microsoft Visual Studio Solution File, Format Version 11.00
 # Visual Studio 2010
 Project("{{BC8A1FFA-BEE3-4634-8014-F334798102B3}}") = "VisionSoulCode", "{project.name}", "{guid}"
@@ -77,6 +80,36 @@ def launch_ide(args: list[str], folder: Path) -> None:
     )
 
 
+def show_sandbox_result(source: Path, check: PythonCheck, *, run_id: str | None = None,
+                        origin: str | None = None) -> bool:
+    """Send rendered data over stdin to the trusted desktop viewer."""
+    launcher = Path(sys.executable).with_name("pythonw.exe")
+    if os.name != "nt" or not launcher.is_file() or not find_spec("tkinter"):
+        return False
+    fields = {"detail", "status", "stdin", "stdout", "stderr", "phase", "case_source", "data_file"}
+    result = check.model_dump(include=fields)
+    result["case_results"] = [row.model_dump(include={"name", "status", "stdin", "stdout", "stderr", "phase"})
+                              for row in check.case_results or []]
+    label = {".py": "Python", ".c": "C"}.get(source.suffix.lower(), "C++")
+    result.update(name=source.name, editor_path=str(source), language=label)
+    if origin and run_id:
+        result.update(origin=origin, run_id=run_id)
+    script = Path(__file__).with_name("python_result_window.py")
+    env = {key: value for key, value in os.environ.items() if key.upper() != "DEEPSEEK_API_KEY"}
+    try:
+        with TemporaryFile(mode="w+b") as payload:
+            payload.write(json.dumps(result).encode("ascii"))
+            payload.seek(0)
+            viewer = subprocess.Popen([str(launcher), "-I", "-B", str(script)], stdin=payload,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             cwd=script.parent, env=env, creationflags=subprocess.CREATE_NO_WINDOW)
+        Thread(target=viewer.wait, daemon=True).start()
+    except (OSError, subprocess.SubprocessError):
+        logger.warning("桌面结果窗口启动失败", exc_info=True)
+        return False
+    return True
+
+
 def split_model_cases(reply: str) -> tuple[str, PythonTest]:
     # 只接受源码围栏之后独立出现的约定样例块。
     blocks = list(FENCE_BLOCK.finditer(reply.replace("\r\n", "\n")))
@@ -92,6 +125,13 @@ def split_model_cases(reply: str) -> tuple[str, PythonTest]:
         test = PythonTest.model_validate({"cases": data})
     except ValueError:
         return source_reply, PythonTest()
+    # A prose disclaimer supplied by the model is not a stdout assertion.
+    cases = [case for case in test.cases if not re.fullmatch(
+        r"(?:输出(?:内容)?(?:随|因).{1,50}(?:变化|不同)[，,：:]?\s*)?"
+        r"(?:无法|不能|无法预先)(?:给出|确定|预测)(?:固定的?|确切的?)?(?:预期(?:输出)?|输出)[。！!]?",
+        (case.expected or "").strip(),
+    )]
+    test = test.model_copy(update={"cases": cases})
     unique = {case.stdin for case in test.cases}
     if len(unique) != len(test.cases):
         return source_reply, PythonTest()
@@ -100,7 +140,8 @@ def split_model_cases(reply: str) -> tuple[str, PythonTest]:
 
 def open_generated_source(settings: Settings, turn: dict,
                           verify_python: Callable[[str], PythonCheck] | None = None,
-                          verify_c: Callable[[str, str], PythonCheck] | None = None) -> dict | None:
+                          verify_c: Callable[[str, str], PythonCheck] | None = None, *,
+                          origin: str | None = None, requires_file: bool = False) -> dict | None:
     reply = turn["assistant_message"]["content"]
     requested = bool(CODE_REQUEST.search(((turn.get("user_message") or {}).get("content") or "")))
     declared = bool(FILE_DECLARATION.search(reply))
@@ -147,12 +188,13 @@ def open_generated_source(settings: Settings, turn: dict,
         logger.warning("本机源码写入失败", exc_info=True)
         return {"status": "error", "detail": "源码写入失败，请检查 workspace 写入权限。"}
 
+    language = "python" if extension == ".py" else "c" if extension == ".c" else "cpp"
     check = None
     if extension == ".py" and verify_python:
         check = verify_python(code)
     elif extension in {".c", ".cpp", ".cc", ".cxx"} and verify_c:
         # C/C++ 在 Wasm 编译器中编译，再在独立的 WASI 沙箱运行；结果仍放在 python_check 字段里兼容旧前端。
-        check = verify_c(code, "c" if extension == ".c" else "cpp")
+        check = verify_c(code, language)
     if check and check.repaired_code:
         try:
             target = save_dated_source(workspace, filename, check.repaired_code)
@@ -161,11 +203,20 @@ def open_generated_source(settings: Settings, turn: dict,
             logger.warning("修复版源码保存失败", exc_info=True)
             check = check.model_copy(update={"detail": "修复版在沙箱试跑成功，但写入失败。当前打开的是原始源码。"})
     result = {"path": str(target), "ide": ide, "python_check": check}
-    if extension == ".py" and verify_python is not None:
-        result["python_run_id"] = remember_python(code)
+    if check is not None:
+        run_id = remember_source(code, target, language, requires_file or check.status == 'awaiting_file')
+        result["sandbox_run_id"] = run_id
+        if language == "python":
+            result["python_run_id"] = run_id
+
+    def finish(status: str, detail: str) -> dict:
+        if check is not None:
+            result["desktop_result_opened"] = show_sandbox_result(target, check, run_id=run_id, origin=origin)
+        return {**result, "status": status, "detail": detail}
+
     if (not launcher or not launcher.is_absolute() or launcher.suffix.lower() != ".exe" or not launcher.is_file()
             or (ide == "Python IDLE" and not (find_spec("idlelib") and find_spec("tkinter")))):
-        return {**result, "status": "saved", "detail": f"已保存源码，未找到已配置的 {ide}。"}
+        return finish("saved", f"已保存源码，未找到已配置的 {ide}。")
     try:
         if ide == "Visual Studio":
             projects = source_directory(settings.chat_database_path.parent.resolve(), "ide_projects")
@@ -180,5 +231,5 @@ def open_generated_source(settings: Settings, turn: dict,
         launch_ide(args, target.parent)
     except (OSError, ValueError, subprocess.SubprocessError):
         logger.warning("本机 IDE 启动失败", exc_info=True)
-        return {**result, "status": "saved", "detail": f"已保存源码，{ide} 打开失败，可手动打开文件。"}
-    return {**result, "status": "opened", "detail": f"已发送到 {ide}。"}
+        return finish("saved", f"已保存源码，{ide} 打开失败，可手动打开文件。")
+    return finish("opened", f"已发送到 {ide}。")

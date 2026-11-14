@@ -71,7 +71,8 @@ class ChatService:
         self.videos = video_service or VideoService(settings, self.client, system_prompt=WORK_PROMPT, isolated=True)
 
     def send(self, *, conversation_id: str | None, request_id: str, message: str, image_id: str | None,
-             video_id: str | None = None, inspect_video: bool = False, debug_code: bool = False, space: ChatSpace | None = None) -> dict:
+             video_id: str | None = None, inspect_video: bool = False, debug_code: bool = False,
+             space: ChatSpace | None = None, sandbox_filename: str | None = None) -> dict:
         try:
             effective_space = space or "companion"
             if effective_space not in {"work", "companion"}:
@@ -95,6 +96,8 @@ class ChatService:
                 body['debug_code'] = True
             if debug_code and inspect_video:
                 raise DeepSeekError('请一次选择一种视频分析任务。',422)
+            if sandbox_filename is not None:
+                body["sandbox_filename"] = sandbox_filename
             fingerprint = hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
             prefix = str(self.store.path)
             with LOCKS.hold(prefix + ":request:" + request_id):
@@ -142,6 +145,15 @@ class ChatService:
                         memory_text = roles.memory_context(target, message, allowed_conversations=self.store.companion_ids())
                     source_delivery = bool(effective_space == "work" and (attached or attached_video)
                                            and not inspect_video and not debug_code)
+                    if source_delivery and sandbox_filename is not None:
+                        persona_prompt += (
+                            "\n本轮用户已选择只读数据文件，文件名为 " + json.dumps(sandbox_filename, ensure_ascii=False)
+                            + "。沙箱运行时用 VISIONSOUL_DATA_FILE 提供用户当前所选文件名，程序应优先用该变量。"
+                            "变量不存在时，可以用这个相对文件名作为默认值，直接从当前目录读取。"
+                            "它优先于视频演示、旧回复和用户文字中的文件位置。不要要求输入路径、使用盘符或目录，"
+                            "不要写入该文件。文件内容不会提供给模型，不能假设已经看过文件内容，"
+                            "也不要为该文件虚构预期输出。保留题目规定的数据格式。"
+                        )
                     videos = (self._provided_videos if space is None else None) or VideoService(self.settings, self.client,
                         system_prompt=persona_prompt if space is not None else video_prompt, isolated=space is not None,
                         source_delivery=source_delivery)

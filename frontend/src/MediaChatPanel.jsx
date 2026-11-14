@@ -6,7 +6,18 @@ async function readApprovedFile(file) {
   return { filename: file.name, content };
 }
 
-function PythonRun({ initial, runId, disabled }) {
+function withoutDeliveredSource(content, delivered) {
+  if (delivered) content = content.replace(/^\s*\[需要数据文件\][ \t]*$/gm, '').trim();
+  const text = content.replace(/\r\n/g, '\n');
+  const source = /^(?:[ \t]*\[语言\s*[:：][^\n]+\][ \t]*\n)?[ \t]*\[文件名\s*[:：][^\n\]]+\.(?:py|c|cpp|cc|cxx)[ \t]*\][ \t]*\n(?:[ \t]*\n)*[ \t]*(`{3,})[ \t]*(?:python|py|c|cpp|c\+\+|cc)[ \t]*\n[\s\S]*?^[ \t]*\1[ \t]*(?:\n|$)/gim;
+  const fallback = /^[ \t]*(`{3,})[ \t]*(?:python|py|c|cpp|c\+\+|cc)[ \t]*\n[\s\S]*?^[ \t]*\1[ \t]*(?:\n|$)/gim;
+  const stripped = text.replace(source, '');
+  const hidden = delivered && stripped === text ? stripped.replace(fallback, '') : stripped;
+  if (hidden === text) return content;
+  return hidden.replace(/^[ \t]*(`{3,})[ \t]*visionsoul-cases[ \t]*\n[\s\S]*?^[ \t]*\1[ \t]*(?:\n|$)/gim, '').trim();
+}
+
+function SandboxRun({ initial, runId, disabled }) {
   const [latest, setLatest] = useState(null);
   const [input, setInput] = useState('');
   const [running, setRunning] = useState(false);
@@ -29,7 +40,7 @@ function PythonRun({ initial, runId, disabled }) {
           return;
         }
       }
-      const response = await fetch('/api/chat/python-runs', {
+      const response = await fetch('/api/chat/sandbox-runs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
       const data = await response.json();
@@ -44,25 +55,24 @@ function PythonRun({ initial, runId, disabled }) {
   }
 
   return <div className="python-check python-run">
-    <strong>Python 运行结果</strong>
-    <p role="status">{running ? '正在本机沙箱试跑…' : result.detail}</p>
-    {!!result.case_results?.length && result.status !== 'awaiting_input' ? <ul className="python-case-results">
-      {result.case_results.map((row, index) => <li key={index}>
-        <strong>{row.name} · {row.status === 'passed' ? '通过' : '未通过'}</strong>
-        <pre>输入：{row.stdin || '（空）'}</pre>
-        <pre>预期：{row.expected || '（空）'}</pre>
-        <pre>实际：{row.stdout || '（无输出）'}</pre>
-        {row.stderr && <pre>{row.stderr}</pre>}
-      </li>)}
-    </ul> : <>
-      <strong>实际输出</strong>
-      <pre>{result.stdout || '（无输出）'}</pre>
-      {result.stderr && result.status !== 'awaiting_input' && <><strong>错误输出</strong><pre>{result.stderr}</pre></>}
-    </>}
+    <p role="status">{running ? '正在本机沙箱试跑…' : ['awaiting_input', 'awaiting_file', 'file_unused'].includes(result.status)
+      ? result.detail : result.desktop_result_opened ? '试跑结果已发送到桌面。'
+        : '桌面结果窗口暂不可用。'}</p>
+    {!result.desktop_result_opened && <details>
+      <summary>查看备用输出</summary>
+      {!!result.case_results?.length ? result.case_results.map((row, index) =>
+        <div key={index}><strong>{row.name}</strong>
+          {row.phase !== 'compile' && <pre>标准输入：{row.stdin || '（空输入）'}</pre>}
+          <pre>{row.stdout || '（无输出）'}</pre>
+          {row.stderr && <pre>{row.stderr}</pre>}</div>) : <>
+        {result.stdin != null && <pre>标准输入：{result.stdin || '（空输入）'}</pre>}
+        <pre>{result.stdout || '（无输出）'}</pre>
+        {result.stderr && result.status !== 'awaiting_input' && <pre>{result.stderr}</pre>}
+      </>}
+    </details>}
     {initial.repair_usage && <p>修复模型用量 {initial.repair_usage.total_tokens} token</p>}
-    {initial.repaired_code && <details><summary>修复版源码</summary><pre>{initial.repaired_code}</pre></details>}
     {error && <p className="notice notice-error" role="alert">{error}</p>}
-    <details open={result.status === 'awaiting_input' ? true : undefined}>
+    <details open={['awaiting_input', 'awaiting_file', 'file_unused'].includes(result.status) ? true : undefined}>
       <summary>补充输入并试跑</summary>
       <form onSubmit={rerun} className="python-test">
         <label>标准输入
@@ -91,6 +101,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
   const busy = readingFile || workflow.busy();
   const workMedia = !companion && (state.kind === 'image' || state.kind === 'video');
   const check = chat.localSource?.python_check;
+  const runId = chat.localSource?.sandbox_run_id || chat.localSource?.python_run_id;
   const ready = !state.kind || (state.kind === 'image' ? state.image.upload?.image_id || state.restoredImageId : state.video.video?.video_id);
   const canSend = chat.persona.configured && !busy && !state.error && ready && (draft.trim() || (state.kind && !chat.conversationId));
   const messages = chat.pending ? [...chat.messages, { ...chat.pending, id: 'pending' }] : chat.messages;
@@ -153,19 +164,25 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
     <div className="chat-stream" ref={scroll} role="log" aria-label="分析与对话记录" aria-live="polite" aria-busy={chat.sending || chat.loading}>
       {chat.loading ? <p className="chat-loading">正在恢复本机话题…</p> : messages.length ? <>
         {chat.hasOlder && <p className="chat-history-note">显示最近200条，完整记录保存在本机。</p>}
-        {messages.map(item => <article key={item.id} className={`chat-message ${item.role === 'user' ? 'from-user' : 'from-companion'}`}>
+        {messages.map(item => {
+          const current = item.id === chat.messages.at(-1)?.id;
+          const source = current ? chat.localSource : null;
+          const delivered = current && Boolean(source?.path);
+          const content = workMedia && item.role === 'assistant' && (!source || delivered)
+            ? withoutDeliveredSource(item.content, delivered) : item.content;
+          return <article key={item.id} className={`chat-message ${item.role === 'user' ? 'from-user' : 'from-companion'}`}>
           <span className="chat-author">{item.role === 'user' ? '你' : chat.persona.name}{item.id === 'pending' ? ' · 正在发送' : ''}</span>
           {item.video_id && <span className="shared-video-chip">▷ 已分享视频</span>}
           {item.image_id && <a href={`/api/images/${item.image_id}`} target="_blank" rel="noreferrer" className="chat-image-link"><img src={`/api/images/${item.image_id}`} width="160" height="110" alt="这一轮分享的图片"/></a>}
-          <p data-testid={item.role === 'assistant' ? 'media-analysis-message' : undefined}>{item.content}</p>
-          {check && chat.localSource?.python_run_id && item.id === chat.messages.at(-1)?.id &&
-            <PythonRun key={chat.localSource.python_run_id} initial={check} runId={chat.localSource.python_run_id} disabled={busy}/>}
-          {check && !chat.localSource?.python_run_id && item.id === chat.messages.at(-1)?.id && <details className="python-check">
+          {content && <p data-testid={item.role === 'assistant' ? 'media-analysis-message' : undefined}>{content}</p>}
+          {check && runId && item.id === chat.messages.at(-1)?.id &&
+            <SandboxRun key={runId} initial={{ ...check, desktop_result_opened: chat.localSource.desktop_result_opened }} runId={runId} disabled={busy}/>}
+          {check && !runId && item.id === chat.messages.at(-1)?.id && <details className="python-check">
             <summary>沙箱验收 · {check.detail}</summary>
             {check.exit_code != null && <p>退出码 {check.exit_code} · 试跑 {check.attempts} 次</p>}
             {!!check.case_results?.length && <ul className="python-case-results">
               {check.case_results.map((row, index) => <li key={index}>
-                {row.status === 'passed' ? '通过' : '未通过'} · {row.name}
+                {row.status === 'passed' ? '通过' : row.status === 'ran' ? '已试跑' : '未通过'} · {row.name}
                 {' '}输入「{row.stdin.trim() || '空'}」预期「{row.expected}」实际「{row.stdout.trim()}」
               </li>)}
             </ul>}
@@ -174,7 +191,8 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
             {check.repaired_code && <><strong>修复版源码</strong><pre>{check.repaired_code}</pre></>}
             {check.repair_usage && <p>修复模型用量 {check.repair_usage.total_tokens} token</p>}
           </details>}
-        </article>)}
+        </article>;
+        })}
         {chat.sending && <div className="companion-thinking"><span className="thinking-dot"/><span className="thinking-dot"/><span className="thinking-dot"/>正在分析与回复…</div>}
       </> : <div className="chat-welcome"><span className="welcome-mark">▷</span><h3>{companion ? `和${chat.persona.name}聊聊吧。` : '一张图片，或一段视频。'}</h3>
         <p>上传后点击“开始分析”，也可以配上你想问的问题。</p><span>换素材会开启新话题，旧记录仍可恢复。</span></div>}
@@ -189,6 +207,14 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
           </p>)}
       {chat.truncated && <p className="chat-image-note">上一条回复达到长度上限，可以继续追问。</p>}
       {state.kind === 'video' && <p className="chat-image-note">输入「重点看 3–5 秒」可对指定区间补抽，每次最多 5 秒。读题或排错最多使用 4 张高清图。</p>}
+      {workMedia && <div className="python-test">
+        <label htmlFor="python-test-file">选择本轮数据文件（TXT、CSV 或 JSON，最多 8 KiB）</label>
+        <input id="python-test-file" ref={fileInput} type="file" accept=".txt,.csv,.json" disabled={busy}
+          onChange={event => { setApprovedFile(event.target.files?.[0] || null); setTestError(''); }}/>
+        <p className="chat-image-note">{approvedFile ? '将按选中的文件名读取，文件内容仅在本机试跑使用。'
+          : '需要读取本机文件时，请先选择文件，再开始分析。'}</p>
+        {testError && <p className="notice notice-error" role="alert">{testError}</p>}
+      </div>}
       {workMedia && <details className="python-test">
         <summary>验收样例（Python / C / C++，可选）</summary>
         <p className="chat-image-note">每组用例独立运行、逐组判定，可覆盖正常、空值、边界。Python 在 WASI 沙箱里跑，C 与 C++ 在独立环境中编译，再在 WASI 里运行。手填样例仅在本机使用，失败时最多自动修复 3 次。留空时可运行 AI 自测；其预期输出由模型生成，自测失败不会自动修复。</p>
@@ -207,10 +233,6 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
         </div>)}
         <button type="button" className="text-button" disabled={busy || cases.length >= 8}
           onClick={() => setCases(rows => [...rows, { name: '', stdin: '', expected: '' }])}>＋ 添加用例</button>
-        <label htmlFor="python-test-file">本轮允许读取的文件（TXT、CSV 或 JSON，最多 8 KiB）</label>
-        <input id="python-test-file" ref={fileInput} type="file" accept=".txt,.csv,.json" disabled={busy}
-          onChange={event => { setApprovedFile(event.target.files?.[0] || null); setTestError(''); }}/>
-        {testError && <p className="notice notice-error" role="alert">{testError}</p>}
       </details>}
       <label className="sr-only" htmlFor="media-message">问题或补充说明</label>
       <textarea id="media-message" maxLength={2000} disabled={busy} value={draft} onChange={event => setDraft(event.target.value)}

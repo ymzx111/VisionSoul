@@ -1,5 +1,6 @@
 """本机伙伴对话。客户端只提供用户文字，不能注入历史角色或系统提示。"""
 import json
+import re
 import sqlite3
 from typing import Annotated, Literal
 
@@ -15,9 +16,9 @@ from app.services.chat_store import ChatStore, ChatConflict
 from app.services.deepseek import DeepSeekError, TokenUsage, has_api_key
 from app.services.videos import VideoService, VideoError
 from app.services.audio_evidence import current_context
-from app.services.local_ide import open_generated_source, split_model_cases
+from app.services.local_ide import REQUIRES_DATA_FILE, open_generated_source, show_sandbox_result, split_model_cases
 from app.services.c_sandbox import debug_c, run_c_sandbox
-from app.services.python_reruns import python_snapshot
+from app.services.code_reruns import source_snapshot
 from app.services.python_sandbox import ApprovedFile, PythonCheck, PythonTest, debug_python, run_python_sandbox
 
 router = APIRouter(prefix="/api/chat", tags=["伙伴对话"])
@@ -63,6 +64,8 @@ class LocalSourceResult(BaseModel):
     ide: str | None = None
     python_check: PythonCheck | None = None
     python_run_id: Identifier | None = None
+    sandbox_run_id: Identifier | None = None
+    desktop_result_opened: bool | None = None
 
 
 class ChatTurn(BaseModel):
@@ -171,54 +174,99 @@ def is_local_browser(request: Request) -> bool:
                 and request.headers.get("origin") == f"{request.url.scheme}://{request.url.netloc}")
 
 
-class PythonRerun(BaseModel):
+class SandboxRerun(BaseModel):
     model_config = ConfigDict(extra="forbid")
     run_id: Identifier
     stdin: str = Field(default="", max_length=4096)
     approved_file: ApprovedFile | None = None
+    open_result_window: bool = True
 
 
-@router.post("/python-runs", response_model=PythonCheck, summary="补充输入并在本机重新试跑 Python")
-def rerun_python(body: PythonRerun, request: Request, settings: Annotated[Settings, Depends(get_settings)]) -> PythonCheck:
+class SandboxRerunResult(PythonCheck):
+    desktop_result_opened: bool
+
+
+@router.post("/sandbox-runs", response_model=SandboxRerunResult, summary="补充输入并在本机重新试跑源码")
+@router.post("/python-runs", response_model=SandboxRerunResult, include_in_schema=False)
+def rerun_source(body: SandboxRerun, request: Request, settings: Annotated[Settings, Depends(get_settings)]) -> dict:
     if not is_local_browser(request):
         raise HTTPException(403, "请从本机工作台发起试跑。")
-    if not settings.python_sandbox_enabled:
-        raise HTTPException(503, "本机 Python 沙箱已关闭。")
-    code = python_snapshot(body.run_id)
-    if code is None:
+    snapshot = source_snapshot(body.run_id)
+    if snapshot is None:
         raise HTTPException(404, "这份源码的试跑入口已失效，请在新的代码回复中试跑。")
-    return run_python_sandbox(settings, code, PythonTest(stdin=body.stdin, approved_file=body.approved_file))
+    code, source, language, requires_file = snapshot
+    test = PythonTest(stdin=body.stdin, approved_file=body.approved_file)
+    if requires_file and not body.approved_file:
+        check = PythonCheck(status="awaiting_file", detail="请选择并授权本轮要读取的数据文件。", attempts=0)
+    elif language == "python":
+        if not settings.python_sandbox_enabled:
+            raise HTTPException(503, "本机 Python 沙箱已关闭。")
+        check = run_python_sandbox(settings, code, test)
+    else:
+        if not settings.c_sandbox_enabled:
+            raise HTTPException(503, "本机 C/C++ 沙箱已关闭。")
+        check = run_c_sandbox(settings, code, language, test)
+    if body.approved_file:
+        check = check.model_copy(update={"detail": f"本轮选择：{body.approved_file.filename} · {check.detail}"})
+    opened = body.open_result_window and show_sandbox_result(source, check, run_id=body.run_id,
+                                                              origin=f"{request.url.scheme}://{request.url.netloc}")
+    return {**check.model_dump(), "desktop_result_opened": opened}
 
 
 @router.post("/messages", response_model=ChatTurn, summary="发送消息给小灵（产生 API 用量）")
 def send_message(body: SendMessage, request: Request, service: Annotated[ChatService, Depends(get_chat_service)]) -> dict:
+    local_delivery = (body.open_in_ide and is_local_browser(request) and body.space == "work"
+                      and not body.inspect_video and not body.debug_code)
+    approved = body.python_test.approved_file if body.python_test else None
     try:
-        turn = service.send(**body.model_dump(exclude={"open_in_ide", "python_test"}))
+        turn = service.send(**body.model_dump(exclude={"open_in_ide", "python_test"}),
+                            sandbox_filename=approved.filename if local_delivery and approved else None)
     except DeepSeekError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
 
-    if (body.open_in_ide and is_local_browser(request) and turn["space"] == "work"
-            and (turn["image_id"] or turn["video_id"]) and not body.inspect_video and not body.debug_code and not turn["replayed"] and not turn["truncated"]):
+    if (local_delivery and turn["space"] == "work" and (turn["image_id"] or turn["video_id"])
+            and not turn["replayed"] and not turn["truncated"]):
         manual_test = body.python_test or PythonTest()
         _, model_test = split_model_cases(turn["assistant_message"]["content"])
-        use_model_test = not manual_test.has_local_data and bool(model_test.cases)
+        file_in_request = re.search(
+            r"(?:[a-zA-Z]:[\\/]|\\\\)[^\n]*?\.(?:txt|csv|json)\b", body.message, re.IGNORECASE)
+        requires_file = bool(approved or file_in_request or REQUIRES_DATA_FILE.search(turn["assistant_message"]["content"]))
+        use_model_test = not requires_file and not manual_test.has_local_data and bool(model_test.cases)
+
+        def await_file() -> PythonCheck:
+            return PythonCheck(status="awaiting_file", attempts=0,
+                               detail="这道题需要读取文件。请选择数据文件并授权本轮读取，再点击运行。")
+
+        def show_approved_file(check: PythonCheck) -> PythonCheck:
+            if not approved:
+                return check
+            return check.model_copy(update={"detail": f"本轮选择：{approved.filename} · {check.detail}"})
 
         def mark_model_check(check: PythonCheck) -> PythonCheck:
             return check.model_copy(update={"case_source": "model",
                 "detail": f"AI 自测（预期输出由模型生成） · {check.detail}"})
 
         def verify_python(code: str) -> PythonCheck:
+            if requires_file and not approved:
+                return await_file()
             if use_model_test:
                 return mark_model_check(run_python_sandbox(service.settings, code, model_test))
+            if approved:
+                return show_approved_file(run_python_sandbox(service.settings, code, manual_test))
             return debug_python(service.settings, service.client, turn["user_message"]["content"], code, manual_test)
 
         def verify_c(code: str, language: str) -> PythonCheck:
+            if requires_file and not approved:
+                return await_file()
             if use_model_test:
                 return mark_model_check(run_c_sandbox(service.settings, code, language, model_test))
+            if approved:
+                return show_approved_file(run_c_sandbox(service.settings, code, language, manual_test))
             return debug_c(service.settings, service.client, turn["user_message"]["content"], code, language, manual_test)
 
         turn["local_source"] = open_generated_source(
             service.settings, turn,
             verify_python if service.settings.python_sandbox_enabled else None,
-            verify_c if service.settings.c_sandbox_enabled else None)
+            verify_c if service.settings.c_sandbox_enabled else None,
+            origin=f"{request.url.scheme}://{request.url.netloc}", requires_file=requires_file)
     return turn

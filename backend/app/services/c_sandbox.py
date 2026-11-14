@@ -14,7 +14,7 @@ from threading import Lock
 
 from app.core.config import Settings
 from app.services.deepseek import DeepSeekClient, DeepSeekError, add_usage
-from app.services.python_sandbox import MAX_REPAIR_ATTEMPTS, PythonCheck, PythonTest, run_case_matrix
+from app.services.python_sandbox import MAX_REPAIR_ATTEMPTS, PythonCheck, PythonTest, check_data_file, run_case_matrix
 from app.services.source_files import ensure_workspace_path, parse_generated_code, source_directory
 
 logger = logging.getLogger(__name__)
@@ -128,7 +128,8 @@ def _run_once(settings: Settings, code: str, language: str, stdin: str, expected
                 (guest / approved_file.filename).write_text(
                     approved_file.content, encoding="utf-8", newline="\n")
             executed = subprocess.run(
-                [sys.executable, "-I", "-B", str(WORKER), str(module), str(job)],
+                [sys.executable, "-I", "-B", str(WORKER), str(module), str(job),
+                 *([approved_file.filename] if approved_file else [])],
                 cwd=job, env=_allowed_env(), stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -147,8 +148,13 @@ def _run_once(settings: Settings, code: str, language: str, stdin: str, expected
         return PythonCheck(status="unavailable", detail="C/C++ 沙箱初始化失败，本轮未运行。", attempts=0)
     data = {"stdout": result["stdout"], "stderr": result["stderr"], "exit_code": result["exit_code"],
             "phase": "run"}
+    file_check = check_data_file(result, approved_file, data, expected=expected)
     if result["limit"]:
         return PythonCheck(status="limit", detail=LIMIT_DETAIL[result["limit"]], **data)
+    if file_check is not None:
+        return file_check
+    if result.get("awaiting_input"):
+        return PythonCheck(status="awaiting_input", detail="程序需要标准输入。请按题目要求补充输入后试跑。", **data)
     if result["exit_code"] != 0:
         return PythonCheck(status="failed", detail=f"{spec['label']} 程序退出失败，请查看错误输出。", **data)
     if expected is None:
