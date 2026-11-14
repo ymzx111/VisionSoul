@@ -150,7 +150,7 @@ def open_generated_source(settings: Settings, turn: dict,
     if extension == ".py" and verify_python:
         check = verify_python(code)
     elif extension in {".c", ".cpp", ".cc", ".cxx"} and verify_c:
-        # C/C++ 由宿主机编译成 wasm，再在 WASI 沙箱里运行；结果仍放在 python_check 字段里兼容旧前端。
+        # C/C++ 在 Wasm 编译器中编译，再在独立的 WASI 沙箱运行；结果仍放在 python_check 字段里兼容旧前端。
         check = verify_c(code, "c" if extension == ".c" else "cpp")
     if check and check.repaired_code:
         try:

@@ -195,10 +195,12 @@ def run_case_matrix(run_once, test: PythonTest) -> PythonCheck:
     for index, case in enumerate(test.cases, 1):
         name = case.name.strip() or f"用例{index}"
         one = run_once(case.stdin, case.expected)
+        if one.status in {"unavailable", "busy"}:
+            return one.model_copy(update={"case_results": results})
         results.append(CaseResult(name=name, status=one.status, stdin=case.stdin,
                                   expected=case.expected, stdout=one.stdout, stderr=one.stderr,
                                   exit_code=one.exit_code, phase=one.phase))
-        if one.status in {"unavailable", "busy", "limit"} or one.phase == "compile":
+        if one.status == "limit" or one.phase == "compile":
             return one.model_copy(update={"case_results": results})
 
     broken = [row for row in results if row.status in {"failed", "limit"}]

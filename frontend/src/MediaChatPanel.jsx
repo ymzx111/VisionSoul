@@ -113,7 +113,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
       {state.kind === 'video' && <p className="chat-image-note">输入「重点看 3–5 秒」可对指定区间补抽，每次最多 5 秒。读题或排错最多使用 4 张高清图。</p>}
       {workMedia && <details className="python-test">
         <summary>验收样例（Python / C / C++，可选）</summary>
-        <p className="chat-image-note">每组用例独立运行、逐组判定，可覆盖正常、空值、边界。Python 在 WASI 沙箱里跑，C 与 C++ 先编译成 wasm 再在 WASI 里运行。手填样例仅在本机使用，失败时最多自动修复 3 次。留空时可运行 AI 自测；其预期输出由模型生成，自测失败不会自动修复。</p>
+        <p className="chat-image-note">每组用例独立运行、逐组判定，可覆盖正常、空值、边界。Python 在 WASI 沙箱里跑，C 与 C++ 在独立环境中编译，再在 WASI 里运行。手填样例仅在本机使用，失败时最多自动修复 3 次。留空时可运行 AI 自测；其预期输出由模型生成，自测失败不会自动修复。</p>
         {cases.map((row, index) => <div className="python-case" key={index}>
           <label className="sr-only" htmlFor={`python-case-name-${index}`}>用例名称</label>
           <input id={`python-case-name-${index}`} placeholder={`用例${index + 1}`} maxLength={40} disabled={busy}

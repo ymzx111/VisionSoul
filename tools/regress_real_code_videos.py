@@ -3,7 +3,6 @@ import argparse
 from hashlib import sha256
 import json
 from pathlib import Path
-import subprocess
 import sys
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -20,6 +19,7 @@ from app.api.routes.chat import get_chat_service
 from app.core.config import Settings
 from app.main import app
 from app.services.chat import ChatService
+from app.services.c_sandbox import run_compiler
 from app.services.deepseek import DeepSeekClient
 from app.services.local_ide import split_model_cases
 from app.services.source_files import FILE_DECLARATION
@@ -106,7 +106,7 @@ def run(directory: Path):
         with patch.dict(app.dependency_overrides, {get_chat_service: lambda: service}), \
                 patch("app.services.local_ide.launch_ide"), \
                 TestClient(local_app, base_url=base) as client, \
-                patch("app.services.c_sandbox.subprocess.run", wraps=subprocess.run) as processes:
+                patch("app.services.c_sandbox.run_compiler", wraps=run_compiler) as compile_call:
             for name, path in captures.items():
                 with path.open("rb") as file:
                     video = videos.upload(file)
@@ -133,9 +133,7 @@ def run(directory: Path):
                 verify(Path(source["path"]).read_text(encoding="utf-8-sig") == SOURCE,
                        "3-3：落盘源码或注释发生变化")
                 verify(len(split_model_cases(reply)[1].cases) == 3, "3-3：自测块解析失败")
-                compiles = [call for call in processes.call_args_list
-                            if Path(call.args[0][0]).name.lower() == "zig.exe"]
-                verify(len(compiles) == 1, "3-3：三组用例没有复用单次编译")
+                verify(compile_call.call_count == 1, "3-3: expected one isolated compilation")
                 print("3-3：识别为静音；格式重试 1 次，编译 1 次，3 组输出全部通过")
         verify(len(calls) == 3, "模型调用次数异常")
 

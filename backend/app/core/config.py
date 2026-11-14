@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     c_sandbox_enabled: bool = True
     c_sandbox_auto_repair: bool = True
     c_sandbox_compiler: Path = (Path(__file__).resolve().parents[2] / "storage" / "sandbox-runtime"
-                                / "c" / "zig-0.17.1" / "zig.exe")
+                                / "c" / "yowasp" / "package" / "gen" / "bundle.js")
 
     @field_validator("video_max_frames", mode="before")
     @classmethod

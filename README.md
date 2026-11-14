@@ -557,7 +557,7 @@ API：`GET /api/videos/{video_id}/audio` 返回原始、当前对白及版本；
 
 ## C/C++ 语言隔离编译（P048）
 
-工作解析交付 C 或 C++ 源码后，同样自动编译并在沙箱里试跑，再用“验收样例”的多组用例逐组判定。编译在宿主机完成，但只调用固定路径的 Zig、固定参数，工作目录锁在 workspace 的临时目录内；编译产物是 wasm，只在 Wasmtime 里运行，禁用网络、宿主文件写入与子进程，限制时间、内存和输出。沙箱或编译器不可用时停止试跑。编译失败、运行失败和输出不符都会把结构化错误回传给模型自动修复，最多 3 轮，原始运行输出和编译诊断留在本机。C 与 C++ 都用同一套工具链（`cc` / `c++` 驱动，目标 wasm32-wasi），产物同存 workspace/C。
+工作解析交付 C 或 C++ 源码后，WebAssembly 版 Clang/LLD 在自己的虚拟文件系统内编译，编译器只接收源码和固定工具链资源。产物随后交给独立的 Wasmtime 沙箱，运行时可读取本轮明确授权的只读文件。缺少工具链或隔离启动失败时停止试跑。C/C++ 源码保存在 workspace/C。
 
 目前支持的编程语言固定为 **Python、C、C++**；其他语言（例如 C#）不再接受为可交付源码。
 
@@ -565,13 +565,13 @@ API：`GET /api/videos/{video_id}/audio` 返回原始、当前对白及版本；
 
     .\.venv\Scripts\python.exe .\tools\install_c_sandbox.py
 
-工具链装在 backend/storage/sandbox-runtime/c 下（默认 Zig 0.17.1，约 360 MB，不进 Git），安装脚本校验 SHA-256。可在 backend/.env 设置 C_SANDBOX_ENABLED=false 或 C_SANDBOX_AUTO_REPAIR=false，也可用 C_SANDBOX_COMPILER 指向其他 zig.exe。Visual Studio 打开与沙箱试跑并行存在：沙箱负责判定对错，VS 供你自己运行。详见 [P048](prompts/P048_C语言隔离编译与断言验收.md)。
+工具链装在 backend/storage/sandbox-runtime/c，安装脚本校验 npm 归档 SHA-256，执行前再次校验编译资产。需要 Node.js 24 或更新版本。通过 IDE 手动启动时使用 IDE 的环境。详见 [P054](prompts/P054_C与Cpp编译隔离.md)。
 
 ## 编程验收与静音实拍回归（P053）
 
 完整程序可随回复附带最多三组 AI 自测，手填样例优先。自测结果只表示程序与模型提供的预期一致，自测失败不触发自动修复。手填验收数据、文件内容及原始运行和编译诊断留在本机。修复用量累计显示。
 
-同一轮 C/C++ 多组用例共享一份临时 Wasm，每组在独立沙箱内运行，结束清理。Zig 编译仍在宿主机进行。工作解析视频仅在规定的根字段缺失或多余时额外试一次，成功后累计显示两次用量。
+同一轮 C/C++ 多组用例共享一份临时 Wasm，每组在独立沙箱内运行，结束清理。工作解析视频仅在规定的根字段缺失或多余时额外试一次，成功后累计显示两次用量。
 
 在项目根目录运行：
 

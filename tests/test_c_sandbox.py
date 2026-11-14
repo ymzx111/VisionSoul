@@ -1,4 +1,4 @@
-"""C / C++ 隔离编译验收：宿主机编译成 wasm，WASI 沙箱运行，多组断言与三次修复。"""
+"""C / C++ 隔离编译验收：Wasm 版 Clang 编译成 wasm，WASI 沙箱运行，多组断言与三次修复。"""
 import json
 from pathlib import Path
 import sys
@@ -63,7 +63,7 @@ class CSandboxTests(unittest.TestCase):
 
     def require_compiler(self):
         if not self.settings.c_sandbox_compiler.is_file():
-            self.skipTest("Zig 工具链未安装（tools/install_c_sandbox.py）")
+            self.skipTest("Wasm 编译器未安装（tools/install_c_sandbox.py）")
 
     def jobs_empty(self):
         jobs = self.settings.local_source_workspace / ".sandbox-jobs"
@@ -94,6 +94,25 @@ class CSandboxTests(unittest.TestCase):
         self.assertEqual(result.status, "failed")
         self.assertEqual(result.phase, "compile")
         self.assertTrue(result.stderr)
+        self.jobs_empty()
+
+    def test_compile_cannot_read_existing_host_header(self):
+        self.require_compiler()
+        marker = self.root / "host-only.h"
+        marker.write_text("#define HOST_ONLY 1\n", encoding="utf8")
+        header = marker.as_posix()
+        code = f'#if __has_include("{header}")\n#error Host file was visible\n#endif\nint main(void){{return 0;}}'
+        result = run_c_sandbox(self.settings, code, "c", PythonTest())
+        self.assertEqual(result.status, "ran", result.stderr)
+        self.jobs_empty()
+
+    def test_missing_node_stops_multiple_cases_without_fallback(self):
+        self.require_compiler()
+        with patch("app.services.c_sandbox.shutil.which", return_value=None), \
+                patch("app.services.c_sandbox.subprocess.run") as launch:
+            result = run_c_sandbox(self.settings, C_CODE, "c", PythonTest(cases=CASES))
+        self.assertEqual(result.status, "unavailable")
+        launch.assert_not_called()
         self.jobs_empty()
 
     def test_missing_compiler_stops_sandbox(self):
