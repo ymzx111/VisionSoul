@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import patch
 
 import httpx
+from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from fastapi.testclient import TestClient
@@ -20,6 +21,7 @@ from app.services.audio_evidence import AudioTranscript, SpeechSegment
 from app.services.chat import ChatService
 from app.services.chat_store import ChatStore
 from app.services.deepseek import DeepSeekClient, DeepSeekError, ModelReply
+from app.services.images import save_image
 from app.services.videos import VideoService
 from test_video import make_video, result_payload
 
@@ -386,7 +388,38 @@ class VideoChatTests(unittest.TestCase):
                     self.assertIsNone(result["local_source"])
                     self.assertIn("统计范围看不清", result["assistant_message"]["content"])
                     self.assertNotIn("[需看清画面", result["assistant_message"]["content"])
+                    self.assertIn("0.5–2.5 秒", result["assistant_message"]["content"])
+                    self.assertIn("聊天框补充", result["assistant_message"]["content"])
                     launch.assert_not_called()
+
+    def test_video_followup_uses_clear_photos_with_saved_context_and_no_frame_resend(self):
+        self.settings.image_storage_dir = Path(self.temp.name) / "images"
+        photos = []
+        for color in ("red", "white"):
+            buffer = BytesIO()
+            Image.new("RGB", (24, 16), color).save(buffer, "PNG")
+            photos.append(save_image(buffer.getvalue(), self.settings).image_id)
+        first = self.chat.send(conversation_id=None, request_id="a" * 32, message="分析视频",
+                               image_id=None, video_id=self.video.video_id, space="work")
+        options = dict(conversation_id=first["conversation_id"], request_id="b" * 32,
+                       message="截图是视频第 1 秒的表格，请重新读题", image_id=None, image_ids=photos, space="work")
+        result = self.chat.send(**options)
+        self.assertEqual(result["conversation_id"], first["conversation_id"])
+        self.assertEqual(result["video_id"], self.video.video_id)
+        self.assertEqual(result["user_message"]["image_ids"], photos)
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual([part["image_url"]["detail"] for part in pictures(self.calls[1])], ["high", "high"])
+        self.assertIn("本话题保存的视频观察", json.dumps(self.calls[1], ensure_ascii=False))
+        self.assertNotIn("response_format", self.calls[1])
+        self.assertTrue(self.chat.send(**options)["replayed"])
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(ChatStore(self.settings.chat_database_path).messages(first["conversation_id"])[-2]["image_ids"], photos)
+        initial = self.chat.send(**{**options, "conversation_id": None, "request_id": "c" * 32,
+                                    "video_id": self.video.video_id, "message": "用截图核对视频中的表格"})
+        self.assertEqual(initial["user_message"]["image_ids"], photos)
+        self.assertEqual([part["image_url"]["detail"] for part in pictures(self.calls[-1])][-2:], ["high", "high"])
+        self.assertGreater(len(pictures(self.calls[-1])), len(photos))
+        self.assertIn("response_format", self.calls[-1])
 
     def test_video_missing_stdin_sample_retries_before_running_real_input(self):
         self.settings.local_source_workspace = Path(self.temp.name) / "workspace"

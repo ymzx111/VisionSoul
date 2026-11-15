@@ -47,6 +47,30 @@ class ChatTests(unittest.TestCase):
         Image.new("RGB", (24, 16), color).save(buffer, "PNG")
         return save_image(buffer.getvalue(), self.settings).image_id
 
+    def test_work_photo_group_preserves_order_and_restores_without_resending(self):
+        images = [self.image(color) for color in ("red", "green", "blue", "white", "black")]
+        app.dependency_overrides[get_chat_service] = lambda: self.service
+        app.dependency_overrides[get_settings] = lambda: self.settings
+        self.addCleanup(app.dependency_overrides.clear)
+        body = {"request_id": "a" * 32, "space": "work", "message": "", "image_id": images[0], "image_ids": images}
+        with TestClient(app) as client:
+            too_many = client.post("/api/chat/messages", json={**body, "image_ids": [*images, "f" * 32]})
+            self.assertEqual(too_many.status_code, 422)
+            self.assertFalse(self.payloads)
+            first = client.post("/api/chat/messages", json=body)
+            self.assertEqual(first.status_code, 200, first.text)
+            result = first.json()
+            self.assertEqual(result["image_ids"], images)
+            self.assertEqual(result["user_message"]["image_ids"], images)
+            parts = self.payloads[0]["messages"][-1]["content"]
+            self.assertEqual(sum(part["type"] == "image_url" for part in parts), 5)
+            replay = client.post("/api/chat/messages", json=body).json()
+            self.assertTrue(replay["replayed"])
+            restored = client.get(f'/api/chat/conversations/{result["conversation_id"]}?space=work').json()
+            self.assertEqual(restored["image_ids"], images)
+            self.assertEqual(restored["messages"][0]["image_ids"], images)
+            self.assertEqual(len(self.payloads), 1)
+
     def test_local_work_photo_saves_python_and_checks_sample_before_opening_editor(self):
         if not find_spec("wasmtime") or not (self.settings.python_sandbox_runtime / "python.wasm").is_file():
             self.skipTest("Python WASI runtime is optional")
@@ -453,7 +477,7 @@ if os.path.isfile('sample.txt'):
             self.assertEqual(status.status_code, 200)
             self.assertEqual(status.json()["name"], "小灵")
             self.assertNotIn("test-key-not-valid", status.text)
-            for extras in [{"role": "system"}, {"messages": []}, {"persona": "replace"}, {"image_ids": []}]:
+            for extras in [{"role": "system"}, {"messages": []}, {"persona": "replace"}, {"image_ids": ["not-an-id"]}]:
                 response = client.post("/api/chat/messages", json={"request_id": "1" * 32, "message": "你好", **extras})
                 self.assertEqual(response.status_code, 422)
             for message in ["   ", "字" * 2001]:

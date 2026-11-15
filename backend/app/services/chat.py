@@ -76,20 +76,27 @@ class ChatService:
     def send(self, *, conversation_id: str | None, request_id: str, message: str, image_id: str | None,
              video_id: str | None = None, inspect_video: bool = False, debug_code: bool = False,
              space: ChatSpace | None = None, sandbox_filename: str | None = None,
-             auto_sample_retry: bool = False) -> dict:
+             auto_sample_retry: bool = False, image_ids: list[str] | None = None) -> dict:
         try:
             effective_space = space or "companion"
             if effective_space not in {"work", "companion"}:
                 raise DeepSeekError("请选择工作解析或角色对话。", 422)
+            if len(image_ids or []) > 5 or len(set([image_id, *(image_ids or [])]) - {None}) > 5:
+                raise DeepSeekError("一次最多上传5张图片。", 422)
+            attachments = list(dict.fromkeys(image_ids or []))
             if not message.strip():
                 # 新上传的图片或视频允许留空：直接按素材内容分析，不用先想问题。
                 fresh_media = bool(video_id or image_id) and not conversation_id
-                if not fresh_media or inspect_video or debug_code:
+                if not (fresh_media or attachments) or inspect_video or debug_code:
                     raise DeepSeekError("请填写消息，或上传新的图片/视频后再开始分析。", 422)
                 message = ""
-            display_message = message or ("分析这段视频" if video_id else "分析这张图片" if image_id else "分析")
+            display_message = message or ("请结合补充图片继续分析" if attachments and conversation_id
+                                          else "分析这段视频" if video_id else "分析这些图片" if len(attachments) > 1
+                                          else "分析这张图片" if image_id or attachments else "分析")
             self.store.initialize()
             body = {"conversation_id": conversation_id, "message": message, "image_id": image_id}
+            if attachments:
+                body["image_ids"] = attachments
             if space is not None:
                 body["space"] = space
             if video_id:
@@ -136,6 +143,13 @@ class ChatService:
                         raise DeepSeekError("当前话题已关联另一张图片，请新建话题后再换图。", 409)
                     attached = image_id or attached
                     attached_video = video_id or attached_video
+                    if attached and not (conversation or {}).get("image_id") and attachments:
+                        attachments = list(dict.fromkeys([attached, *attachments]))
+                    photos = attachments or ([attached] if attached and len((conversation or {}).get("image_ids") or []) <= 1 else [])
+                    photo_parts = [image_part(photo, self.settings) for photo in photos]
+                    if attached_video:
+                        for part in photo_parts:
+                            part["image_url"]["detail"] = "high"
                     history = self.store.messages(target, self.settings.chat_context_turns * 2) if conversation else []
                     video_context = json.loads(conversation["video_context"]) if conversation and conversation.get("video_context") else None
                     if attached_video and video_context:
@@ -149,7 +163,7 @@ class ChatService:
                         memory_text = roles.memory_context(target, message, allowed_conversations=self.store.companion_ids())
                     followup = bool(history and history[-1]["role"] == "assistant"
                                     and needs_task_clarification(history[-1]["content"]))
-                    source_delivery = bool(effective_space == "work" and (attached or attached_video or followup or CODE_REQUEST.search(message))
+                    source_delivery = bool(effective_space == "work" and (attached or attached_video or attachments or followup or CODE_REQUEST.search(message))
                                            and not inspect_video and not debug_code)
                     if source_delivery and sandbox_filename is not None:
                         persona_prompt += (
@@ -160,6 +174,12 @@ class ChatService:
                             "不要写入该文件。文件内容不会提供给模型，不能假设已经看过文件内容，"
                             "也不要为该文件虚构预期输出。保留题目规定的数据格式。"
                         )
+                    if (inspect_video or debug_code) and attachments:
+                        raise DeepSeekError("请用聊天发送图片，或单独重新细看视频。", 422)
+                    if attached_video and attachments:
+                        persona_prompt += ("\n本轮图片是用户为当前视频补充的证据。优先用清晰图片核对小字、数字或代码，"
+                                           "结合用户给的秒数和视频内容。只有用户已给出或视频能验证时，才把图片归到具体秒数。"
+                                           "仍缺会改变结果的细节时，只问缺项，并给出能定位的视频秒数。")
                     videos = (self._provided_videos if space is None else None) or VideoService(self.settings, self.client,
                         system_prompt=persona_prompt if space is not None else video_prompt, isolated=space is not None,
                         source_delivery=source_delivery, auto_sample_retry=auto_sample_retry)
@@ -174,9 +194,13 @@ class ChatService:
                         video_context["comparison_question"] = message
                     elif attached_video and video_context is None:
                         prior = context_messages(history,self.settings,message,len(memory_text),persona_prompt)
-                        video_context, result = videos.start_conversation(attached_video,message,prior[1:],memory_text=memory_text)
+                        if photo_parts:
+                            video_context, result = videos.start_conversation(
+                                attached_video, message, prior[1:], memory_text=memory_text, supplemental=photo_parts)
+                        else:
+                            video_context, result = videos.start_conversation(attached_video,message,prior[1:],memory_text=memory_text)
                         video_context["opening_message"] = display_message
-                    elif attached_video and needs_text_refresh(message, video_context, work_video=source_delivery):
+                    elif attached_video and not attachments and needs_text_refresh(message, video_context, work_video=source_delivery):
                         prior = context_messages(history, self.settings, message, len(memory_text), persona_prompt)
                         opening = video_context.get("opening_message", message)
                         video_context, result = videos.read_text(attached_video, message, prior[1:], memory_text)
@@ -203,7 +227,7 @@ class ChatService:
                             messages.insert(1, {"role": "user", "content": context_text})
                         if effective_context and effective_context.get('code_debug'):
                             messages[0]['content'] += '\n当前为代码排错追问：优先使用保存的code_debug、可读代码/报错证据和用户最新说明，给最小修改及验证方法；未读取源文件或运行程序，不声称已修复。新错误若未在本片出现，请补报错文本或新视频。异常转写待校对，不复述旧回复中的误听。'
-                        content = [{"type": "text", "text": message}, image_part(attached, self.settings)] if attached else message
+                        content = [{"type": "text", "text": message or display_message}, *photo_parts] if photo_parts else message
                         messages.append({"role": "user", "content": content})
                         options = {"max_tokens": self.settings.video_max_tokens} if source_delivery else {}
                         result = self.client.complete(messages, **options)
@@ -226,7 +250,7 @@ class ChatService:
                         conversation=conversation, conversation_id=target, image_id=attached,
                         message=display_message, model_reply=result.model_dump(), request_id=request_id,
                         fingerprint=fingerprint, persona_id=persona_version, video_id=attached_video, video_context=video_context,
-                        space=effective_space,
+                        space=effective_space, image_ids=attachments,
                     )
                     return {**turn, "_source_delivery": source_delivery}
         except ChatConflict as exc:

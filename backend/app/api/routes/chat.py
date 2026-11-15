@@ -44,7 +44,8 @@ class SendMessage(BaseModel):
     open_in_ide: bool = Field(default=False, title="在本机打开生成的源码")
     python_test: PythonTest | None = Field(default=None, title="本轮本机 Python 验收样例")
     debug_code: bool = Field(default=False,title="从视频辅助排查代码报错",description="显式读取最多4张高清并生成建议，不执行代码；产生API用量。")
-    image_id: Identifier | None = Field(default=None, title="可选图片编号", description="一段话题最多关联一张图片。")
+    image_id: Identifier | None = Field(default=None, title="可选主素材图片编号")
+    image_ids: list[Identifier] = Field(default_factory=list, max_length=5, title="本轮图片编号（含主素材，最多五张）")
     video_id: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None = Field(default=None, title="可选视频编号", description="先上传视频，再与文字一起发送；同话题后续可不再填写。")
 
     @model_validator(mode="after")
@@ -62,6 +63,7 @@ class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str
     image_id: str | None = None
+    image_ids: list[str] = Field(default_factory=list)
     video_id: str | None = None
     created_at: str
 
@@ -82,6 +84,7 @@ class ChatTurn(BaseModel):
     conversation_id: str
     space: ChatSpace
     image_id: str | None
+    image_ids: list[str] = Field(default_factory=list)
     video_id: str | None = None
     video_context: dict | None = None
     user_message: ChatMessage

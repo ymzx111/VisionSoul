@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { IMAGE_ACCEPT } from './media-workflow.mjs';
+import { MAX_CHAT_IMAGES } from './workflow.mjs';
 
 async function readApprovedFile(file) {
   if (!/\.(txt|csv|json)$/i.test(file.name)) throw new Error('请选择 TXT、CSV 或 JSON 文件。');
@@ -127,12 +129,15 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
   const [testError, setTestError] = useState('');
   const [readingFile, setReadingFile] = useState(false);
   const fileInput = useRef(null);
+  const photoInput = useRef(null);
   const busy = readingFile || workflow.busy();
-  const workMedia = !companion && (state.kind === 'image' || state.kind === 'video');
+  const workMedia = !companion && (state.kind || state.draftImages.length
+    || chat.messages.some(item => item.image_ids?.length || item.image_id));
   const check = chat.localSource?.python_check;
   const runId = chat.localSource?.sandbox_run_id || chat.localSource?.python_run_id;
   const ready = !state.kind || (state.kind === 'image' ? state.image.upload?.image_id || state.restoredImageId : state.video.video?.video_id);
-  const canSend = chat.persona.configured && !busy && !state.error && ready && (draft.trim() || (state.kind && !chat.conversationId));
+  const canSend = chat.persona.configured && !busy && !state.error && ready
+    && (draft.trim() || state.draftImages.length || (state.kind && !chat.conversationId));
   const messages = chat.pending ? [...chat.messages, { ...chat.pending, id: 'pending' }] : chat.messages;
   useEffect(() => { if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, [chat.messages, chat.pending]);
   function clearTest() {
@@ -207,7 +212,12 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
           return <article key={item.id} className={`chat-message ${item.role === 'user' ? 'from-user' : 'from-companion'}`}>
           <span className="chat-author">{item.role === 'user' ? '你' : chat.persona.name}{item.id === 'pending' ? ' · 正在发送' : ''}</span>
           {item.video_id && <span className="shared-video-chip">▷ 已分享视频</span>}
-          {item.image_id && <a href={`/api/images/${item.image_id}`} target="_blank" rel="noreferrer" className="chat-image-link"><img src={`/api/images/${item.image_id}`} width="160" height="110" alt="这一轮分享的图片"/></a>}
+          {(item.image_ids?.length || item.image_id) && <div className="chat-image-list">
+            {(item.image_ids?.length ? item.image_ids : [item.image_id]).map((id, index) =>
+              <a key={`${id}-${index}`} href={`/api/images/${id}`} target="_blank" rel="noreferrer" className="chat-image-link">
+                <img src={`/api/images/${id}`} alt={`本轮第 ${index + 1} 张图片`}/>
+              </a>)}
+          </div>}
           {content && <p data-testid={item.role === 'assistant' ? 'media-analysis-message' : undefined}>{content}</p>}
           {check && runId && item.id === chat.messages.at(-1)?.id &&
             <SandboxRun key={runId} initial={{ ...check, desktop_result_opened: chat.localSource.desktop_result_opened }} runId={runId} disabled={busy}/>}
@@ -270,11 +280,28 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
       </details>}
       <label className="sr-only" htmlFor="media-message">问题或补充说明</label>
       <textarea id="media-message" maxLength={2000} disabled={busy} value={draft} onChange={event => setDraft(event.target.value)}
-        placeholder={chat.conversationId ? '继续追问，或补充你的说明…'
+        placeholder={state.kind === 'video' && state.draftImages.length ? '可注明截图位置，例如「视频第 8 秒的表格」。'
+          : chat.conversationId ? '继续追问，或补充你的说明…'
           : state.kind === 'video' ? '输入你的要求，或留空，让助手从视频里判断。'
           : state.kind === 'image' && workMedia ? '例如：请按照片里的题目写完整的程序，语言按题面。'
           : '可选：你想了解什么？不填写也可以开始分析。'}/>
+      <input ref={photoInput} className="sr-only" type="file" accept={IMAGE_ACCEPT} multiple tabIndex={-1}
+        aria-label="选择补充图片" disabled={busy} onChange={event => {
+          const files = Array.from(event.target.files || []);
+          event.target.value = '';
+          if (files.length) void workflow.selectAttachments(files);
+        }}/>
+      {state.draftImages.length > 0 && <div className="chat-image-list" aria-label="待发送图片">
+        {state.draftImages.map(photo => <div className="chat-attachment" key={photo.image_id}>
+          <img src={photo.url} alt={photo.name}/>
+          <button className="text-button" disabled={busy} aria-label={`移除 ${photo.name}`}
+            onClick={() => workflow.removeAttachment(photo.image_id)}>×</button>
+        </div>)}
+      </div>}
+      {state.attachmentError && <p className="notice notice-error" role="alert">{state.attachmentError}</p>}
       <div className="question-actions media-chat-actions"><span className="cost-note">点击后才调用模型{workMedia && state.kind === 'video' ? ' · 画面复核或交付异常时可能追加一次调用' : ''}{chat.usage ? chat.replayed ? ' · 已恢复原回复' : ` · 本次${chat.usage.total_tokens} token` : ''}</span>
+        <button type="button" className="button button-secondary" disabled={busy || state.draftImages.length >= MAX_CHAT_IMAGES}
+          onClick={() => photoInput.current?.click()}>{state.attaching ? '正在上传图片…' : `添加图片 ${state.draftImages.length}/${MAX_CHAT_IMAGES}`}</button>
         <button className="button button-primary" disabled={!canSend} onClick={() => void send()}>{chat.sending ? '正在回复…' : chat.conversationId || !state.kind ? '发送消息 →' : '开始分析 →'}</button>
       </div>
     </div>

@@ -17,8 +17,11 @@ async function jsonResponse(fetcher, url, options) {
   return body;
 }
 
-export function validateFiles(files) {
-  if (files.length > 1) return '目前只支持单张图片上传';
+export const MAX_CHAT_IMAGES = 5;
+export const IMAGE_LIMIT_MESSAGE = '一次最多上传5张图片';
+
+export function validateFiles(files, maxImages = 1) {
+  if (files.length > maxImages) return maxImages === 1 ? '目前只支持单张图片上传' : IMAGE_LIMIT_MESSAGE;
   for (const file of files) {
     if (!/\.(jpe?g|png|webp)$/i.test(file.name)) return '请选择 JPG、PNG 或 WebP 静态图片。';
     if (!file.size) return '图片内容为空，请重新选择。';
@@ -27,10 +30,18 @@ export function validateFiles(files) {
   return null;
 }
 
+export async function uploadImage(fetcher, file, signal) {
+  const form = new FormData();
+  form.append('file', file, file.name);
+  const uploaded = await jsonResponse(fetcher, '/api/images', { method: 'POST', body: form, signal });
+  if (!IMAGE_ID.test(uploaded.image_id)) throw new Error('图片上传结果不完整，请重新选择图片。');
+  return { ...uploaded, url: `/api/images/${uploaded.image_id}` };
+}
+
 /** 一次选择对应一个版本，过期的上传结果不会绑定到新图片。 */
-export function createImageWorkflow({ fetcher = globalThis.fetch, initialConfigured = null } = {}) {
+export function createImageWorkflow({ fetcher = globalThis.fetch, initialConfigured = null, maxImages = 1 } = {}) {
   let state = {
-    files: [], upload: null, uploadStage: 'empty', selectionError: '',
+    files: [], upload: null, uploads: [], uploadStage: 'empty', selectionError: '',
     analyzing: false, result: null, analysisError: '',
     configured: initialConfigured, configError: '',
   };
@@ -63,24 +74,22 @@ export function createImageWorkflow({ fetcher = globalThis.fetch, initialConfigu
     const current = ++version;
     uploadAbort?.abort();
     const files = Array.from(input);
-    const invalid = validateFiles(files);
+    const invalid = validateFiles(files, maxImages);
     const entries = invalid ? [] : files.map(file => ({ id: `file-${++serial}`, file }));
-    publish({ files: entries, upload: null, result: null, analysisError: '',
-      selectionError: invalid || '', uploadStage: invalid ? 'error' : !entries.length ? 'empty' : entries.length > 1 ? 'multiple' : 'uploading' });
-    if (invalid || entries.length !== 1) return false;
+    publish({ files: entries, upload: null, uploads: [], result: null, analysisError: '',
+      selectionError: invalid || '', uploadStage: invalid ? 'error' : !entries.length ? 'empty' : 'uploading' });
+    if (invalid || !entries.length) return false;
     const controller = new AbortController();
     uploadAbort = controller;
-    const form = new FormData();
-    form.append('file', entries[0].file, entries[0].file.name);
     try {
-      const uploaded = await jsonResponse(fetcher, '/api/images', { method: 'POST', body: form, signal: controller.signal });
+      const uploads = await Promise.all(entries.map(entry => uploadImage(fetcher, entry.file, controller.signal)));
       if (current !== version || disposed) return false;
-      if (!IMAGE_ID.test(uploaded.image_id)) throw new Error('图片上传结果不完整，请重新选择图片。');
-      publish({ upload: { ...uploaded, url: `/api/images/${uploaded.image_id}` }, uploadStage: 'ready' });
+      publish({ upload: uploads[0], uploads, uploadStage: 'ready' });
       return true;
     } catch (error) {
       if (current === version && error.name !== 'AbortError') {
-        publish({ upload: null, uploadStage: 'error', selectionError: messageFor(error) });
+        controller.abort();
+        publish({ upload: null, uploads: [], uploadStage: 'error', selectionError: messageFor(error) });
       }
       return false;
     }

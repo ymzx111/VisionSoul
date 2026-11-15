@@ -7,7 +7,9 @@ function ImageOrEmptyPanel({ workflow, state }) {
   const input = useRef(null);
   const [dragging, setDragging] = useState(false);
   const busy = workflow.busy();
-  const imageId = state.image.upload?.image_id || state.restoredImageId;
+  const imageIds = state.image.uploads.length
+    ? state.image.uploads.map(photo => photo.image_id) : state.restoredImageIds;
+  const imageId = imageIds[0];
   return <section className={`panel image-panel ${dragging ? 'is-dragging' : ''}`} aria-labelledby="media-heading"
     onDragOver={event => { event.preventDefault(); if (!busy) setDragging(true); }}
     onDragLeave={() => setDragging(false)} onDrop={event => { event.preventDefault(); setDragging(false); if (!busy) void workflow.selectFiles(event.dataTransfer.files); }}>
@@ -16,16 +18,19 @@ function ImageOrEmptyPanel({ workflow, state }) {
     <input ref={input} className="sr-only" tabIndex={-1} type="file" accept={MEDIA_ACCEPT} multiple aria-label="选择图片或视频" disabled={busy}
       onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ''; if (files.length) void workflow.selectFiles(files); }}/>
     <div className={`preview-zone ${imageId ? '' : 'is-empty'}`}>
-      {imageId ? <img className="single-preview" src={`/api/images/${imageId}`} alt="当前分析图片"/> : <div className="empty-upload">
+      {imageIds.length > 1 ? <div className="media-photo-grid">{imageIds.map((id, index) =>
+        <a href={`/api/images/${id}`} key={`${id}-${index}`} target="_blank" rel="noreferrer">
+          <img src={`/api/images/${id}`} alt={`第 ${index + 1} 张主素材图片`}/>
+        </a>)}</div> : imageId ? <img className="single-preview" src={`/api/images/${imageId}`} alt="当前分析图片"/> : <div className="empty-upload">
         <span className="empty-icon" aria-hidden="true">＋</span><h3>{state.selecting ? '正在准备素材…' : '上传图片或视频'}</h3>
-        <p>一次一张图片，或一段最长30秒的视频</p>
+        <p>最多 5 张图片，或一段最长 30 秒的视频</p>
         <button className="button button-primary" disabled={busy} onClick={() => input.current?.click()}>选择图片或视频</button>
         <span className="format-note">图片 JPG / PNG / WebP · 单张不超过10 MB</span>
         <span className="format-note">视频 MP4（H.264 / H.265）· 最长30秒 · 不超过50 MB</span>
       </div>}
     </div>
     <div className="image-footer"><div className="image-info"><span className={`status-dot ${imageId ? 'is-ready' : ''}`}/>
-      <span className="filename">{state.file?.name || (imageId ? '话题中的图片' : '尚未选择素材')}</span></div>
+      <span className="filename">{imageIds.length > 1 ? `已选 ${imageIds.length} 张图片` : state.file?.name || (imageId ? '话题中的图片' : '尚未选择素材')}</span></div>
       {state.kind && <button className="button button-secondary" disabled={busy} onClick={() => input.current?.click()}>更换素材</button>}</div>
     <p className="media-upload-note">{imageId ? '图片已自动关联，直接分析或提问即可。' : '拖入图片或视频，也可以直接在右侧发送文字。'}上传不会自动调用付费模型。</p>
   </section>;

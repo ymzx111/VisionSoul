@@ -32,7 +32,7 @@ from app.services.video_debug import CodeDebugReport, debug_reply
 from app.services.video_tasks import AUTO_VIDEO_TASK, task_prompt
 from app.services.local_ide import (
     CODE_DELIVERY_TASK, INPUT_SAMPLE_RETRY, has_source_and_sample, incomplete_code_reply,
-    missing_input_sample, needs_task_clarification,
+    missing_input_sample,
 )
 from app.services.video_reading import (
     DetailSelection, FrameAdjustment, INLINE_DATA_TASK, READ_AGAIN, READING_TASK, VISUAL_REVIEW_TASK, VISUAL_REREAD_TASK,
@@ -278,7 +278,7 @@ class VideoService:
                                     focus_range_ms=interval, focus_frames=focus_frames)
         return selection, paths
 
-    def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None, memory_text: str = "", inspect: bool = False, debug_code: bool = False, *, auto_task: bool = False, reread: bool = False, focus_override: tuple[int, int] | None = None) -> VideoAnswer:
+    def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None, memory_text: str = "", inspect: bool = False, debug_code: bool = False, *, auto_task: bool = False, reread: bool = False, focus_override: tuple[int, int] | None = None, supplemental: list[dict] | None = None) -> VideoAnswer:
         directory = video_directory(info.video_id, self.settings)
         parts = [{"type": "text", "text": "图号@原视频秒，区间是重复图的采样点，不代表连续动作。"}]
         question = caption
@@ -349,6 +349,10 @@ class VideoService:
             prompt += "\n" + (VISUAL_REREAD_TASK if reread else VISUAL_REVIEW_TASK)
         if caption:
             parts.append({"type": "text", "text": caption})
+        if supplemental:
+            parts.append({"type": "text", "text": "以下为本轮补充图片，用于核对原视频中的关键信息。"
+                          "observations.frame_index 只引用前面标有图号与秒数的原片画面。"})
+            parts.extend(supplemental)
         if inspect or debug_code or (reading and not delivery):
             if not detailed:
                 prompt += "\n此视频只有旧版概览图，没有额外细节图；不要声称看到了叶脉、小字等缺失细节。必要时提示重新上传原视频。"
@@ -402,13 +406,12 @@ class VideoService:
                 if not reread and not retried and (not detailed or (focus and focus != interval)):
                     try:
                         reviewed = self._observe(info, caption, history, memory_text, auto_task=auto_task,
-                                                 reread=True, focus_override=focus)
+                                                 reread=True, focus_override=focus, supplemental=supplemental)
                     except (DeepSeekError, VideoError, OSError) as exc:
                         logger.warning("视频自动高清复核未完成 error=%s", type(exc).__name__)
                     else:
                         return reviewed.model_copy(update={"usage": add_usage(reply.usage, reviewed.usage)})
-                if not needs_task_clarification(content.reply) or not reread:
-                    content.reply = visual_clarification(content.reply, interval or focus)
+                content.reply = visual_clarification(content.reply, focus or interval)
             elif (delivery and not reread and not retried
                     and incomplete_code_reply(content.reply, caption)):
                 content = retry_reply(
@@ -425,8 +428,11 @@ class VideoService:
                 else:
                     if not has_source_and_sample(content.reply):
                         content = first_content
-            if delivery and retried and not review_pending and visual_review_request(content.reply, question)[0]:
-                content.reply = visual_clarification(content.reply, interval)
+            if delivery and retried and not review_pending:
+                still_unclear, proposed_range = visual_review_request(content.reply, question)
+                if still_unclear:
+                    focus = review_interval(proposed_range, content.observations, frames, info.duration_seconds)
+                    content.reply = visual_clarification(content.reply, focus or interval)
             stage = "evidence"
             normalized_links, auto_notes = normalize_model_links(content.audio_links, info.audio, frames)
             content.audio_links = normalized_links
@@ -511,15 +517,16 @@ class VideoService:
         finally:
             ANALYSIS_LOCK.release()
 
-    def start_conversation(self, video_id: str, message: str, history: list[dict], memory_text: str = "") -> tuple[dict, ModelReply | None]:
+    def start_conversation(self, video_id: str, message: str, history: list[dict], memory_text: str = "", *,
+                           supplemental: list[dict] | None = None) -> tuple[dict, ModelReply | None]:
         """首次无观察时一次请求同时看图和接话；已有观察时让聊天服务仅用文字接话。"""
         info = self.info(video_id)
-        if not message or self.isolated or wants_text_detail(message) or parse_focus_range(message) is not None:
+        if not message or supplemental or self.isolated or wants_text_detail(message) or parse_focus_range(message) is not None:
             # 新空间的分析只随当前话题保存，不跨话题复用可能混入配文/角色记忆的综合观察。
             if not ANALYSIS_LOCK.acquire(blocking=False):
                 raise VideoError("已有视频正在观察，请稍等后再发送。", 409)
             try:
-                answer = self._observe(info, message, history, memory_text, auto_task=not message)
+                answer = self._observe(info, message, history, memory_text, auto_task=not message, supplemental=supplemental)
                 return self._snapshot(info, answer), ModelReply(answer=answer.reply, model=answer.model, usage=answer.usage)
             finally:
                 ANALYSIS_LOCK.release()

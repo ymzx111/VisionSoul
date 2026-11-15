@@ -9,17 +9,18 @@ const response=body=>({ok:true,json:async()=>body});
 const videoInfo=()=>({video_id:videoId,duration_seconds:5,sample_count:2,frames:[{index:0,time_seconds:0,seen_at:[0]},{index:1,time_seconds:4.96,seen_at:[4.96]}]});
 const gate=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return{promise,resolve};};
 function setup(options={}) {
-  const calls=[];let paid=0;
+  const calls=[];let paid=0, images=0;
   const fetcher=async(url,request={})=>{
     calls.push({url,...request});
     if(url==='/api/chat/conversations?kind=all')return response([]);
     if(url.endsWith('/status'))return response({configured:true,max_bytes:50*1024*1024,max_seconds:30,max_frames:31});
-    if(url==='/api/images')return response({image_id:imageId,width:20,height:20});
+    if(url==='/api/images')return response({image_id:options.distinctPhotos ? (++images).toString(16).padStart(32,'0') : imageId,width:20,height:20});
     if(url==='/api/videos'||url===`/api/videos/${videoId}`)return response(videoInfo());
     if(url==='/api/chat/messages'){
       const body=JSON.parse(request.body);paid++;
       return response({conversation_id:body.conversation_id||String(paid).padStart(32,'0'),image_id:body.image_id||null,video_id:body.video_id||null,
-        user_message:{id:paid*2,role:'user',content:body.message},assistant_message:{id:paid*2+1,role:'assistant',content:'分析结果'},video_context:null});
+        image_ids:body.image_id ? (body.image_ids || [body.image_id]) : [],
+        user_message:{id:paid*2,role:'user',content:body.message,image_ids:body.image_ids},assistant_message:{id:paid*2+1,role:'assistant',content:'分析结果'},video_context:null});
     }
     if(url===`/api/chat/conversations/${conversationId}`)return response({id:conversationId,image_id:options.savedImage?imageId:null,video_id:options.savedVideo?videoId:null,messages:[]});
     throw Error('Unexpected '+url);
@@ -54,13 +55,36 @@ test('video uses the same action for a typed request and keeps special actions e
   workflow.dispose();
 });
 
-test('multiple photos and mixed uploads produce explicit errors with no upload or paid call',async()=>{
+test('oversized photo selection, invalid formats and mixed uploads fail before upload',async()=>{
   const {workflow:w,posts}=setup();await w.initialize();
-  assert.equal(await w.selectFiles([image(),image()]),false);assert.equal(w.getState().error,'目前只支持单张图片上传');
-  assert.equal(await w.selectFiles([image(),new File(['gif'],'other.gif',{type:'image/gif'})]),false);assert.equal(w.getState().error,'目前只支持单张图片上传');
+  assert.equal(await w.selectFiles(Array.from({length:6},image)),false);assert.equal(w.getState().error,'一次最多上传5张图片');
+  assert.equal(await w.selectFiles([image(),new File(['gif'],'other.gif',{type:'image/gif'})]),false);assert.match(w.getState().error,/静态图片/);
   assert.equal(await w.send('分析'),false);
   assert.equal(await w.selectFiles([image(),video()]),false);assert.match(w.getState().error,/一次只能/);
   assert.equal(posts().length,0);w.dispose();
+});
+
+test('main entry sends five ordered photos; chat adds up to five photos without changing the video topic', async () => {
+  const {workflow:w,messages}=setup({distinctPhotos:true});
+  await w.initialize();
+  assert.equal(await w.selectFiles(Array.from({length:5},image)),true);
+  assert.deepEqual(w.getState().image.uploads.map(photo=>photo.image_id),[1,2,3,4,5].map(n=>String(n).padStart(32,'0')));
+  assert.equal(messages().length,0);
+  assert.equal(await w.send(''),true);
+  assert.equal(messages()[0].image_ids.length,5);
+  assert.equal(await w.selectFiles([video()]),true);
+  assert.equal(await w.send('看看视频'),true);
+  const topic=w.getState().chat.conversationId;
+  assert.equal(await w.selectAttachments(Array.from({length:5},image)),true);
+  assert.equal(await w.selectAttachments([image()]),false);
+  assert.equal(w.getState().attachmentError,'一次最多上传5张图片');
+  assert.equal(w.getState().chat.conversationId,topic);
+  assert.equal(await w.send(''),true);
+  assert.equal(messages()[2].conversation_id,topic);
+  assert.equal(messages()[2].video_id,videoId);
+  assert.equal(messages()[2].image_ids.length,5);
+  assert.equal(w.getState().draftImages.length,0);
+  w.dispose();
 });
 
 test('over 30 seconds is rejected before uploading; exactly 30 is accepted',async()=>{
@@ -71,7 +95,7 @@ test('over 30 seconds is rejected before uploading; exactly 30 is accepted',asyn
 
 test('failed new selection retains previous preview but blocks send until dismissed or corrected',async()=>{
   const {workflow:w,messages}=setup();await w.initialize();await w.selectFiles([image()]);
-  await w.selectFiles([image(),image()]);assert.equal(w.getState().image.upload.image_id,imageId);
+  await w.selectFiles(Array.from({length:6},image));assert.equal(w.getState().image.upload.image_id,imageId);
   assert.equal(await w.send('分析'),false);assert.equal(messages().length,0);
   w.dismissError();assert.equal(await w.send('用当前图片'),true);w.dispose();
 });

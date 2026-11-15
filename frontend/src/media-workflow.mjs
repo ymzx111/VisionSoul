@@ -1,10 +1,10 @@
-import { createImageWorkflow, validateFiles } from './workflow.mjs';
+import { createImageWorkflow, IMAGE_LIMIT_MESSAGE, MAX_CHAT_IMAGES, uploadImage, validateFiles } from './workflow.mjs';
 import { createVideoWorkflow } from './video-workflow.mjs';
 import { createChatWorkflow } from './chat-workflow.mjs';
 
-export const SINGLE_IMAGE_MESSAGE = '目前只支持单张图片上传';
 export const VIDEO_DURATION_MESSAGE = '超过视频时长上限，上限为30秒';
-export const MEDIA_ACCEPT = 'image/jpeg,image/png,image/webp,video/mp4,.jpg,.jpeg,.png,.webp,.mp4';
+export const IMAGE_ACCEPT = 'image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp';
+export const MEDIA_ACCEPT = IMAGE_ACCEPT + ',video/mp4,.mp4';
 const kindOf = file => /\.(jpe?g|png|webp)$/i.test(file.name) ? 'image' : /\.mp4$/i.test(file.name) ? 'video' : null;
 
 export function readVideoDuration(file, { signal } = {}) {
@@ -28,13 +28,15 @@ export function readVideoDuration(file, { signal } = {}) {
 
 /** 单一入口协调素材、话题和旧记录；原上传/分析服务仍分别复用。 */
 export function createMediaWorkflow({ fetcher = globalThis.fetch, storage = globalThis.localStorage, durationReader = readVideoDuration, makeId, space } = {}) {
-  const image = createImageWorkflow({ fetcher });
+  const image = createImageWorkflow({ fetcher, maxImages: MAX_CHAT_IMAGES });
   const video = createVideoWorkflow({ fetcher, storage: null });
   const chat = createChatWorkflow({ fetcher, storage, makeId, mode: 'media', space });
-  let own = { space, kind: null, file: null, restoredImageId: null, selecting: false, error: '', externalBusy: false };
+  const emptyAttachments = { draftImages: [], attachmentError: '' };
+  let own = { space, kind: null, file: null, restoredImageId: null, restoredImageIds: [],
+    selecting: false, attaching: false, error: '', externalBusy: false, ...emptyAttachments };
   let snapshot;
   let disposed = false, reconciling = false, version = 0, syncedConversation = '';
-  let durationController;
+  let durationController, attachmentController;
   const listeners = new Set();
   const publish = patch => {
     if (disposed) return;
@@ -42,7 +44,7 @@ export function createMediaWorkflow({ fetcher = globalThis.fetch, storage = glob
     snapshot = { ...own, image: image.getState(), video: video.getState(), chat: chat.getState() };
     listeners.forEach(listener => listener());
   };
-  const busy = () => own.selecting || own.externalBusy || image.getState().analyzing || image.getState().uploadStage === 'uploading'
+  const busy = () => own.selecting || own.attaching || own.externalBusy || image.getState().analyzing || image.getState().uploadStage === 'uploading'
     || video.getState().uploading || video.getState().loadingVideo || video.getState().analyzing || chat.getState().sending || chat.getState().loading;
   const reconcile = () => {
     const current = chat.getState();
@@ -54,7 +56,8 @@ export function createMediaWorkflow({ fetcher = globalThis.fetch, storage = glob
     if (current.imageId && own.kind === 'image' && image.getState().upload?.image_id === current.imageId) return;
     reconciling = true;
     image.clear(); video.clear();
-    publish({ kind: current.videoId ? 'video' : current.imageId ? 'image' : null, restoredImageId: current.imageId, file: null, error: '' });
+    publish({ kind: current.videoId ? 'video' : current.imageId ? 'image' : null,
+      restoredImageId: current.imageId, restoredImageIds: current.imageIds, file: null, error: '' });
     if (current.videoId) void video.loadVideo(current.videoId);
     reconciling = false;
   };
@@ -66,13 +69,12 @@ export function createMediaWorkflow({ fetcher = globalThis.fetch, storage = glob
     const files = Array.from(input);
     if (!files.length) return false;
     const kinds = files.map(kindOf);
-    if (files.length > 1) {
-      const photosOnly = files.every(file => file.type?.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp|heic|tiff?)$/i.test(file.name));
-      publish({ error: photosOnly ? SINGLE_IMAGE_MESSAGE : '一次只能上传一张图片或一个视频' }); return false;
+    if (files.length > 1 && kinds.includes('video')) {
+      publish({ error: '一次只能选择一段视频，或最多5张图片' }); return false;
     }
-    const [file] = files, kind = kinds[0];
+    const [file] = files, kind = files.length > 1 ? 'image' : kinds[0];
     const invalid = !kind ? '请选择 JPG、PNG、WebP 图片或 H.264/H.265 MP4 视频。'
-      : kind === 'image' ? validateFiles(files) : !file.size || file.size > video.getState().maxBytes ? '请选择不超过50 MB的有效MP4视频。' : null;
+      : kind === 'image' ? validateFiles(files, MAX_CHAT_IMAGES) : !file.size || file.size > video.getState().maxBytes ? '请选择不超过50 MB的有效MP4视频。' : null;
     if (invalid) { publish({ error: invalid }); return false; }
     const current = ++version;
     publish({ selecting: true, error: '' });
@@ -85,7 +87,7 @@ export function createMediaWorkflow({ fetcher = globalThis.fetch, storage = glob
       }
       reconciling = true;
       chat.newConversation(); image.clear(); video.clear(); syncedConversation = '';
-      publish({ kind, file, restoredImageId: null });
+      publish({ kind, file, restoredImageId: null, restoredImageIds: [], ...emptyAttachments });
       reconciling = false;
       const ok = await (kind === 'image' ? image.selectFiles(files) : video.selectFiles(files));
       if (!ok && !disposed && current === version) publish({ error: kind === 'image' ? image.getState().selectionError : video.getState().error });
@@ -99,18 +101,52 @@ export function createMediaWorkflow({ fetcher = globalThis.fetch, storage = glob
     }
   }
 
+  async function selectAttachments(input) {
+    if (disposed || busy()) return false;
+    const files = Array.from(input);
+    if (!files.length) return false;
+    const invalid = own.draftImages.length + files.length > MAX_CHAT_IMAGES ? IMAGE_LIMIT_MESSAGE : validateFiles(files, MAX_CHAT_IMAGES);
+    if (invalid) { publish({ attachmentError: invalid }); return false; }
+    const controller = new AbortController();
+    attachmentController = controller;
+    publish({ attaching: true, attachmentError: '' });
+    try {
+      const uploaded = await Promise.all(files.map(async file => ({
+        ...await uploadImage(fetcher, file, controller.signal), name: file.name,
+      })));
+      if (disposed) return false;
+      const unique = new Map([...own.draftImages, ...uploaded].map(photo => [photo.image_id, photo]));
+      publish({ draftImages: [...unique.values()] });
+      return true;
+    } catch (error) {
+      controller.abort();
+      if (error.name !== 'AbortError') publish({ attachmentError: error.message || '图片上传失败，请重试。' });
+      return false;
+    } finally {
+      publish({ attaching: false });
+    }
+  }
+
   function clear() {
     if (disposed || busy()) return false;
     reconciling = true; version++; syncedConversation = '';
     chat.newConversation(); image.clear(); video.clear();
-    publish({ kind: null, file: null, restoredImageId: null, error: '' });
+    publish({ kind: null, file: null, restoredImageId: null, restoredImageIds: [], error: '', ...emptyAttachments });
     reconciling = false; return true;
   }
 
   async function send(message, { inspectVideo = false, debugCode = false, pythonTest = null } = {}) {
     if (disposed || busy() || own.error) return false;
     const current = chat.getState();
-    const imageId = own.kind === 'image' ? image.getState().upload?.image_id || own.restoredImageId : null;
+    const mainImages = own.kind === 'image' ? (image.getState().uploads.length
+      ? image.getState().uploads.map(photo => photo.image_id) : own.restoredImageIds) : [];
+    const imageId = mainImages[0] || null;
+    const draftIds = own.draftImages.map(photo => photo.image_id);
+    const initialImages = !current.conversationId && (mainImages.length > 1 || draftIds.length) ? mainImages : [];
+    const imageIds = [...new Set([...initialImages, ...draftIds])];
+    if (imageIds.length > MAX_CHAT_IMAGES) {
+      publish({ attachmentError: '这一轮最多发送5张图片。可先分析主素材，再补图。' }); return false;
+    }
     const videoId = own.kind === 'video' ? video.getState().video?.video_id : null;
     if (own.kind && !(imageId || videoId)) return false;
     if ((inspectVideo || debugCode) && !videoId) return false;
@@ -118,17 +154,22 @@ export function createMediaWorkflow({ fetcher = globalThis.fetch, storage = glob
     if (!content && !current.conversationId) {
       if (debugCode) content = '请结合视频中的源码和终端错误，给出有依据的可能原因与修改步骤。';
       else if (inspectVideo) content = '请概括视频画面与对白，分别说明能确认和不确定的内容。';
+      else if (mainImages.length > 1) content = '请按上传顺序结合这组图片分析。若是编程题，请按照片中的条件交付完整程序。';
       else if (imageId) content = space === 'work'
         ? '请分析这张图片。如果是条件明确、要求编写完整程序的题目，请解题并交付可运行源码；其他图片请说明主要内容和可见细节。'
         : '请说明这张图片的主要内容和可见细节。';
     }
-    return chat.send(content, imageId, { videoId, imageCount: imageId ? 1 : 0, uploadReady: true, inspectVideo, debugCode, pythonTest });
+    const sent = await chat.send(content, imageId, { videoId, imageIds, imageCount: imageIds.length || (imageId ? 1 : 0),
+      uploadReady: true, inspectVideo, debugCode, pythonTest });
+    if (sent) publish(emptyAttachments);
+    return sent;
   }
 
   return { image, video, chat, getState: () => snapshot, subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    initialize: () => Promise.all([image.initialize(), video.initialize(), chat.initialize()]), selectFiles, clear, send, busy,
+    initialize: () => Promise.all([image.initialize(), video.initialize(), chat.initialize()]), selectFiles, selectAttachments, clear, send, busy,
+    removeAttachment(id) { if (!busy()) publish({ draftImages: own.draftImages.filter(item => item.image_id !== id), attachmentError: '' }); },
     dismissError() { publish({ error: '' }); }, setExternalBusy(value) { if (own.externalBusy !== value) publish({ externalBusy: value }); },
-    loadConversation(id) { if (busy()) return false; return chat.loadConversation(id); },
-    dispose() { disposed = true; version++; durationController?.abort(); subscriptions.forEach(unsubscribe => unsubscribe()); image.dispose(); video.dispose(); chat.dispose(); listeners.clear(); },
+    async loadConversation(id) { if (busy()) return false; const loaded = await chat.loadConversation(id); if (loaded) publish(emptyAttachments); return loaded; },
+    dispose() { disposed = true; version++; durationController?.abort(); attachmentController?.abort(); subscriptions.forEach(unsubscribe => unsubscribe()); image.dispose(); video.dispose(); chat.dispose(); listeners.clear(); },
   };
 }
