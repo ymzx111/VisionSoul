@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import Settings, get_settings
 from app.core.chat_space import WORK_PROMPT
-from app.core.video_policy import MAX_SAMPLES, SAMPLE_INTERVAL_SECONDS
+from app.core.video_policy import MAX_SAMPLES, SAMPLE_INTERVAL_SECONDS, VIDEO_PREVIEW_FILENAME
 from app.services.deepseek import DeepSeekError, has_api_key
 from app.services.videos import VideoAnswer, VideoError, VideoInfo, VideoService, video_directory
 from app.services.video_details import detail_path, adjusted_path
@@ -80,7 +80,7 @@ def safe_error(error):
 
 
 @router.post("", response_model=VideoInfo, status_code=201, summary="本地抽帧与对白识别（不调用付费 API）")
-def upload(file: Annotated[UploadFile, File(description="H.264 MP4，不超过30秒、50 MB；每1秒采样并补末帧，最多31次；本机转写对白，不调用付费模型。")],
+def upload(file: Annotated[UploadFile, File(description="H.264/H.265 MP4，不超过30秒、50 MB；每1秒采样并补末帧，最多31次；H.265 在本机生成兼容预览。")],
            service: Annotated[VideoService, Depends(get_video_service)]):
     try:
         return service.upload(file.file)
@@ -110,7 +110,9 @@ def info(video_id: VideoID, service: Annotated[VideoService, Depends(get_video_s
 @router.get("/{video_id}/file", summary="播放本机已上传视频", response_class=FileResponse)
 def video_file(video_id: VideoID, settings: Annotated[Settings, Depends(get_settings)]):
     try:
-        path = video_directory(video_id, settings) / "source.mp4"
+        directory = video_directory(video_id, settings)
+        preview_path = directory / VIDEO_PREVIEW_FILENAME
+        path = preview_path if preview_path.is_file() else directory / "source.mp4"
         if not path.is_file():
             raise VideoError("视频文件不存在。", 404)
         return FileResponse(path, media_type="video/mp4", headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store"})

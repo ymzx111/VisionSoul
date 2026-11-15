@@ -57,11 +57,11 @@ export default function VideoWorkspace({ workflow, state, chatWorkflow, chatStat
         {video ? <video key={video.video_id} ref={player} controls playsInline preload="metadata" src={video.video_url}
           aria-label="上传的视频" onError={() => setPlaybackError('浏览器无法播放此视频，请尝试重新导出为 H.264 MP4。')}/>
           : <div className="empty-upload"><span className="empty-icon video-icon" aria-hidden="true">▷</span>
-            <h3>{state.loadingVideo ? '正在恢复话题中的视频' : state.uploading ? '正在提取画面和识别对白' : '分享画面，也能细看比对'}</h3>
+            <h3>{state.loadingVideo ? '正在恢复话题中的视频' : state.uploading ? '正在处理视频' : '分享画面，也能细看比对'}</h3>
             <p>{state.uploading || state.loadingVideo ? '画面与对白在本机处理，不调用付费 API。' : '拖入一个短视频，或从设备中选择'}</p>
-            {state.uploading || state.loadingVideo ? <span className="video-processing" role="status">本地处理中；对白识别可能需要一些时间…</span>
+            {state.uploading || state.loadingVideo ? <span className="video-processing" role="status">本地处理中，生成兼容预览和识别对白可能需要一点时间…</span>
               : <button className="button button-primary" disabled={busy} onClick={() => input.current?.click()}>{uploadControls ? '选择图片或视频' : '选择视频'}</button>}
-            <span className="format-note">H.264 MP4 · 最长 {state.maxSeconds} 秒 · 最大 {Math.round(state.maxBytes / 1024 / 1024)} MB</span>
+            <span className="format-note">MP4（H.264 / H.265）· 最长 {state.maxSeconds} 秒 · 最大 {Math.round(state.maxBytes / 1024 / 1024)} MB</span>
             <span className="format-note">每 {state.sampleInterval} 秒采样，补上末帧 · 最多 {state.maxFrames} 次</span>
           </div>}
       </div>

@@ -71,7 +71,7 @@ export function createMediaWorkflow({ fetcher = globalThis.fetch, storage = glob
       publish({ error: photosOnly ? SINGLE_IMAGE_MESSAGE : '一次只能上传一张图片或一个视频' }); return false;
     }
     const [file] = files, kind = kinds[0];
-    const invalid = !kind ? '请选择 JPG、PNG、WebP 图片或 H.264 MP4 视频。'
+    const invalid = !kind ? '请选择 JPG、PNG、WebP 图片或 H.264/H.265 MP4 视频。'
       : kind === 'image' ? validateFiles(files) : !file.size || file.size > video.getState().maxBytes ? '请选择不超过50 MB的有效MP4视频。' : null;
     if (invalid) { publish({ error: invalid }); return false; }
     const current = ++version;

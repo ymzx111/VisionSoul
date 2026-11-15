@@ -5,6 +5,9 @@ from pathlib import Path
 import sys
 
 import av
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from app.core.video_policy import VIDEO_CODECS
 
 DETAIL_CACHE_VERSION = "source-1920-v2"
 DETAIL_MAX_SIDE = 1920
@@ -62,7 +65,7 @@ def source_frames(directory: Path):
         if len(container.streams.video) != 1:
             raise ValueError("视频流无效")
         stream = container.streams.video[0]
-        if stream.codec_context.name != "h264":
+        if stream.codec_context.name not in VIDEO_CODECS:
             raise ValueError("视频编码无效")
         stream.codec_context.thread_count = 2
         origin = float((stream.start_time or 0) * stream.time_base)
@@ -80,7 +83,6 @@ def source_frames(directory: Path):
 
 
 if __name__ == "__main__":
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     directory, output = Path(sys.argv[1]), Path(sys.argv[2])
     try:
         extract_details(directory, output, json.loads((output / "targets.json").read_text(encoding="utf-8")), refine=True)

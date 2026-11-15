@@ -21,7 +21,7 @@ function ImageOrEmptyPanel({ workflow, state }) {
         <p>一次一张图片，或一段最长30秒的视频</p>
         <button className="button button-primary" disabled={busy} onClick={() => input.current?.click()}>选择图片或视频</button>
         <span className="format-note">图片 JPG / PNG / WebP · 单张不超过10 MB</span>
-        <span className="format-note">视频 H.264 MP4 · 最长30秒 · 不超过50 MB</span>
+        <span className="format-note">视频 MP4（H.264 / H.265）· 最长30秒 · 不超过50 MB</span>
       </div>}
     </div>
     <div className="image-footer"><div className="image-info"><span className={`status-dot ${imageId ? 'is-ready' : ''}`}/>

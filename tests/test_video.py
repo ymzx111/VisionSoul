@@ -1,4 +1,4 @@
-"""使用实际 H.264 解码与模拟模型，验证采样、证据、缓存和失败费用边界。"""
+"""使用实际 H.264/H.265 视频与模拟模型验证上传、采样和证据。"""
 from io import BytesIO
 import json
 from pathlib import Path
@@ -17,16 +17,19 @@ from fastapi.testclient import TestClient
 from app.api.routes.videos import get_video_service
 from app.core.config import Settings, get_settings
 from app.core.upload_limits import ImageUploadBodyLimit
+from app.core.video_policy import VIDEO_PREVIEW_FILENAME
 from app.main import app
 from app.services.deepseek import DeepSeekClient, DeepSeekError
 from app.services.videos import ANALYSIS_LOCK, VideoError, VideoService
 
 
-def make_video(path, *, seconds=6, static=False, rotation=0, fps=10, varying=False, revisit=False):
+def make_video(path, *, seconds=6, static=False, rotation=0, fps=10, varying=False, revisit=False, encoder="libx264"):
     with av.open(str(path), "w", format="mp4") as output:
-        stream = output.add_stream("libx264", rate=fps)
+        stream = output.add_stream(encoder, rate=fps)
         stream.width, stream.height, stream.pix_fmt = 96, 64, "yuv420p"
         stream.options = {"crf": "0" if revisit else "18", "preset": "ultrafast"}
+        if encoder == "libx265":
+            stream.options = {**stream.options, "x265-params": "log-level=error:pools=1:frame-threads=1"}
         if rotation:
             stream.set_display_rotation(rotation)
         for index in range(seconds * fps):
@@ -96,6 +99,34 @@ class VideoTests(unittest.TestCase):
         self.assertEqual(len(video.frames),1)
         self.assertEqual(len(video.frames[0].seen_at),13)
         self.assertEqual(video.frames[0].seen_at[-1],11.9)
+
+    def test_hevc_mp4_preserves_original_and_serves_h264_preview(self):
+        path = Path(self.temp.name) / "mobile.mp4"
+        make_video(path, seconds=3, rotation=90, encoder="libx265")
+        original = path.read_bytes()
+        self.settings.audio_enabled = False
+        app.dependency_overrides[get_settings] = lambda: self.settings
+        app.dependency_overrides[get_video_service] = lambda: self.service
+        self.addCleanup(app.dependency_overrides.clear)
+        with TestClient(app) as client:
+            response = client.post("/api/videos", files={"file": ("mobile.mp4", original, "video/mp4")})
+            self.assertEqual(response.status_code, 201, response.text)
+            video = response.json()
+            self.assertEqual(video["duration_seconds"], 3)
+            self.assertEqual(video["sample_count"], 4)
+            self.assertFalse(self.calls)
+            directory = self.settings.video_storage_dir / video["video_id"]
+            self.assertEqual((directory / "source.mp4").read_bytes(), original)
+            compatible = directory / VIDEO_PREVIEW_FILENAME
+            with av.open(str(compatible)) as preview:
+                self.assertEqual(preview.streams.video[0].codec_context.name, "h264")
+                self.assertEqual(next(preview.decode(video=0)).rotation, 90)
+            playback = client.get(video["video_url"], headers={"Range": "bytes=0-31"})
+            self.assertEqual(playback.status_code, 206)
+            self.assertEqual(playback.content, compatible.read_bytes()[:32])
+            self.assertEqual(client.get(video["frames"][0]["url"]).status_code, 200)
+            with patch("app.services.videos.subprocess.run", side_effect=AssertionError("重复上传无需转换")):
+                self.assertEqual(self.service.upload(BytesIO(original)).video_id, video["video_id"])
 
     def test_one_second_samples_and_actual_tail_for_10_20_30_seconds(self):
         for seconds in [10,20,30]:
