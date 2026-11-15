@@ -31,9 +31,14 @@ from app.services.transcript_quality import transcript_warnings, trusted_transcr
 from app.services.video_debug import CodeDebugReport, debug_reply
 from app.services.video_tasks import AUTO_VIDEO_TASK, task_prompt
 from app.services.local_ide import (
-    CODE_DELIVERY_TASK, INPUT_SAMPLE_RETRY, has_source_and_sample, incomplete_code_reply, missing_input_sample,
+    CODE_DELIVERY_TASK, INPUT_SAMPLE_RETRY, has_source_and_sample, incomplete_code_reply,
+    missing_input_sample, needs_task_clarification,
 )
-from app.services.video_reading import DetailSelection, FrameAdjustment, READING_TASK, parse_focus_range, valid_focus_range, wants_text_detail
+from app.services.video_reading import (
+    DetailSelection, FrameAdjustment, READ_AGAIN, READING_TASK, VISUAL_REVIEW_TASK, VISUAL_REREAD_TASK,
+    parse_focus_range, review_interval, valid_focus_range, visual_clarification,
+    visual_review_request, wants_text_detail,
+)
 from app.services.video_result import decode_video_result, result_failure, sanitize_video_result
 
 logger = logging.getLogger(__name__)
@@ -273,7 +278,7 @@ class VideoService:
                                     focus_range_ms=interval, focus_frames=focus_frames)
         return selection, paths
 
-    def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None, memory_text: str = "", inspect: bool = False, debug_code: bool = False, *, auto_task: bool = False) -> VideoAnswer:
+    def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None, memory_text: str = "", inspect: bool = False, debug_code: bool = False, *, auto_task: bool = False, reread: bool = False, focus_override: tuple[int, int] | None = None) -> VideoAnswer:
         directory = video_directory(info.video_id, self.settings)
         parts = [{"type": "text", "text": "图号@原视频秒，区间是重复图的采样点，不代表连续动作。"}]
         question = caption
@@ -281,13 +286,21 @@ class VideoService:
             speech = trusted_transcript(info.audio, transcript_warnings(info.audio))
             question = " ".join(segment.text + (" " + segment.retry.text if segment.retry else "")
                                 for segment in speech.segments)
-        reading = not inspect and not debug_code and wants_text_detail(question)
-        interval = parse_focus_range(caption)
+        delivery = self.source_delivery and not inspect and not debug_code
+        reading = reread or (not inspect and not debug_code and wants_text_detail(question))
+        interval = focus_override if reread else parse_focus_range(caption)
         profile = "text" if reading or debug_code or interval else "general"
         if interval:
-            selection, detailed = self._focus_details(info, directory, interval, profile)
-        else:
-            detailed = self._detail_frames(info, directory, profile=profile) if inspect or debug_code or reading else {}
+            try:
+                selection, detailed = self._focus_details(info, directory, interval, profile)
+            except (OSError, ValueError) as exc:
+                if not reread:
+                    raise
+                logger.info("局部高清抽帧不可用，改用全片高清候选 error=%s", type(exc).__name__)
+                interval = None
+        if not interval:
+            use_detail = inspect or debug_code or reread or (reading and (not delivery or READ_AGAIN.search(caption)))
+            detailed = self._detail_frames(info, directory, profile=profile) if use_detail else {}
             selection = DetailSelection(profile=profile, frame_indices=sorted(detailed),
                 source_indices=sorted(index for index, path in detailed.items() if path == detail_path(directory, index)))
             for frame in info.frames:
@@ -301,6 +314,8 @@ class VideoService:
                         detailed[frame.index] = path
                 except (OSError, ValueError):
                     continue
+        if reread and not detailed:
+            raise VideoError("原视频没有可用于复核的高清画面。", 422)
         frames = selection.evidence_frames(info.frames)
         if interval:
             frames.sort(key=lambda frame: frame.time_seconds)
@@ -328,11 +343,12 @@ class VideoService:
             prompt += "\n" + AUTO_VIDEO_TASK
         if interval:
             prompt += f"\n本轮优先分析 {interval[0] / 1000:g}–{interval[1] / 1000:g} 秒。引用重点画面时使用随图提供的编号和实际时间，无法辨认的字符请明确标注。"
-        if self.source_delivery and not inspect and not debug_code:
+        if delivery:
             prompt += "\n" + CODE_DELIVERY_TASK
+            prompt += "\n" + (VISUAL_REREAD_TASK if reread else VISUAL_REVIEW_TASK)
         if caption:
             parts.append({"type": "text", "text": caption})
-        if inspect or debug_code or reading:
+        if inspect or debug_code or (reading and not delivery):
             if not detailed:
                 prompt += "\n此视频只有旧版概览图，没有额外细节图；不要声称看到了叶脉、小字等缺失细节。必要时提示重新上传原视频。"
         messages = [{"role": "system", "content": prompt},
@@ -374,18 +390,31 @@ class VideoService:
                 retryable = all(len(item["loc"]) == 1 and item["loc"][0] not in {"answer", "code", "language"}
                                 and item["type"] in {"extra_forbidden", "missing"}
                                 for item in errors)
-                if not self.source_delivery or inspect or debug_code or not retryable:
+                if not delivery or reread or not retryable:
                     raise
                 reminder = ("上次 JSON 根字段不符合要求。按原始任务与画面重新生成；必须包含 observations、summary 和 reply，"
                             "仅使用规定字段。看不清可明确说明，不补造画面或对白依据。")
                 content = retry_reply(reminder)
-            if (self.source_delivery and not inspect and not debug_code and not retried
+            review_pending, proposed_range = visual_review_request(content.reply, question) if delivery else (False, None)
+            if review_pending:
+                focus = review_interval(proposed_range, content.observations, frames, info.duration_seconds)
+                if not reread and not retried and (not detailed or (focus and focus != interval)):
+                    try:
+                        reviewed = self._observe(info, caption, history, memory_text, auto_task=auto_task,
+                                                 reread=True, focus_override=focus)
+                    except (DeepSeekError, VideoError, OSError) as exc:
+                        logger.warning("视频自动高清复核未完成 error=%s", type(exc).__name__)
+                    else:
+                        return reviewed.model_copy(update={"usage": add_usage(reply.usage, reviewed.usage)})
+                if not needs_task_clarification(content.reply) or not reread:
+                    content.reply = visual_clarification(content.reply, interval or focus)
+            elif (delivery and not reread and not retried
                     and incomplete_code_reply(content.reply, caption)):
                 content = retry_reply(
                     "编程任务需要实际交付。若现有题面足够，在 reply 中写入文件名声明和一份完整可运行的源码。"
                     "省略任务复述和交付承诺。缺少会改变结果的关键条件时，只问对应缺项。"
                     "若程序需要输入，附带至少一组非空的 visionsoul-cases 自测样例。")
-            elif (self.auto_sample_retry and self.source_delivery and not inspect and not debug_code and not retried
+            elif (self.auto_sample_retry and delivery and not reread and not retried
                   and missing_input_sample(content.reply)):
                 first_content = content
                 try:
@@ -395,6 +424,8 @@ class VideoService:
                 else:
                     if not has_source_and_sample(content.reply):
                         content = first_content
+            if delivery and retried and not review_pending and visual_review_request(content.reply, question)[0]:
+                content.reply = visual_clarification(content.reply, interval)
             stage = "evidence"
             normalized_links, auto_notes = normalize_model_links(content.audio_links, info.audio, frames)
             content.audio_links = normalized_links
@@ -469,7 +500,7 @@ class VideoService:
             ANALYSIS_LOCK.release()
 
     def read_text(self, video_id: str, message: str, history: list[dict], memory_text: str = ""):
-        """用户新提出读题请求时，重看同一素材；一次调用，不混入比对/排错结构要求。"""
+        """用户新提出读题请求时，重看同一素材。"""
         if not ANALYSIS_LOCK.acquire(blocking=False):
             raise VideoError("已有视频正在观察，请稍等后再发送。", 409)
         try:

@@ -132,7 +132,11 @@ class ReadingChatTests(unittest.TestCase):
             body = json.loads(request.content)
             self.calls.append(body)
             value = result_payload()
-            value["reply"] = "题意与C程序：" + "int main(void) { return 0; }\n" * 12 if self.long_reply else "请核对题意，关键条件不清时补清楚画面。"
+            if self.long_reply:
+                code = "int main(void) {\n" + "    /* 保留完整题解。 */\n" * 16 + "    return 0;\n}\n"
+                value["reply"] = f"[文件名: main.c]\n```c\n{code}```"
+            else:
+                value["reply"] = "请核对题意，关键条件不清时补清楚画面。"
             if self.forge_selection:
                 value["detail_selection"] = {"profile":"text", "frame_indices":[60], "source_indices":[60]}
             answer = json.dumps(value, ensure_ascii=False) if body.get("response_format") else "沿用已读内容解释。"
@@ -152,22 +156,17 @@ class ReadingChatTests(unittest.TestCase):
         return [part for message in self.calls[-1]["messages"] if isinstance(message["content"], list)
                 for part in message["content"] if part["type"] == "image_url"]
 
-    def test_first_programming_question_automatically_reads_high_without_extra_request(self):
+    def test_clear_programming_question_uses_overview_without_extra_request(self):
         self.long_reply = True
         with patch("app.services.chat.RoleStore", side_effect=AssertionError("work read role")):
             result = self.send("请识别题目，编写C程序", request="a"*32)
         self.assertEqual(len(self.calls), 1)
         pictures = self.pictures()
         self.assertEqual(len(pictures), len(self.video.frames))
-        self.assertGreater(sum(part["image_url"]["detail"] == "high" for part in pictures), 0)
-        self.assertLessEqual(sum(part["image_url"]["detail"] == "high" for part in pictures), 4)
-        for part in pictures:
-            if part["image_url"]["detail"] == "high":
-                with Image.open(BytesIO(base64.b64decode(part["image_url"]["url"].split(",")[1]))) as image:
-                    self.assertEqual(image.size, (1280, 720))
+        self.assertTrue(all(part["image_url"]["detail"] == "low" for part in pictures))
         selected = result["video_context"]["detail_selection"]
         self.assertEqual(selected["profile"], "text")
-        self.assertEqual(selected["source_indices"], selected["frame_indices"])
+        self.assertEqual(selected["frame_indices"], [])
         self.assertGreater(len(result["assistant_message"]["content"]), 240)
         self.assertIn("不受通用80字限制", self.calls[0]["messages"][0]["content"])
         self.assertNotIn("supporting_features", self.calls[0]["messages"][0]["content"])
@@ -175,22 +174,27 @@ class ReadingChatTests(unittest.TestCase):
         self.assertTrue(replay["replayed"])
         self.assertEqual(len(self.calls), 1)
 
-    def test_old_low_report_is_upgraded_on_new_reading_question_then_followup_stays_text(self):
+    def test_old_low_report_reads_new_requirements_then_explicitly_rereads_high(self):
         first = self.send("请概括视频")
         self.assertTrue(all(part["image_url"]["detail"] == "low" for part in self.pictures()))
-        second = self.send("请按题目编写C程序", first["conversation_id"])
+        self.long_reply = True
+        second = self.send("请按要求6编写C程序", first["conversation_id"])
         self.assertEqual(len(self.calls), 2)
-        self.assertTrue(any(part["image_url"]["detail"] == "high" for part in self.pictures()))
+        self.assertTrue(all(part["image_url"]["detail"] == "low" for part in self.pictures()))
         self.assertEqual(second["video_context"]["opening_message"], "请概括视频")
         self.send("解释这段代码的循环", first["conversation_id"])
         self.assertEqual(self.pictures(), [])
         self.send("重新读题，看看输入条件", first["conversation_id"])
-        self.assertTrue(self.pictures())
+        high = [part for part in self.pictures() if part["image_url"]["detail"] == "high"]
+        self.assertTrue(1 <= len(high) <= 4)
+        for part in high:
+            with Image.open(BytesIO(base64.b64decode(part["image_url"]["url"].split(",")[1]))) as image:
+                self.assertEqual(image.size, (1280, 720))
         self.assertEqual(len(self.calls), 4)
 
     def test_failed_source_extract_uses_saved_details_and_does_not_retry_model(self):
         with patch("app.services.videos.subprocess.run", side_effect=__import__('subprocess').TimeoutExpired("test", 1)):
-            result = self.send("读取题目")
+            result = self.send("重新读取题目")
         selected = result["video_context"]["detail_selection"]
         self.assertTrue(selected["frame_indices"])
         self.assertEqual(selected["source_indices"], [])

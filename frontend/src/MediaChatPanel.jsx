@@ -240,7 +240,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
             {chat.localSource.detail}{chat.localSource.path && <> <code>{chat.localSource.path}</code></>}
           </p>)}
       {chat.truncated && <p className="chat-image-note">上一条回复达到长度上限，可以继续追问。</p>}
-      {state.kind === 'video' && <p className="chat-image-note">输入「重点看 3–5 秒」可对指定区间补抽，每次最多 5 秒。读题或排错最多使用 4 张高清图。</p>}
+      {state.kind === 'video' && <p className="chat-image-note">关键题面看不清时会自动回看，最多选 4 张高清图。也可输入「重点看 3–5 秒」指定区间。</p>}
       {workMedia && state.kind === 'image' && <div className="python-test">
         <label htmlFor="python-test-file">选择本轮数据文件（TXT、CSV 或 JSON，最多 8 KiB）</label>
         <input id="python-test-file" ref={fileInput} type="file" accept=".txt,.csv,.json" disabled={busy}
@@ -274,7 +274,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
           : state.kind === 'video' ? '输入你的要求，或留空，让助手从视频里判断。'
           : state.kind === 'image' && workMedia ? '例如：请按照片里的题目写完整的程序，语言按题面。'
           : '可选：你想了解什么？不填写也可以开始分析。'}/>
-      <div className="question-actions media-chat-actions"><span className="cost-note">点击后才调用模型{workMedia && state.kind === 'video' ? ' · 缺少源码或样例、格式异常时可能重试一次' : ''}{chat.usage ? chat.replayed ? ' · 已恢复原回复' : ` · 本次${chat.usage.total_tokens} token` : ''}</span>
+      <div className="question-actions media-chat-actions"><span className="cost-note">点击后才调用模型{workMedia && state.kind === 'video' ? ' · 画面复核或交付异常时可能追加一次调用' : ''}{chat.usage ? chat.replayed ? ' · 已恢复原回复' : ` · 本次${chat.usage.total_tokens} token` : ''}</span>
         <button className="button button-primary" disabled={!canSend} onClick={() => void send()}>{chat.sending ? '正在回复…' : chat.conversationId || !state.kind ? '发送消息 →' : '开始分析 →'}</button>
       </div>
     </div>

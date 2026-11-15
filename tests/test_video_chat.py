@@ -323,6 +323,71 @@ class VideoChatTests(unittest.TestCase):
             self.assertIsNone(foreign["local_source"])
             launch.assert_called_once()
 
+    def test_video_visual_review_precedes_local_delivery_and_is_bounded(self):
+        self.settings.local_source_workspace = Path(self.temp.name) / "workspace"
+        fence = chr(96) * 3
+        code = 'print(int(input()) * 7)\n'
+        source_reply = (f"[文件名: main.py]\n{fence}python\n{code}{fence}\n"
+                        f'{fence}visionsoul-cases\n[{{"name":"结果","stdin":"6","expected":"42"}}]\n{fence}')
+        blurred_reply = "[需看清画面: 0.5–2.5 秒]\n第6项里会影响结果的统计范围看不清。"
+        app.dependency_overrides[get_chat_service] = lambda: self.chat
+        self.addCleanup(app.dependency_overrides.clear)
+
+        async def local_app(scope, receive, send):
+            await app({**scope, "client": ("127.0.0.1", 1234)}, receive, send)
+
+        base = "http://127.0.0.1:8765"
+        body = {"space": "work", "video_id": self.video.video_id, "open_in_ide": True,
+                "message": "按要求6编写程序"}
+        complete = self.client.complete
+
+        for request, answers, expected in (
+            ("a", [source_reply], 1),
+            ("b", [blurred_reply, source_reply], 2),
+            ("c", [blurred_reply, blurred_reply + "\n" + source_reply], 2),
+            ("d", [blurred_reply, {"reply": "已截断"}], 2),
+        ):
+            with self.subTest(request=request):
+                self.calls.clear()
+                model_answers = iter(answers)
+
+                def model_reply(*args, **kwargs):
+                    answer = next(model_answers)
+                    self.payload = result_payload() if isinstance(answer, str) else answer
+                    if isinstance(answer, str):
+                        self.payload["reply"] = answer
+                    return complete(*args, **kwargs)
+
+                with (TestClient(local_app, base_url=base, headers={"Origin": base}) as client,
+                      patch.object(self.client, "complete", side_effect=model_reply),
+                      patch("app.services.local_ide.launch_ide") as launch,
+                      patch("app.services.local_ide.show_sandbox_result", return_value=True)):
+                    response = client.post("/api/chat/messages", json={**body, "request_id": request * 32})
+                self.assertEqual(response.status_code, 200, response.text)
+                result = response.json()
+                self.assertEqual(len(self.calls), expected)
+                self.assertTrue(all(part["image_url"]["detail"] == "low" for part in pictures(self.calls[0])))
+                if expected == 2:
+                    high = [part for part in pictures(self.calls[1]) if part["image_url"]["detail"] == "high"]
+                    self.assertTrue(1 <= len(high) <= 4)
+                    self.assertIn("自动高清复核", self.calls[1]["messages"][0]["content"])
+                    if request != "d":
+                        selection = result["video_context"]["detail_selection"]
+                        self.assertEqual(selection["focus_range_ms"], [500, 2500])
+                        self.assertEqual(len(selection["focus_frames"]), len(high))
+                        self.assertEqual(result["usage"]["total_tokens"], 240)
+                if request in {"a", "b"}:
+                    source = result["local_source"]
+                    self.assertEqual(Path(source["path"]).read_text(encoding="utf-8"), code)
+                    self.assertEqual(source["python_check"]["status"], "awaiting_input")
+                    self.assertEqual(source["python_check"]["case_results"][0]["status"], "passed")
+                    launch.assert_called_once()
+                else:
+                    self.assertIsNone(result["local_source"])
+                    self.assertIn("统计范围看不清", result["assistant_message"]["content"])
+                    self.assertNotIn("[需看清画面", result["assistant_message"]["content"])
+                    launch.assert_not_called()
+
     def test_video_missing_stdin_sample_retries_before_running_real_input(self):
         self.settings.local_source_workspace = Path(self.temp.name) / "workspace"
         app.dependency_overrides[get_chat_service] = lambda: self.chat
