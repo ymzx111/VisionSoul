@@ -30,7 +30,9 @@ from app.services.sound_clues import measure_sound, sound_prompt
 from app.services.transcript_quality import transcript_warnings, trusted_transcript
 from app.services.video_debug import CodeDebugReport, debug_reply
 from app.services.video_tasks import AUTO_VIDEO_TASK, task_prompt
-from app.services.local_ide import CODE_DELIVERY_TASK
+from app.services.local_ide import (
+    CODE_DELIVERY_TASK, INPUT_SAMPLE_RETRY, has_source_and_sample, incomplete_code_reply, missing_input_sample,
+)
 from app.services.video_reading import DetailSelection, FrameAdjustment, READING_TASK, parse_focus_range, valid_focus_range, wants_text_detail
 from app.services.video_result import decode_video_result, result_failure, sanitize_video_result
 
@@ -136,12 +138,14 @@ def video_directory(video_id: str, settings: Settings) -> Path:
 
 
 class VideoService:
-    def __init__(self, settings: Settings, client: DeepSeekClient | None = None, *, system_prompt: str | None = None, isolated: bool = False, source_delivery: bool = False):
+    def __init__(self, settings: Settings, client: DeepSeekClient | None = None, *, system_prompt: str | None = None,
+                 isolated: bool = False, source_delivery: bool = False, auto_sample_retry: bool = False):
         self.settings = settings
         self.client = client or DeepSeekClient(settings)
         self.prompt = (load_persona(settings)[0] if system_prompt is None else system_prompt) + "\n\n" + VIDEO_TASK
         self.isolated = isolated
         self.source_delivery = source_delivery
+        self.auto_sample_retry = auto_sample_retry
 
     def audio_record(self, video_id):
         try:
@@ -347,6 +351,21 @@ class VideoService:
             stage = "schema"
             return VideoContent.model_validate(raw)
 
+        def retry_reply(reminder):
+            nonlocal retried, reply
+            retried = True
+            first_usage = reply.usage
+            try:
+                reply = self.client.complete(
+                    [{**messages[0], "content": prompt + "\n" + reminder}, *messages[1:]],
+                    json_mode=True, max_tokens=self.settings.video_max_tokens)
+            except DeepSeekError as retry_error:
+                logger.warning("视频交付重试失败 first_usage=%s status=%s", first_usage, retry_error.status_code)
+                raise DeepSeekError(f"{retry_error} 本轮已重试一次，首次分析可能已有用量。", retry_error.status_code) from retry_error
+            logger.info("视频交付重试用量 first=%s retry=%s", first_usage, reply.usage)
+            reply = reply.model_copy(update={"usage": add_usage(first_usage, reply.usage)})
+            return decode_content(reply)
+
         try:
             try:
                 content = decode_content(reply)
@@ -357,20 +376,25 @@ class VideoService:
                                 for item in errors)
                 if not self.source_delivery or inspect or debug_code or not retryable:
                     raise
-                retried = True
-                first_usage = reply.usage
                 reminder = ("上次 JSON 根字段不符合要求。按原始任务与画面重新生成；必须包含 observations、summary 和 reply，"
                             "仅使用规定字段。看不清可明确说明，不补造画面或对白依据。")
+                content = retry_reply(reminder)
+            if (self.source_delivery and not inspect and not debug_code and not retried
+                    and incomplete_code_reply(content.reply, caption)):
+                content = retry_reply(
+                    "编程任务需要实际交付。若现有题面足够，在 reply 中写入文件名声明和一份完整可运行的源码。"
+                    "省略任务复述和交付承诺。缺少会改变结果的关键条件时，只问对应缺项。"
+                    "若程序需要输入，附带至少一组非空的 visionsoul-cases 自测样例。")
+            elif (self.auto_sample_retry and self.source_delivery and not inspect and not debug_code and not retried
+                  and missing_input_sample(content.reply)):
+                first_content = content
                 try:
-                    reply = self.client.complete(
-                        [{**messages[0], "content": prompt + "\\n" + reminder}, *messages[1:]],
-                        json_mode=True, max_tokens=self.settings.video_max_tokens)
-                except DeepSeekError as retry_error:
-                    logger.warning("视频格式重试请求失败 first_usage=%s status=%s", first_usage, retry_error.status_code)
-                    raise DeepSeekError(f"{retry_error} 本轮已尝试一次格式重试，首次分析可能已有用量。", retry_error.status_code) from retry_error
-                logger.info("视频格式重试用量 first=%s retry=%s", first_usage, reply.usage)
-                reply = reply.model_copy(update={"usage": add_usage(first_usage, reply.usage)})
-                content = decode_content(reply)
+                    content = retry_reply(INPUT_SAMPLE_RETRY)
+                except (DeepSeekError, ValueError):
+                    content = first_content
+                else:
+                    if not has_source_and_sample(content.reply):
+                        content = first_content
             stage = "evidence"
             normalized_links, auto_notes = normalize_model_links(content.audio_links, info.audio, frames)
             content.audio_links = normalized_links

@@ -75,7 +75,7 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def submit_input(origin, run_id, stdin, approved_file=None):
+def submit_input(origin, run_id, stdin, approved_file=None, expected=None):
     local = urlsplit(origin)
     if (local.scheme not in {"http", "https"} or local.hostname not in {"127.0.0.1", "localhost", "::1"}
             or local.username is not None or local.path or local.query or local.fragment):
@@ -83,6 +83,8 @@ def submit_input(origin, run_id, stdin, approved_file=None):
     payload = {"run_id": run_id, "stdin": stdin, "open_result_window": False}
     if approved_file is not None:
         payload["approved_file"] = approved_file
+    if expected is not None:
+        payload["expected"] = expected
     body = json.dumps(payload).encode("utf-8")
     request = Request(origin + "/api/chat/sandbox-runs", body, {
         "Origin": origin, "Content-Type": "application/json",
@@ -123,6 +125,10 @@ def show_result(text, result):
     text.delete("1.0", "end")
     if result.get("output_path"):
         text.insert("end", f"结果文件已保存\n{result['output_path']}\n\n", "label")
+    if result.get("error_line"):
+        text.insert("end", f"源码第 {result['error_line']} 行\n{result['source_line']}\n\n", "error")
+    if sample := result.get("sample_file"):
+        text.insert("end", f"AI 自测文件 · {sample['filename']}\n{sample['content'].rstrip()}\n\n", "label")
     if result["status"] in {"awaiting_file", "file_unused"}:
         text.insert("end", result["detail"], "label")
         text.configure(state="disabled")
@@ -143,8 +149,10 @@ def show_result(text, result):
             text.insert("end", stdin or "（空输入）", "label")
             if not stdin.endswith("\n"):
                 text.insert("end", "\n")
-        text.insert("end", "程序输出\n", "label")
-        text.insert("end", row["stdout"] or "（无输出）")
+        if row.get("expected") is not None:
+            text.insert("end", f"预期输出\n{row['expected'] or '（空输出）'}\n", "label")
+        text.insert("end", "实际输出\n", "label")
+        text.insert("end", row["stdout"] or "（无输出）", "error" if row["status"] == "mismatch" else ())
         if row["stderr"] and row["status"] != "awaiting_input":
             text.insert("end", "\n" + row["stderr"], "error")
         if index < len(rows) - 1:
@@ -158,6 +166,11 @@ def add_manual_run(root, tabs, initial, mono):
     ttk.Label(page, text="标准输入（按题目格式填写，可分多行）").pack(anchor="w")
     entry = tk.Text(page, height=4, wrap="word", font=(mono, 11), undo=True)
     entry.pack(fill="x", pady=(4, 6))
+    reference = ttk.Frame(page)
+    reference.pack(fill="x", pady=(0, 6))
+    ttk.Label(reference, text="参考屏幕输出（可选）").pack(anchor="w")
+    expected_entry = tk.Text(reference, height=2, wrap="word", font=(mono, 11))
+    expected_entry.pack(fill="x")
     controls = ttk.Frame(page)
     controls.pack(fill="x", pady=(0, 6))
     selected_file = None
@@ -206,6 +219,7 @@ def add_manual_run(root, tabs, initial, mono):
             root.after(80, receive)
             return
         entry.configure(state="normal")
+        expected_entry.configure(state="normal")
         button.configure(state="normal")
         file_button.configure(state="normal")
         if error is not None:
@@ -223,21 +237,26 @@ def add_manual_run(root, tabs, initial, mono):
             status.set("请先从数据所在目录选择本轮要读取的文件。")
             return
         stdin = entry.get("1.0", "end-1c")
+        expected = expected_entry.get("1.0", "end-1c")
         if stdin and not stdin.endswith("\n"):
             stdin += "\n"
         if len(stdin) > 4096:
             status.set("标准输入最多 4096 个字符。")
             return
+        if len(expected) > 4096:
+            status.set("参考屏幕输出最多 4096 个字符。")
+            return
         approved_file, selected_file = selected_file, None
         file_label.set("下次试跑请重新选择文件。")
         entry.configure(state="disabled")
+        expected_entry.configure(state="disabled")
         button.configure(state="disabled")
         file_button.configure(state="disabled")
         status.set("正在沙箱试跑…")
 
         def worker():
             try:
-                responses.put((submit_input(initial["origin"], initial["run_id"], stdin, approved_file), None))
+                responses.put((submit_input(initial["origin"], initial["run_id"], stdin, approved_file, expected or None), None))
             except (ValueError, OSError) as exc:
                 responses.put((None, str(exc)))
 
@@ -249,7 +268,7 @@ def add_manual_run(root, tabs, initial, mono):
     if initial["status"] in {"awaiting_input", "awaiting_file", "file_unused"}:
         tabs.select(page)
         status.set(initial["detail"])
-        show_result(output, initial)
+        show_result(output, {**initial, "case_results": []} if initial.get("case_source") == "model" else initial)
         root.after_idle(file_button.focus_set if needs_file else entry.focus_set)
 
 

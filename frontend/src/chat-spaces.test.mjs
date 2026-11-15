@@ -123,7 +123,7 @@ test('legacy classification is blocked while paid request is pending', async () 
   await finish(); await sent;
 });
 
-test('work photos and videos request the IDE and pass sample data', async () => {
+test('work programming requests open the IDE for photos, videos and written problems', async () => {
   const videoId = '9'.repeat(64);
   const imageId = '8'.repeat(32);
   const calls = [];
@@ -144,12 +144,12 @@ test('work photos and videos request the IDE and pass sample data', async () => 
     const pythonTest = { stdin: '21', expected: '42' };
     for (const [image, video] of [[null, videoId], [imageId, null], [null, null]]) {
       assert.equal(await flow.send('请编写程序', image, { videoId: video, pythonTest }), true);
-      assert.deepEqual(flow.getState().localSource, space === 'work' && (image || video) ? localSource : null);
+      assert.deepEqual(flow.getState().localSource, space === 'work' ? localSource : null);
       flow.newConversation();
       assert.equal(flow.getState().localSource, null);
     }
   }
-  assert.deepEqual(calls.map(call => call.open_in_ide), [true, true, undefined, undefined, undefined, undefined]);
+  assert.deepEqual(calls.map(call => call.open_in_ide), [true, true, true, undefined, undefined, undefined]);
   assert.deepEqual(calls[1].python_test, { stdin: '21', expected: '42' });
   assert.equal(calls[4].python_test, undefined);
 });

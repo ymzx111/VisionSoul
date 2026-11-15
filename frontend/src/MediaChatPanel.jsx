@@ -25,12 +25,14 @@ function withoutDeliveredSource(content, delivered) {
 function SandboxRun({ initial, runId, disabled }) {
   const [latest, setLatest] = useState(null);
   const [input, setInput] = useState('');
+  const [expected, setExpected] = useState('');
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
   const filePicker = useRef(null);
   const result = latest || initial;
   const waitingForFile = ['awaiting_file', 'file_unused'].includes(result.status);
   const needsFile = waitingForFile || initial.status === 'awaiting_file' || Boolean(result.data_file);
+  const showFailure = ['failed', 'mismatch', 'limit'].includes(result.status);
 
   async function rerun(event) {
     event.preventDefault();
@@ -44,6 +46,7 @@ function SandboxRun({ initial, runId, disabled }) {
         return;
       }
       const body = { run_id: runId, stdin: input };
+      if (expected) body.expected = expected;
       if (file) {
         try { body.approved_file = await readApprovedFile(file); }
         catch (error) {
@@ -70,19 +73,25 @@ function SandboxRun({ initial, runId, disabled }) {
   }
 
   return <div className="python-check python-run">
-    <p role="status">{running ? '正在本机沙箱试跑…' : ['awaiting_input', 'awaiting_file', 'file_unused'].includes(result.status)
+    <p role="status">{running ? '正在本机沙箱试跑…' : !['ran', 'passed'].includes(result.status)
       ? result.detail : result.desktop_result_opened ? '试跑结果已发送到桌面。'
         : result.detail}</p>
     {result.output_path && <p>结果文件已保存 <code>{result.output_path}</code></p>}
-    {!waitingForFile && !result.desktop_result_opened && <details>
-      <summary>查看备用输出</summary>
+    {!waitingForFile && (!result.desktop_result_opened || showFailure) && <details open={showFailure || undefined}>
+      <summary>{showFailure ? '查看失败详情' : '查看运行输出'}</summary>
+      {result.error_line && <div className="notice notice-error">
+        <strong>源码第 {result.error_line} 行</strong><pre>{result.source_line}</pre>
+      </div>}
+      {result.sample_file && <pre>AI 自测文件 · {result.sample_file.filename}{'\n'}{result.sample_file.content}</pre>}
       {!!result.case_results?.length ? result.case_results.map((row, index) =>
         <div key={index}><strong>{row.name}</strong>
           {row.phase !== 'compile' && <pre>标准输入：{row.stdin || '（空输入）'}</pre>}
-          <pre>{row.stdout || '（无输出）'}</pre>
+          {row.expected != null && <pre>预期输出：{'\n'}{row.expected || '（空输出）'}</pre>}
+          <pre>实际输出：{'\n'}{row.stdout || '（无输出）'}</pre>
           {row.stderr && <pre>{row.stderr}</pre>}</div>) : <>
         {result.stdin != null && <pre>标准输入：{result.stdin || '（空输入）'}</pre>}
-        <pre>{result.stdout || '（无输出）'}</pre>
+        {result.expected != null && <pre>预期输出：{'\n'}{result.expected || '（空输出）'}</pre>}
+        <pre>实际输出：{'\n'}{result.stdout || '（无输出）'}</pre>
         {result.stderr && result.status !== 'awaiting_input' && <pre>{result.stderr}</pre>}
       </>}
     </details>}
@@ -97,6 +106,10 @@ function SandboxRun({ initial, runId, disabled }) {
         <label>标准输入
           <textarea rows={3} maxLength={4096} value={input} disabled={running || disabled}
             onChange={event => setInput(event.target.value)} placeholder="按题目格式一次填完所有输入"/>
+        </label>
+        <label>参考屏幕输出（可选）
+          <textarea rows={2} maxLength={4096} value={expected} disabled={running || disabled}
+            onChange={event => setExpected(event.target.value)}/>
         </label>
         <button className="button button-secondary" type="submit" disabled={running || disabled}>{needsFile ? '授权并试跑' : '本机试跑'}</button>
       </form>
@@ -184,7 +197,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
           const current = item.id === chat.messages.at(-1)?.id;
           const source = current ? chat.localSource : null;
           const delivered = current && Boolean(source?.path);
-          const content = workMedia && item.role === 'assistant' && (!source || delivered)
+          const content = !companion && item.role === 'assistant' && (workMedia || delivered) && (!source || delivered)
             ? withoutDeliveredSource(item.content, delivered) : item.content;
           return <article key={item.id} className={`chat-message ${item.role === 'user' ? 'from-user' : 'from-companion'}`}>
           <span className="chat-author">{item.role === 'user' ? '你' : chat.persona.name}{item.id === 'pending' ? ' · 正在发送' : ''}</span>
@@ -256,7 +269,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
           : state.kind === 'video' ? '输入你的要求，或留空，让助手从视频里判断。'
           : state.kind === 'image' && workMedia ? '例如：请按照片里的题目写完整的程序，语言按题面。'
           : '可选：你想了解什么？不填写也可以开始分析。'}/>
-      <div className="question-actions media-chat-actions"><span className="cost-note">点击后才调用模型{workMedia && state.kind === 'video' ? ' · 格式错误时可能重试一次' : ''}{chat.usage ? chat.replayed ? ' · 已恢复原回复' : ` · 本次${chat.usage.total_tokens} token` : ''}</span>
+      <div className="question-actions media-chat-actions"><span className="cost-note">点击后才调用模型{workMedia && state.kind === 'video' ? ' · 缺少源码或样例、格式异常时可能重试一次' : ''}{chat.usage ? chat.replayed ? ' · 已恢复原回复' : ` · 本次${chat.usage.total_tokens} token` : ''}</span>
         <button className="button button-primary" disabled={!canSend} onClick={() => void send()}>{chat.sending ? '正在回复…' : chat.conversationId || !state.kind ? '发送消息 →' : '开始分析 →'}</button>
       </div>
     </div>

@@ -10,12 +10,13 @@ from app.core.config import Settings
 from app.core.chat_space import WORK_PROMPT, ChatSpace
 from app.core.persona import PERSONA_ID, PERSONA_PROMPT, load_persona
 from app.services.chat_store import ChatConflict, ChatStore
-from app.services.deepseek import DeepSeekClient, DeepSeekError, image_part
+from app.services.deepseek import DeepSeekClient, DeepSeekError, add_usage, image_part
 from app.services.videos import VideoError, VideoService
 from app.services.role_store import RoleStore
 from app.services.audio_evidence import AudioTranscript, AudioLink, add_time_citations, current_context, model_context
 from app.services.video_reading import needs_text_refresh
-from app.services.local_ide import CODE_DELIVERY_TASK, reusable_file_task
+from app.services.local_ide import CODE_DELIVERY_TASK, INPUT_SAMPLE_RETRY, has_source_and_sample, missing_input_sample, reusable_file_task
+from app.services.source_files import CODE_REQUEST
 
 
 class TurnLocks:
@@ -72,7 +73,8 @@ class ChatService:
 
     def send(self, *, conversation_id: str | None, request_id: str, message: str, image_id: str | None,
              video_id: str | None = None, inspect_video: bool = False, debug_code: bool = False,
-             space: ChatSpace | None = None, sandbox_filename: str | None = None) -> dict:
+             space: ChatSpace | None = None, sandbox_filename: str | None = None,
+             auto_sample_retry: bool = False) -> dict:
         try:
             effective_space = space or "companion"
             if effective_space not in {"work", "companion"}:
@@ -143,7 +145,7 @@ class ChatService:
                         roles = RoleStore(self.settings.roles_path)
                         video_prompt, persona_prompt, persona_version = load_persona(self.settings, roles)
                         memory_text = roles.memory_context(target, message, allowed_conversations=self.store.companion_ids())
-                    source_delivery = bool(effective_space == "work" and (attached or attached_video)
+                    source_delivery = bool(effective_space == "work" and (attached or attached_video or CODE_REQUEST.search(message))
                                            and not inspect_video and not debug_code)
                     if source_delivery and sandbox_filename is not None:
                         persona_prompt += (
@@ -156,7 +158,7 @@ class ChatService:
                         )
                     videos = (self._provided_videos if space is None else None) or VideoService(self.settings, self.client,
                         system_prompt=persona_prompt if space is not None else video_prompt, isolated=space is not None,
-                        source_delivery=source_delivery)
+                        source_delivery=source_delivery, auto_sample_retry=auto_sample_retry)
                     result = None
                     if inspect_video or debug_code:
                         if not attached_video:
@@ -205,6 +207,18 @@ class ChatService:
                         messages.append({"role": "user", "content": content})
                         options = {"max_tokens": self.settings.video_max_tokens} if source_delivery else {}
                         result = self.client.complete(messages, **options)
+                        if auto_sample_retry and source_delivery and not result.truncated and missing_input_sample(result.answer):
+                            retry_messages = [{**messages[0], "content": messages[0]["content"] + "\n" + INPUT_SAMPLE_RETRY},
+                                              *messages[1:]]
+                            try:
+                                candidate = self.client.complete(retry_messages, **options)
+                            except DeepSeekError:
+                                candidate = None
+                            if candidate is not None:
+                                usage = add_usage(result.usage, candidate.usage)
+                                if not candidate.truncated and has_source_and_sample(candidate.answer):
+                                    result = candidate
+                                result = result.model_copy(update={"usage": usage})
                         if saved_audio:
                             result = result.model_copy(update={"answer": add_time_citations(result.answer, message,
                                 saved_audio, saved_links)})

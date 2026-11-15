@@ -112,9 +112,10 @@ def show_sandbox_result(source: Path, check: PythonCheck, *, run_id: str | None 
     launcher = Path(sys.executable).with_name("pythonw.exe")
     if os.name != "nt" or not launcher.is_file() or not find_spec("tkinter"):
         return False
-    fields = {"detail", "status", "stdin", "stdout", "stderr", "phase", "case_source", "data_file", "output_path"}
+    fields = {"detail", "status", "stdin", "stdout", "stderr", "phase", "case_source", "data_file", "output_path",
+              "expected", "error_line", "source_line", "sample_file"}
     result = check.model_dump(include=fields)
-    result["case_results"] = [row.model_dump(include={"name", "status", "stdin", "stdout", "stderr", "phase"})
+    result["case_results"] = [row.model_dump(include={"name", "status", "stdin", "stdout", "stderr", "phase", "expected"})
                               for row in check.case_results or []]
     label = {".py": "Python", ".c": "C"}.get(source.suffix.lower(), "C++")
     result.update(name=source.name, editor_path=str(source), language=label)
@@ -146,6 +147,12 @@ def split_model_cases(reply: str) -> tuple[str, PythonTest]:
     source_reply = normalized[:block.start()] + normalized[block.end():]
     try:
         data = json.loads(block["code"])
+        if isinstance(data, dict) and set(data) <= {"sample_file", "stdin", "expected"} and "sample_file" in data:
+            sample = PythonTest.model_validate({
+                "approved_file": data["sample_file"], "stdin": data.get("stdin", ""), "expected": data.get("expected"),
+            })
+            if sample.approved_file and sample.approved_file.content.strip():
+                return source_reply, sample
         if not isinstance(data, list) or not 1 <= len(data) <= 3:
             return source_reply, PythonTest()
         test = PythonTest.model_validate({"cases": data})
@@ -164,13 +171,80 @@ def split_model_cases(reply: str) -> tuple[str, PythonTest]:
     return source_reply, test
 
 
+def incomplete_code_reply(reply: str, caption: str = "") -> bool:
+    """Detect delivery promises that did not include a usable source block."""
+    if re.search(r"(?:只|仅)(?:需|要)?(?:讲解|分析|概括)|(?:不要|不用|无需|不需要)(?:生成|提供|编写|写)?(?:代码|源码|程序)", caption):
+        return False
+    prose = FENCE_BLOCK.sub("", reply)
+    if re.search(r"请(?:你|先)?(?:补充|确认|提供|重新拍摄)|无法(?:确定|辨认)|题面.{0,8}(?:缺少|看不清)|[？?]", prose):
+        return False
+    committed = (FILE_DECLARATION.search(reply)
+                 or re.search(r"(?:以下|下面|接下来|现)[^。\n]{0,16}(?:源码|完整代码|完整程序)"
+                              r"|(?:题目|题面)要求[^。\n]{0,28}(?:编写|实现|写出)[^。\n]{0,24}(?:程序|代码|源码)", reply)
+                 or re.search(r"(?:编写|生成|写出|补全)[^。\n]{0,16}(?:代码|源码|程序)", caption))
+    if not committed:
+        return False
+    source_reply, _ = split_model_cases(reply)
+    try:
+        parser = parse_generated_code if FILE_DECLARATION.search(source_reply) else parse_generated_code_or_infer
+        parser(source_reply)
+    except ValueError:
+        return True
+    return False
+
+
+def reads_standard_input(code: str, suffix: str) -> bool:
+    if suffix == ".py":
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            return False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "input":
+                return True
+            if isinstance(node, ast.Attribute) and node.attr == "stdin" and isinstance(node.value, ast.Name) and node.value.id == "sys":
+                return True
+        return False
+    return bool(re.search(r"\b(?:scanf|getchar|cin|stdin)\b", code))
+
+
+def missing_input_sample(reply: str) -> bool:
+    source_reply, test = split_model_cases(reply)
+    try:
+        filename, code = parse_generated_code_or_infer(source_reply)
+    except ValueError:
+        return False
+    if REQUIRES_DATA_FILE.search(source_reply) or "VISIONSOUL_DATA_FILE" in code:
+        return not test.approved_file
+    return reads_standard_input(code, Path(filename).suffix) and not any(case.stdin.strip() for case in test.cases)
+
+
+INPUT_SAMPLE_RETRY = (
+    "程序需要输入，但本轮交付缺少有效的非空自测输入。请重新交付同题完整源码，并在源码之后提供 "
+    "visionsoul-cases。标准输入题在 JSON 数组中至少给一组能走到主要计算分支的非空 stdin，"
+    "文件题给合规的 sample_file。自行按题目规则推导 expected，不使用真实用户数据，不向用户索要样例。"
+)
+
+
+def has_source_and_sample(reply: str) -> bool:
+    source_reply, test = split_model_cases(reply)
+    if not (test.approved_file or test.cases) or missing_input_sample(reply):
+        return False
+    try:
+        parse_generated_code_or_infer(source_reply)
+    except ValueError:
+        return False
+    return True
+
+
 def open_generated_source(settings: Settings, turn: dict,
                           verify_python: Callable[[str], PythonCheck] | None = None,
                           verify_c: Callable[[str, str], PythonCheck] | None = None, *,
                           origin: str | None = None, requires_file: bool = False,
                           output_name: str | None = None) -> dict | None:
     reply = turn["assistant_message"]["content"]
-    requested = bool(CODE_REQUEST.search(((turn.get("user_message") or {}).get("content") or "")))
+    caption = (turn.get("user_message") or {}).get("content", "")
+    requested = bool(CODE_REQUEST.search(caption) or incomplete_code_reply(reply, caption))
     declared = bool(FILE_DECLARATION.search(reply))
     if declared:
         parser, required = parse_generated_code, True
@@ -182,7 +256,7 @@ def open_generated_source(settings: Settings, turn: dict,
             return None
         return {"status": "error", "detail": (
             "本次回复没有给出完整源码（需要 [文件名: main.py] 加一个完整代码块），未保存也未打开编辑器；"
-            "回复“请给出完整源码”可以重试。")}
+            "可回复“按题目生成并试跑程序”重试。")}
     try:
         source_reply, _ = split_model_cases(reply)
         filename, code = parser(source_reply)
@@ -210,7 +284,7 @@ def open_generated_source(settings: Settings, turn: dict,
             return None
         # 明确告诉用户为什么没有跳到编辑器，并给出可以直接重试的说法。
         return {"status": "error",
-                "detail": f"{exc} 本轮未保存也未打开编辑器，回复“请给出完整源码”可以重试。"}
+                "detail": f"{exc} 本轮未保存也未打开编辑器，可回复“按题目生成并试跑程序”重试。"}
     except OSError:
         logger.warning("本机源码写入失败", exc_info=True)
         return {"status": "error", "detail": "源码写入失败，请检查 workspace 写入权限。"}

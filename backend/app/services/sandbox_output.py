@@ -1,11 +1,15 @@
 """Persist a declared text result from a completed sandbox run."""
+from __future__ import annotations
 import ast
 from collections import Counter
 from pathlib import Path
 import re
 from tempfile import mkdtemp
 
-from app.services.python_sandbox import PythonCheck
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.services.python_sandbox import PythonCheck
 from app.services.source_files import (
     FENCE_BLOCK, SAFE_FILENAME, WINDOWS_DEVICE, ensure_workspace_path, source_directory, write_source,
 )
@@ -151,25 +155,42 @@ def visible_output(raw: str) -> str:
     return stdout
 
 
-def save_sandbox_output(workspace: Path, filename: str | None, check: PythonCheck) -> PythonCheck:
+def matches_screen_output(raw: str, expected: str) -> bool:
+    return (visible_output(raw).replace("\r\n", "\n").removesuffix("\n")
+            == expected.replace("\r\n", "\n").removesuffix("\n"))
+
+
+def valid_text_artifact(raw: str) -> bool:
+    if NO_FILE.search(raw):
+        return not MARKERS.search(raw) and len(NO_FILE.findall(raw)) == 1
+    return len(list(CONTENT.finditer(raw))) == 1 and len(MARKERS.findall(raw)) == 2
+
+
+def save_sandbox_output(workspace: Path, filename: str | None, check: PythonCheck, *,
+                        persist: bool = True) -> PythonCheck:
     raw = check.stdout
+    original_cases = check.case_results
     stdout = visible_output(raw)
     updates = {"stdout": stdout}
-    if check.case_results:
+    if original_cases:
         updates["case_results"] = [row.model_copy(update={"stdout": visible_output(row.stdout)})
-                                   for row in check.case_results]
+                                   for row in original_cases]
     check = check.model_copy(update=updates)
     if not filename or check.status not in {"ran", "passed"} or check.case_source == "model":
         return check
-    if check.case_results:
+    if original_cases:
+        if not persist and any(not valid_text_artifact(row.stdout) for row in original_cases):
+            return check.model_copy(update={"status": "failed",
+                                            "detail": f"样例未提供完整的「{filename}」内容。"})
         return check.model_copy(update={"detail": f"{check.detail} · 要生成结果文件，请单独试跑一次。"})
-    blocks = list(CONTENT.finditer(raw))
-    if not MARKERS.search(raw) and len(NO_FILE.findall(raw)) == 1:
-        return check.model_copy(update={"detail": f"{check.detail} 本轮按题目条件未生成「{filename}」。"})
-    if len(blocks) != 1 or len(MARKERS.findall(raw)) != 2:
+    if not valid_text_artifact(raw):
         return check.model_copy(update={"status": "failed",
                                         "detail": f"程序已运行，但未提供完整的「{filename}」内容。"})
-    block = blocks[0]
+    if NO_FILE.search(raw):
+        return check.model_copy(update={"detail": f"{check.detail} 本轮按题目条件未生成「{filename}」。"})
+    if not persist:
+        return check
+    block = CONTENT.search(raw)
     content = block.group(1)
     if block.group(2) == "END_EXACT":
         content = content.removesuffix("\n")

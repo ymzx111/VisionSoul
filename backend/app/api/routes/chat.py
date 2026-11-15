@@ -16,13 +16,19 @@ from app.services.chat_store import ChatStore, ChatConflict
 from app.services.deepseek import DeepSeekError, TokenUsage, has_api_key
 from app.services.videos import VideoService, VideoError
 from app.services.audio_evidence import current_context
-from app.services.local_ide import REQUIRES_DATA_FILE, open_generated_source, show_sandbox_result, split_model_cases
+from app.services.local_ide import (
+    REQUIRES_DATA_FILE, open_generated_source, reads_standard_input, show_sandbox_result, split_model_cases,
+)
 from app.services.c_sandbox import c_literal_input, debug_c, run_c_sandbox
 from app.services.code_reruns import source_snapshot
 from app.services.python_sandbox import (
     ApprovedFile, PythonCheck, PythonTest, check_python_before_data, debug_python, run_python_sandbox,
 )
-from app.services.sandbox_output import c_text_output, declared_text_output, python_text_output, save_sandbox_output
+from app.services.sandbox_output import (
+    c_text_output, declared_text_output, python_text_output, save_sandbox_output,
+)
+from app.services.source_files import CODE_REQUEST
+from app.services.sandbox_diagnostics import diagnose_run
 
 router = APIRouter(prefix="/api/chat", tags=["伙伴对话"])
 Identifier = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
@@ -181,6 +187,7 @@ class SandboxRerun(BaseModel):
     model_config = ConfigDict(extra="forbid")
     run_id: Identifier
     stdin: str = Field(default="", max_length=4096)
+    expected: str | None = Field(default=None, max_length=4096)
     approved_file: ApprovedFile | None = None
     open_result_window: bool = True
 
@@ -198,7 +205,8 @@ def rerun_source(body: SandboxRerun, request: Request, settings: Annotated[Setti
     if snapshot is None:
         raise HTTPException(404, "这份源码的试跑入口已失效，请在新的代码回复中试跑。")
     code, source, language, requires_file, output_name = snapshot
-    test = PythonTest(stdin=body.stdin, approved_file=body.approved_file)
+    original_code = code
+    test = PythonTest(stdin=body.stdin, expected=body.expected, approved_file=body.approved_file)
     if requires_file and not body.approved_file:
         check = PythonCheck(status="awaiting_file", detail="这道题需要本地数据。请在文件选择器里打开存放数据的目录，选中文件并授权本轮试跑。", attempts=0)
     elif language == "python":
@@ -212,6 +220,7 @@ def rerun_source(body: SandboxRerun, request: Request, settings: Annotated[Setti
         code, output_name = c_text_output(code, output_name)
         check = run_c_sandbox(settings, code, language, test)
     check = save_sandbox_output(settings.local_source_workspace, output_name, check)
+    check = diagnose_run(check, original_code, language, code)
     if body.approved_file:
         check = check.model_copy(update={"detail": f"本轮选择：{body.approved_file.filename} · {check.detail}"})
     opened = body.open_result_window and show_sandbox_result(source, check, run_id=body.run_id,
@@ -226,11 +235,12 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
     approved = body.python_test.approved_file if body.python_test else None
     try:
         turn = service.send(**body.model_dump(exclude={"open_in_ide", "python_test"}),
-                            sandbox_filename=approved.filename if local_delivery and approved else None)
+                            sandbox_filename=approved.filename if local_delivery and approved else None,
+                            auto_sample_retry=local_delivery and not (body.python_test and body.python_test.has_local_data))
     except DeepSeekError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
 
-    if (local_delivery and turn["space"] == "work" and (turn["image_id"] or turn["video_id"])
+    if (local_delivery and turn["space"] == "work" and (turn["image_id"] or turn["video_id"] or CODE_REQUEST.search(body.message))
             and not turn["replayed"] and not turn["truncated"]):
         manual_test = body.python_test or PythonTest()
         reply = turn["assistant_message"]["content"]
@@ -239,39 +249,73 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
         workspace = service.settings.local_source_workspace
         file_in_request = re.search(
             r"(?:[a-zA-Z]:[\\/]|\\\\)[^\n]*?\.(?:txt|csv|json)\b", body.message, re.IGNORECASE)
-        requires_file = bool(approved or file_in_request or REQUIRES_DATA_FILE.search(turn["assistant_message"]["content"]))
-        use_model_test = not output_name and not requires_file and not manual_test.has_local_data and bool(model_test.cases)
+        requires_file = bool(approved or model_test.approved_file or file_in_request or REQUIRES_DATA_FILE.search(reply))
+        sample_has_stdin = any(case.stdin.strip() for case in model_test.cases)
 
         def show_approved_file(check: PythonCheck) -> PythonCheck:
             if not approved:
                 return check
             return check.model_copy(update={"detail": f"本轮选择：{approved.filename} · {check.detail}"})
 
-        def mark_model_check(check: PythonCheck) -> PythonCheck:
-            return check.model_copy(update={"case_source": "model",
-                "detail": f"AI 自测（预期输出由模型生成） · {check.detail}"})
+        def verify_delivery(run, result_name: str | None, needs_file: bool,
+                            code: str, runtime_code: str, language: str) -> PythonCheck | None:
+            sample_available = bool(model_test.approved_file) if needs_file else bool(model_test.cases)
+            if sample_available:
+                sample = save_sandbox_output(workspace, result_name, run(model_test), persist=False)
+                sample = diagnose_run(sample, code, language, runtime_code)
+                if sample.status not in {"ran", "passed"}:
+                    return sample.model_copy(update={
+                        "case_source": "model", "data_file": None, "sample_file": model_test.approved_file,
+                        "detail": f"沙箱自测未通过。{sample.detail}",
+                    })
+                summary = ("沙箱样例试跑成功，已对照样例预期。" if sample.status == "passed"
+                           else "沙箱样例试跑成功，部分或全部样例未核对预期。")
+                if needs_file and not approved:
+                    return PythonCheck(status="awaiting_file", case_source="model",
+                                       detail=f"{summary} 请选择真实数据文件，再点击「授权并试跑」。")
+                if not needs_file and sample_has_stdin and not manual_test.cases and not manual_test.stdin:
+                    return PythonCheck(status="awaiting_input", case_source="model",
+                                       case_results=sample.case_results,
+                                       detail=f"{summary} 请填写真实输入后再试跑。")
+            if needs_file and not approved:
+                return None
+            if sample_available or approved or result_name:
+                formal = save_sandbox_output(workspace, result_name, run(manual_test))
+                return show_approved_file(diagnose_run(formal, code, language, runtime_code))
+            return None
 
         def verify_python(code: str) -> PythonCheck:
-            if not approved and (requires_file or "VISIONSOUL_DATA_FILE" in code):
-                return check_python_before_data(code)
             runtime_code, result_name = python_text_output(code, output_name)
-            if approved or result_name:
-                check = run_python_sandbox(service.settings, runtime_code, manual_test)
-                return show_approved_file(save_sandbox_output(workspace, result_name, check))
-            if use_model_test:
-                return mark_model_check(run_python_sandbox(service.settings, code, model_test))
-            return debug_python(service.settings, service.client, turn["user_message"]["content"], code, manual_test)
+            needs_file = requires_file or "VISIONSOUL_DATA_FILE" in code
+            if not needs_file and reads_standard_input(code, ".py") and not sample_has_stdin and not manual_test.has_local_data:
+                check = check_python_before_data(code)
+                if check.status != "awaiting_file":
+                    return diagnose_run(check, code, "python")
+                return PythonCheck(status="awaiting_input", phase="compile", attempts=0,
+                                   detail="语法检查通过，但未取得非空自测输入。可重新生成代码和样例，或填写输入和参考输出试跑。")
+            check = verify_delivery(
+                lambda test: run_python_sandbox(service.settings, runtime_code, test),
+                result_name, needs_file, code, runtime_code, "python")
+            if check is not None:
+                return check
+            if needs_file:
+                return diagnose_run(check_python_before_data(code), code, "python")
+            return diagnose_run(debug_python(service.settings, service.client, turn["user_message"]["content"],
+                                             code, manual_test), code, "python")
 
         def verify_c(code: str, language: str) -> PythonCheck:
             runtime_code, result_name = c_text_output(code, output_name)
-            if not approved and (requires_file or "VISIONSOUL_DATA_FILE" in code or c_literal_input(code)):
-                return run_c_sandbox(service.settings, runtime_code, language, PythonTest(), compile_only=True)
-            if approved or result_name:
-                check = run_c_sandbox(service.settings, runtime_code, language, manual_test)
-                return show_approved_file(save_sandbox_output(workspace, result_name, check))
-            if use_model_test:
-                return mark_model_check(run_c_sandbox(service.settings, code, language, model_test))
-            return debug_c(service.settings, service.client, turn["user_message"]["content"], code, language, manual_test)
+            needs_file = bool(requires_file or "VISIONSOUL_DATA_FILE" in code or c_literal_input(code))
+            check = verify_delivery(
+                lambda test: run_c_sandbox(service.settings, runtime_code, language, test),
+                result_name, needs_file, code, runtime_code, language)
+            if check is not None:
+                return check
+            if needs_file:
+                check = run_c_sandbox(service.settings, runtime_code, language, PythonTest(), compile_only=True)
+                return diagnose_run(check, code, language, runtime_code)
+            return diagnose_run(debug_c(service.settings, service.client, turn["user_message"]["content"],
+                                        code, language, manual_test), code, language)
 
         turn["local_source"] = open_generated_source(
             service.settings, turn,

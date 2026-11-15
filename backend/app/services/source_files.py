@@ -33,7 +33,7 @@ FENCE_BLOCK = re.compile(
 INFER_FILENAMES = {"python": "main.py", "py": "main.py", "c": "main.c",
                    "cpp": "main.cpp", "c++": "main.cpp", "cc": "main.cpp"}
 # 用户是否明确要代码；只在这类请求没有拿到源码时才提示，不打扰普通提问。
-CODE_REQUEST = re.compile(r"代码|源码|程序|写出|编写|补全|填空|实现")
+CODE_REQUEST = re.compile(r"代码|源码|程序|写出|编写|补全|填空|实现|(?:Python|C\+\+|C语言)\s*(?:编程)?题", re.IGNORECASE)
 
 
 def parse_generated_code(text: str) -> tuple[str, str]:

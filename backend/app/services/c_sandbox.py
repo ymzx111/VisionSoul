@@ -18,6 +18,7 @@ from app.services.python_sandbox import (
     MAX_REPAIR_ATTEMPTS, PythonCheck, PythonTest, check_data_file, denied_output_detail, run_case_matrix,
 )
 from app.services.source_files import WINDOWS_DEVICE, ensure_workspace_path, parse_generated_code, source_directory
+from app.services.sandbox_output import matches_screen_output
 
 logger = logging.getLogger(__name__)
 RUN_LOCK = Lock()
@@ -62,11 +63,6 @@ def _repair_system(language: str) -> str:
             f"只返回 [文件名: {suffix}] 后接一个完整代码块。"
             "编译错误与行号只用于定位；题目禁止的库函数或高级写法不得使用，改用 if、循环等基础语句实现。"
             "不使用网络、文件系统和命令行参数。")
-
-
-def _compare(actual: str, expected: str) -> bool:
-    return (actual.replace("\r\n", "\n").removesuffix("\n")
-            == expected.replace("\r\n", "\n").removesuffix("\n"))
 
 
 def _allowed_env() -> dict[str, str]:
@@ -180,7 +176,7 @@ def _run_once(settings: Settings, code: str, language: str, stdin: str, expected
         return PythonCheck(status="failed", detail=denied_output_detail(result), **data)
     if expected is None:
         return PythonCheck(status="ran", detail="已在沙箱编译并运行。未提供预期输出，未判定题目正确性。", **data)
-    if _compare(result["stdout"], expected):
+    if matches_screen_output(result["stdout"], expected):
         return PythonCheck(status="passed", detail="沙箱输出与本轮预期输出一致。", **data)
     return PythonCheck(status="mismatch", detail="程序已运行，输出与预期不一致。", **data)
 

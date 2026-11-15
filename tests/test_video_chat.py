@@ -237,7 +237,14 @@ class VideoChatTests(unittest.TestCase):
         self.settings.local_source_workspace = root / "workspace"
         fence = chr(96) * 3
         code = 'print("VisionSoul")\n'
-        self.payload["reply"] = f"[语言: Python]\n[文件名: main.py]\n[需要数据文件]\n\n{fence}python\n{code}{fence}"
+        complete_reply = f"[语言: Python]\n[文件名: main.py]\n[需要数据文件]\n\n{fence}python\n{code}{fence}"
+        self.payload["reply"] = "题目要求编写一个 Python 程序。以下是完整源码。"
+        complete_request = self.client.complete
+
+        def omit_first_source(*args, **kwargs):
+            if self.calls:
+                self.payload["reply"] = complete_reply
+            return complete_request(*args, **kwargs)
         app.dependency_overrides[get_chat_service] = lambda: self.chat
         self.addCleanup(app.dependency_overrides.clear)
 
@@ -247,13 +254,16 @@ class VideoChatTests(unittest.TestCase):
         body = {"request_id": "1" * 32, "message": "", "space": "work",
                 "video_id": self.video.video_id, "open_in_ide": True}
         with TestClient(local_app, base_url="http://127.0.0.1:8765") as client, \
-                patch("app.services.local_ide.launch_ide") as launch:
+                patch("app.services.local_ide.launch_ide") as launch, \
+                patch.object(self.client, "complete", side_effect=omit_first_source):
             origin = {"Origin": "http://127.0.0.1:8765"}
             result = client.post("/api/chat/messages", json=body, headers=origin)
             self.assertEqual(result.status_code, 200, result.text)
             response = result.json()
             source = response["local_source"]
             self.assertEqual(source["status"], "opened")
+            self.assertEqual(response["usage"]["total_tokens"], 240)
+            self.assertIn("编程任务需要实际交付", self.calls[1]["messages"][0]["content"])
             target = Path(source["path"])
             self.assertEqual(target.parent, root / "workspace" / "Python")
             self.assertEqual(target.name, f"{date.today():%Y.%m.%d}.main.py")
@@ -268,11 +278,52 @@ class VideoChatTests(unittest.TestCase):
             replay = client.post("/api/chat/messages", json=body, headers=origin).json()
             self.assertTrue(replay["replayed"])
             self.assertIsNone(replay["local_source"])
-            self.assertEqual(len(self.calls), 1)
+            self.assertEqual(len(self.calls), 2)
             foreign = client.post("/api/chat/messages", json={**body, "request_id": "2" * 32},
                                   headers={"Origin": "https://example.invalid"}).json()
             self.assertIsNone(foreign["local_source"])
             launch.assert_called_once()
+
+    def test_video_missing_stdin_sample_retries_before_running_real_input(self):
+        self.settings.local_source_workspace = Path(self.temp.name) / "workspace"
+        app.dependency_overrides[get_chat_service] = lambda: self.chat
+        app.dependency_overrides[get_settings] = lambda: self.settings
+        self.addCleanup(app.dependency_overrides.clear)
+        fence = chr(96) * 3
+        program = "print(input().count('明天'))\n"
+        reply = f"[文件名: main.py]\n{fence}python\n{program}{fence}\n"
+        self.payload["reply"] = reply
+        original_complete = self.client.complete
+
+        def provide_sample_on_retry(*args, **kwargs):
+            if self.calls:
+                sample = [{"name": "关键词", "stdin": "明天，明天。", "expected": "2"}]
+                self.payload["reply"] = f"{reply}{fence}visionsoul-cases\n{json.dumps(sample)}\n{fence}"
+            return original_complete(*args, **kwargs)
+
+        async def local_app(scope, receive, send):
+            await app({**scope, "client": ("127.0.0.1", 1234)}, receive, send)
+
+        base = "http://127.0.0.1:8765"
+        with (TestClient(local_app, base_url=base, headers={"Origin": base}) as client,
+              patch.object(self.client, "complete", side_effect=provide_sample_on_retry),
+              patch("app.services.local_ide.launch_ide"),
+              patch("app.services.local_ide.show_sandbox_result")):
+            response = client.post("/api/chat/messages", json={
+                "request_id": "e" * 32, "message": "", "space": "work",
+                "video_id": self.video.video_id, "open_in_ide": True,
+            })
+            self.assertEqual(response.status_code, 200, response.text)
+            delivery = response.json()["local_source"]
+            check = delivery["python_check"]
+            self.assertEqual((check["status"], check["stdout"]), ("awaiting_input", ""))
+            self.assertEqual(check["case_results"][0]["stdout"], "2\n")
+            result = client.post("/api/chat/sandbox-runs", json={
+                "run_id": delivery["sandbox_run_id"], "stdin": "明天、明天、明天。", "expected": "3",
+                "open_result_window": False,
+            }).json()
+            self.assertEqual((result["status"], result["stdout"]), ("passed", "3\n"))
+            self.assertEqual(len(self.calls), 2)
 
     def test_python_test_is_local_and_repaired_source_uses_new_file(self):
         from app.services.python_sandbox import PythonCheck

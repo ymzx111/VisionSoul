@@ -144,7 +144,8 @@ if os.path.isfile('sample.txt'):
             self.assertEqual(original.status_code, 200, original.text)
             source = original.json()["local_source"]
             self.assertEqual(source["python_check"]["status"], "awaiting_input")
-            self.assertIn("number?", source["python_check"]["stdout"])
+            self.assertEqual(source["python_check"]["stdout"], "")
+            self.assertIn("未取得非空自测输入", source["python_check"]["detail"])
             saved = Path(source["path"])
             saved.write_text("raise RuntimeError('edited file')", encoding="utf8")
             retry = {"run_id": source["python_run_id"], "stdin": "21"}
@@ -158,6 +159,12 @@ if os.path.isfile('sample.txt'):
                 self.assertTrue(result.json()["desktop_result_opened"])
                 self.assertEqual(viewer.call_args.args[1].stdout, result.json()["stdout"])
                 self.assertEqual(viewer.call_count, 2)
+                bad = client.post("/api/chat/python-runs", json={**retry, "stdin": "不是数字",
+                                  "open_result_window": False}, headers=local).json()
+                self.assertEqual((bad["status"], bad["error_line"]), ("failed", 3), bad)
+                self.assertIn("int(value)", bad["source_line"])
+                self.assertIn("数据转换失败", bad["detail"])
+                self.assertEqual(bad["stdin"], "不是数字")
             for extra in ({"code": "print(1)"}, {"path": str(saved)}):
                 self.assertEqual(client.post("/api/chat/python-runs", json={**retry, **extra}, headers=local).status_code, 422)
             self.assertEqual(client.post("/api/chat/python-runs", json=retry, headers={"Origin": "https://example.invalid"}).status_code, 403)
@@ -188,7 +195,10 @@ if os.path.isfile('sample.txt'):
             "print('低库存：', len(rows))\n"
         )
         fence = chr(96) * 3
-        reply = f"[需要数据文件]\n[文件名: main.py]\n{fence}python\n{source}{fence}"
+        sample = {"sample_file": {"filename": "inventory.txt", "content": "样品 1\n"},
+                  "expected": "需要补货的物资列表：\n样品 1\n低库存： 1\n"}
+        reply = (f"[需要数据文件]\n[文件名: main.py]\n{fence}python\n{source}{fence}\n"
+                 f"{fence}visionsoul-cases\n{json.dumps(sample)}\n{fence}")
         self.service.client.complete = lambda *args, **kwargs: ModelReply(answer=reply, model="test")
 
         async def local_app(scope, receive, send):
@@ -199,19 +209,27 @@ if os.path.isfile('sample.txt'):
               patch("app.services.local_ide.launch_ide"),
               patch("app.services.local_ide.show_sandbox_result", return_value=True)):
             first = client.post("/api/chat/messages", json={
-                "request_id": "6" * 32, "message": "用本机数据写 Python", "space": "work",
-                "image_id": self.image(), "open_in_ide": True,
+                "request_id": "6" * 32, "message": "Python题：用本机数据统计库存", "space": "work",
+                "open_in_ide": True,
             })
             self.assertEqual(first.status_code, 200, first.text)
             delivery = first.json()["local_source"]
             self.assertEqual(delivery["python_check"]["status"], "awaiting_file")
-            self.assertEqual(delivery["python_check"]["attempts"], 0)
+            self.assertEqual(delivery["python_check"]["case_source"], "model")
+            self.assertIn("样例试跑成功", delivery["python_check"]["detail"])
+            self.assertEqual(delivery["python_check"]["stdout"], "")
+            self.assertFalse((self.settings.local_source_workspace / "outputs").exists())
             rerun = {"run_id": delivery["sandbox_run_id"], "open_result_window": False}
             self.assertEqual(client.post("/api/chat/sandbox-runs", json=rerun).json()["status"], "awaiting_file")
-            result = client.post("/api/chat/sandbox-runs", json={**rerun, "approved_file": {
+            authorized = {**rerun, "approved_file": {
                 "filename": "仓库数据.txt", "content": "杯子 3\n笔 12\n",
-            }}).json()
-            self.assertEqual(result["status"], "ran", result)
+            }}
+            mismatch = client.post("/api/chat/sandbox-runs", json={**authorized, "expected": "错误答案"}).json()
+            self.assertEqual(mismatch["status"], "mismatch", mismatch)
+            self.assertFalse((self.settings.local_source_workspace / "outputs").exists())
+            expected = "需要补货的物资列表：\n杯子 3\n低库存： 1\n"
+            result = client.post("/api/chat/sandbox-runs", json={**authorized, "expected": expected}).json()
+            self.assertEqual(result["status"], "passed", result)
             self.assertEqual(result["data_file"], "仓库数据.txt")
             self.assertEqual(result["stdout"], "需要补货的物资列表：\n杯子 3\n低库存： 1\n")
             output = Path(result["output_path"])
@@ -219,6 +237,23 @@ if os.path.isfile('sample.txt'):
             self.assertEqual(output.parent.parent, self.settings.local_source_workspace / "outputs")
             self.assertEqual(output.read_text(encoding="utf-8"), "杯子 3\n")
             self.assertEqual(Path(delivery["path"]).read_text(encoding="utf-8"), source)
+
+            with patch.object(self.service.client, "complete", return_value=ModelReply(
+                answer=reply.replace(json.dumps(sample), json.dumps({**sample, "expected": "错"})),
+                model="test",
+            )):
+                failure = client.post("/api/chat/messages", json={
+                    "request_id": "7" * 32, "message": "Python题：用本机数据统计库存",
+                    "space": "work", "open_in_ide": True, "python_test": {"approved_file": authorized["approved_file"]},
+                }).json()["local_source"]["python_check"]
+            self.assertEqual((failure["status"], failure["case_source"]), ("mismatch", "model"))
+            self.assertIn("样品", failure["sample_file"]["content"])
+            self.assertEqual(failure["expected"], "错")
+            self.assertIn("低库存： 1", failure["stdout"])
+            self.assertIsNone(failure["error_line"])
+            self.assertIsNone(failure["data_file"])
+            self.assertIsNone(failure["output_path"])
+            self.assertEqual(len(list(output.parent.parent.iterdir())), 1)
 
     def test_c_and_cpp_desktop_delivery_and_local_rerun(self):
         if not self.settings.c_sandbox_compiler.is_file():

@@ -126,10 +126,10 @@ def run(directory: Path):
                     continue
                 verify(source and "python_check" in source, "3-3：未交付源码或试跑")
                 check = source["python_check"]
-                verify(check and check["status"] == "passed" and check["case_source"] == "model",
+                verify(check and check["status"] == "awaiting_input" and check["case_source"] == "model",
                        f"3-3：AI 自测失败 {check}")
-                verify(len(check["case_results"]) == 3 and turn["usage"]["total_tokens"] == 20,
-                       "3-3：断言数量或格式重试累计用量异常")
+                verify(not check["stdout"] and turn["usage"]["total_tokens"] == 20,
+                       "3-3：合成结果展示或格式重试累计用量异常")
                 verify(Path(source["path"]).read_text(encoding="utf-8-sig") == SOURCE,
                        "3-3：落盘源码或注释发生变化")
                 verify(len(split_model_cases(reply)[1].cases) == 3, "3-3：自测块解析失败")

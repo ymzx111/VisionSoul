@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.config import Settings
 from app.services.deepseek import DeepSeekClient, DeepSeekError, TokenUsage, add_usage
+from app.services.sandbox_output import matches_screen_output
 from app.services.source_files import (
     SAFE_FILENAME, WINDOWS_DEVICE, ensure_workspace_path, parse_generated_code, source_directory,
 )
@@ -128,6 +129,7 @@ class PythonCheck(BaseModel):
     status: Literal["ran", "passed", "mismatch", "failed", "limit", "unavailable", "busy", "awaiting_input", "awaiting_file", "file_unused"]
     detail: str
     stdin: str | None = None
+    expected: str | None = None
     stdout: str = ""
     stderr: str = ""
     exit_code: int | None = None
@@ -138,6 +140,9 @@ class PythonCheck(BaseModel):
     case_source: Literal["model"] | None = None
     data_file: str | None = None
     output_path: str | None = None
+    error_line: int | None = None
+    source_line: str | None = None
+    sample_file: ApprovedFile | None = None
     # C 链路用：区分"编译失败"与"运行失败"。
     phase: Literal["compile", "run"] | None = None
 
@@ -175,10 +180,6 @@ def check_python_before_data(code: str) -> PythonCheck:
                            stderr=f"第 {exc.lineno or 1} 行：{exc.msg}")
     return PythonCheck(status="awaiting_file", phase="compile", attempts=0,
                        detail="代码已通过语法检查。请选择真实数据文件，再点击「授权并试跑」。")
-
-
-def _compare(actual: str, expected: str) -> bool:
-    return actual.replace("\r\n", "\n").removesuffix("\n") == expected.replace("\r\n", "\n").removesuffix("\n")
 
 
 def _run_once(settings: Settings, code: str, stdin: str, expected: str | None,
@@ -250,7 +251,7 @@ def _run_once(settings: Settings, code: str, stdin: str, expected: str | None,
         return PythonCheck(status="failed", detail=detail or "Python 程序退出失败，请查看错误输出。", **data)
     if expected is None:
         return PythonCheck(status="ran", detail="已在沙箱运行。未提供预期输出，未判定题目正确性。", **data)
-    if _compare(result["stdout"], expected):
+    if matches_screen_output(result["stdout"], expected):
         return PythonCheck(status="passed", detail="沙箱输出与本轮预期输出一致。", **data)
     return PythonCheck(status="mismatch", detail="程序已运行，输出与预期不一致。", **data)
 
@@ -265,6 +266,7 @@ def run_case_matrix(run_once, test: PythonTest) -> PythonCheck:
         result = run_once(test.stdin, test.expected)
         if result.phase != "compile" and result.status not in {"unavailable", "busy"}:
             result.stdin = test.stdin
+            result.expected = test.expected
         return result
 
     results: list[CaseResult] = []
