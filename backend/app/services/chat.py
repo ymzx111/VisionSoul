@@ -329,7 +329,7 @@ class ChatService:
                         messages.append({"role": "user", "content": content})
                         options = {"max_tokens": self.settings.video_max_tokens} if source_delivery else {}
                         result = self.client.complete(messages, **options)
-                        if auto_sample_retry and source_delivery and not result.truncated and missing_input_sample(result.answer):
+                        if auto_sample_retry and source_delivery and not result.truncated and missing_input_sample(result.answer, message):
                             retry_messages = [{**messages[0], "content": messages[0]["content"] + "\n" + INPUT_SAMPLE_RETRY},
                                               *messages[1:]]
                             try:
@@ -338,7 +338,7 @@ class ChatService:
                                 candidate = None
                             if candidate is not None:
                                 usage = add_usage(result.usage, candidate.usage)
-                                if not candidate.truncated and has_source_and_sample(candidate.answer):
+                                if not candidate.truncated and has_source_and_sample(candidate.answer, message):
                                     result = candidate
                                 result = result.model_copy(update={"usage": usage})
                         if saved_audio:

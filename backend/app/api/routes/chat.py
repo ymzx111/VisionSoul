@@ -17,7 +17,7 @@ from app.services.deepseek import DeepSeekError, TokenUsage, has_api_key
 from app.services.videos import VideoService, VideoError
 from app.services.audio_evidence import current_context
 from app.services.local_ide import (
-    REQUIRES_DATA_FILE, open_generated_source, reads_standard_input, show_sandbox_result, split_model_cases,
+    REQUIRES_DATA_FILE, open_generated_source, reads_standard_input, row_acceptance, show_sandbox_result, split_model_cases,
 )
 from app.services.c_sandbox import c_literal_input, debug_c, run_c_sandbox
 from app.services.code_reruns import source_snapshot
@@ -29,6 +29,7 @@ from app.services.sandbox_output import (
 )
 from app.services.source_files import CODE_REQUEST
 from app.services.sandbox_diagnostics import diagnose_run
+from app.services.file_row_check import requests_row_check
 
 router = APIRouter(prefix="/api/chat", tags=["伙伴对话"])
 Identifier = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
@@ -207,11 +208,14 @@ def rerun_source(body: SandboxRerun, request: Request, settings: Annotated[Setti
     snapshot = source_snapshot(body.run_id)
     if snapshot is None:
         raise HTTPException(404, "这份源码的试跑入口已失效，请在新的代码回复中试跑。")
-    code, source, language, requires_file, output_name = snapshot
+    code, source, language, requires_file, output_name, row_check = snapshot
     original_code = code
     test = PythonTest(stdin=body.stdin, expected=body.expected, approved_file=body.approved_file)
+    file_problem = row_check.file_problem(body.approved_file.content) if row_check and body.approved_file else None
     if requires_file and not body.approved_file:
         check = PythonCheck(status="awaiting_file", detail="这道题需要本地数据。请在文件选择器里打开存放数据的目录，选中文件并授权本轮试跑。", attempts=0)
+    elif file_problem:
+        check = PythonCheck(status="file_unused", detail=file_problem, attempts=0)
     elif language == "python":
         if not settings.python_sandbox_enabled:
             raise HTTPException(503, "本机 Python 沙箱已关闭。")
@@ -254,6 +258,13 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
         file_in_request = re.search(
             r"(?:[a-zA-Z]:[\\/]|\\\\)[^\n]*?\.(?:txt|csv|json)\b", body.message, re.IGNORECASE)
         requires_file = bool(approved or model_test.approved_file or file_in_request or REQUIRES_DATA_FILE.search(reply))
+        video_context = turn.get("video_context") or {}
+        task = "\n".join([body.message, video_context.get("summary", ""),
+                          *(row.get("description", "") for row in video_context.get("observations", []))])
+        row_required = requests_row_check(reply) or (requires_file and requests_row_check("", task))
+        row_check, row_problem = row_acceptance(reply, model_test, required=row_required)
+        require_row_acceptance = row_required or row_check is not None or row_problem is not None
+        requires_file |= require_row_acceptance
         sample_has_stdin = any(case.stdin.strip() for case in model_test.cases)
 
         def show_approved_file(check: PythonCheck) -> PythonCheck:
@@ -263,17 +274,22 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
 
         def verify_delivery(run, result_name: str | None, needs_file: bool,
                             code: str, runtime_code: str, language: str) -> PythonCheck | None:
+            if row_problem:
+                return PythonCheck(status="failed", case_source="model", attempts=0,
+                                   detail=f"逐行自测未通过。{row_problem}")
             sample_available = bool(model_test.approved_file) if needs_file else bool(model_test.cases)
             if sample_available:
                 sample = save_sandbox_output(workspace, result_name, run(model_test), persist=False)
                 sample = diagnose_run(sample, code, language, runtime_code)
-                if sample.status not in {"ran", "passed"}:
+                if sample.status not in {"ran", "passed"} or (row_check and sample.status != "passed"):
                     return sample.model_copy(update={
                         "case_source": "model", "data_file": None, "sample_file": model_test.approved_file,
                         "detail": f"沙箱自测未通过。{sample.detail}",
                     })
                 summary = ("沙箱样例试跑成功，已对照样例预期。" if sample.status == "passed"
                            else "沙箱样例试跑成功，部分或全部样例未核对预期。")
+                if row_check:
+                    summary += " 已核对坏行警告和后续合法记录。"
                 if needs_file and not approved:
                     return PythonCheck(status="awaiting_file", case_source="model",
                                        detail=f"{summary} 请选择真实数据文件，再点击「授权并试跑」。")
@@ -283,6 +299,10 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
                                        detail=f"{summary} 请填写真实输入后再试跑。")
             if needs_file and not approved:
                 return None
+            if row_check and approved:
+                file_problem = row_check.file_problem(approved.content)
+                if file_problem:
+                    return show_approved_file(PythonCheck(status="file_unused", detail=file_problem, attempts=0))
             if sample_available or approved or result_name:
                 formal = save_sandbox_output(workspace, result_name, run(manual_test))
                 return show_approved_file(diagnose_run(formal, code, language, runtime_code))
@@ -325,5 +345,6 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
             service.settings, turn,
             verify_python if service.settings.python_sandbox_enabled else None,
             verify_c if service.settings.c_sandbox_enabled else None,
-            origin=f"{request.url.scheme}://{request.url.netloc}", requires_file=requires_file, output_name=output_name)
+            origin=f"{request.url.scheme}://{request.url.netloc}", requires_file=requires_file, output_name=output_name,
+            row_check=row_check, require_row_acceptance=require_row_acceptance)
     return turn

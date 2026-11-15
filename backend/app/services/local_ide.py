@@ -16,6 +16,7 @@ from xml.sax.saxutils import escape
 
 from app.core.config import Settings
 from app.services.python_sandbox import PythonCheck, PythonTest
+from app.services.file_row_check import FileRowCheck, requests_row_check
 from app.services.code_reruns import remember_source
 from app.services.source_files import (
     CODE_REQUEST, FENCE_BLOCK, FILE_DECLARATION, parse_generated_code, parse_generated_code_or_infer,
@@ -119,17 +120,24 @@ def show_sandbox_result(source: Path, check: PythonCheck, *, run_id: str | None 
     return True
 
 
-def split_model_cases(reply: str) -> tuple[str, PythonTest]:
+def model_case_block(reply: str) -> tuple[str, str | None]:
     # 只接受源码围栏之后独立出现的约定样例块。
     blocks = list(FENCE_BLOCK.finditer(reply.replace("\r\n", "\n")))
     if len(blocks) != 2 or blocks[1]["language"].lower() != "visionsoul-cases":
-        return reply, PythonTest()
+        return reply, None
     block = blocks[1]
     normalized = reply.replace("\r\n", "\n")
     source_reply = normalized[:block.start()] + normalized[block.end():]
+    return source_reply, block["code"]
+
+
+def split_model_cases(reply: str) -> tuple[str, PythonTest]:
+    source_reply, block = model_case_block(reply)
+    if block is None:
+        return source_reply, PythonTest()
     try:
-        data = json.loads(block["code"])
-        if isinstance(data, dict) and set(data) <= {"sample_file", "stdin", "expected"} and "sample_file" in data:
+        data = json.loads(block)
+        if isinstance(data, dict) and set(data) <= {"sample_file", "stdin", "expected", "row_check"} and "sample_file" in data:
             sample = PythonTest.model_validate({
                 "approved_file": data["sample_file"], "stdin": data.get("stdin", ""), "expected": data.get("expected"),
             })
@@ -151,6 +159,23 @@ def split_model_cases(reply: str) -> tuple[str, PythonTest]:
     if len(unique) != len(test.cases):
         return source_reply, PythonTest()
     return source_reply, test
+
+
+def row_acceptance(reply: str, test: PythonTest, *, required: bool = False) -> tuple[FileRowCheck | None, str | None]:
+    _, block = model_case_block(reply)
+    data = None
+    try:
+        data = json.loads(block) if block is not None else None
+        if isinstance(data, dict) and "row_check" in data:
+            schema = FileRowCheck.model_validate(data["row_check"])
+            if test.approved_file is not None:
+                problem = schema.sample_problem(test.approved_file.content, test.expected)
+                return (schema, None) if problem is None else (None, problem)
+            return None, "缺少用于核对逐行读取的文件样例。"
+    except ValueError:
+        if required or isinstance(data, dict):
+            return None, "逐行文件自测格式不完整，请核对分隔符、字段数、坏行位置和预期输出。"
+    return (None, "缺少逐行验收样例及输入格式说明。") if required else (None, None)
 
 
 def incomplete_code_reply(reply: str, caption: str = "") -> bool:
@@ -191,7 +216,7 @@ def reads_standard_input(code: str, suffix: str) -> bool:
     return bool(re.search(r"\b(?:scanf|getchar|cin|stdin)\b", code))
 
 
-def missing_input_sample(reply: str) -> bool:
+def missing_input_sample(reply: str, task: str = "") -> bool:
     if needs_task_clarification(reply):
         return False
     source_reply, test = split_model_cases(reply)
@@ -199,21 +224,24 @@ def missing_input_sample(reply: str) -> bool:
         filename, code = parse_generated_code_or_infer(source_reply)
     except ValueError:
         return False
-    if REQUIRES_DATA_FILE.search(source_reply) or "VISIONSOUL_DATA_FILE" in code:
-        return not test.approved_file
+    if REQUIRES_DATA_FILE.search(source_reply) or "VISIONSOUL_DATA_FILE" in code or requests_row_check(source_reply):
+        _, problem = row_acceptance(reply, test, required=requests_row_check(source_reply, task))
+        return not test.approved_file or problem is not None
     return reads_standard_input(code, Path(filename).suffix) and not any(case.stdin.strip() for case in test.cases)
 
 
 INPUT_SAMPLE_RETRY = (
     "程序需要输入，但本轮交付缺少有效的非空自测输入。请重新交付同题完整源码，并在源码之后提供 "
     "visionsoul-cases。标准输入题在 JSON 数组中至少给一组能走到主要计算分支的非空 stdin，"
-    "文件题给合规的 sample_file。自行按题目规则推导 expected，不使用真实用户数据，不向用户索要样例。"
+    "文件题给合规的 sample_file。题目要求跳过坏行时，用[逐行验收]和 row_check，样例按题面真实的分隔符与字段数，"
+    "中间放一条缺列坏行，并在 expected 中同时验证对应警告和后续合法记录产生的结果。"
+    "自行按题目规则推导 expected，不使用真实用户数据，不向用户索要样例。"
 )
 
 
-def has_source_and_sample(reply: str) -> bool:
+def has_source_and_sample(reply: str, task: str = "") -> bool:
     source_reply, test = split_model_cases(reply)
-    if needs_task_clarification(reply) or not (test.approved_file or test.cases) or missing_input_sample(reply):
+    if needs_task_clarification(reply) or not (test.approved_file or test.cases) or missing_input_sample(reply, task):
         return False
     try:
         parse_generated_code_or_infer(source_reply)
@@ -226,7 +254,8 @@ def open_generated_source(settings: Settings, turn: dict,
                           verify_python: Callable[[str], PythonCheck] | None = None,
                           verify_c: Callable[[str, str], PythonCheck] | None = None, *,
                           origin: str | None = None, requires_file: bool = False,
-                          output_name: str | None = None) -> dict | None:
+                          output_name: str | None = None, row_check: FileRowCheck | None = None,
+                          require_row_acceptance: bool = False) -> dict | None:
     reply = turn["assistant_message"]["content"]
     if needs_task_clarification(reply):
         return None
@@ -262,6 +291,17 @@ def open_generated_source(settings: Settings, turn: dict,
             launcher, ide = settings.local_visual_studio, "Visual Studio"
         else:
             raise ValueError("自动打开支持 C、C++ 和 Python。")
+        language = "python" if extension == ".py" else "c" if extension == ".c" else "cpp"
+
+        def verify():
+            if language == "python":
+                return verify_python(code) if verify_python else None
+            return verify_c(code, language) if verify_c else None
+
+        check = verify() if require_row_acceptance else None
+        if require_row_acceptance and (check is None or (check.case_source == "model" and check.status != "awaiting_file")):
+            detail = check.detail if check is not None else "相应语言的本机沙箱未启用，逐行验收无法运行。"
+            return {"status": "error", "detail": detail, "python_check": check}
         root = settings.local_source_workspace
         workspace = source_directory(root.parent.resolve(), root.name)
         target = save_dated_source(workspace, filename, code,
@@ -276,13 +316,8 @@ def open_generated_source(settings: Settings, turn: dict,
         logger.warning("本机源码写入失败", exc_info=True)
         return {"status": "error", "detail": "源码写入失败，请检查 workspace 写入权限。"}
 
-    language = "python" if extension == ".py" else "c" if extension == ".c" else "cpp"
-    check = None
-    if extension == ".py" and verify_python:
-        check = verify_python(code)
-    elif extension in {".c", ".cpp", ".cc", ".cxx"} and verify_c:
-        # C/C++ 在 Wasm 编译器中编译，再在独立的 WASI 沙箱运行；结果仍放在 python_check 字段里兼容旧前端。
-        check = verify_c(code, language)
+    if not require_row_acceptance:
+        check = verify()
     if check and check.repaired_code:
         try:
             target = save_dated_source(workspace, filename, check.repaired_code)
@@ -292,7 +327,7 @@ def open_generated_source(settings: Settings, turn: dict,
             check = check.model_copy(update={"detail": "修复版在沙箱试跑成功，但写入失败。当前打开的是原始源码。"})
     result = {"path": str(target), "ide": ide, "python_check": check}
     if check is not None:
-        run_id = remember_source(code, target, language, requires_file or check.status == 'awaiting_file', output_name)
+        run_id = remember_source(code, target, language, requires_file or check.status == 'awaiting_file', output_name, row_check)
         result["sandbox_run_id"] = run_id
         if language == "python":
             result["python_run_id"] = run_id

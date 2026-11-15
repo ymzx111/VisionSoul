@@ -279,6 +279,81 @@ if os.path.isfile('sample.txt'):
             self.assertIsNone(failure["output_path"])
             self.assertEqual(len(list(output.parent.parent.iterdir())), 1)
 
+    def test_csv_delivery_checks_bad_row_and_later_record_before_saving_source(self):
+        if not self.settings.c_sandbox_compiler.is_file():
+            self.skipTest("Wasm compiler assets are optional")
+        workspace = Path(self.temp.name) / "workspace"
+        self.settings.local_source_workspace = workspace
+        app.dependency_overrides[get_settings] = lambda: self.settings
+        app.dependency_overrides[get_chat_service] = lambda: self.service
+        self.addCleanup(app.dependency_overrides.clear)
+        source = r'''#include <stdio.h>
+#include <stdlib.h>
+int main(void) {
+    FILE *f = fopen(getenv("VISIONSOUL_DATA_FILE"), "r");
+    if (!f) return 1;
+    char line[128], name[20];
+    int n, total = 0;
+    if (!fgets(line, sizeof line, f) || sscanf(line, "%d", &n) != 1) { fclose(f); return 1; }
+    for (int i = 1; i <= n && fgets(line, sizeof line, f); ++i) {
+        int value;
+        if (sscanf(line, "%19[^,],%d", name, &value) != 2) {
+            printf("警告：第 %d 行数据非法，已跳过\n", i);
+            continue;
+        }
+        total += value;
+    }
+    fclose(f);
+    printf("总数：%d\n", total);
+    return 0;
+}
+'''
+        schema = {"delimiter": ",", "field_count": 2, "header": "count", "bad_row": 2,
+                  "warning": "警告：第 2 行数据非法，已跳过", "after_bad": "总数：10"}
+        sample = {"sample_file": {"filename": "scores.txt", "content": "3\nA,4\nbad\nB,6\n"},
+                  "expected": "警告：第 2 行数据非法，已跳过\n总数：10\n", "row_check": schema}
+        fence = chr(96) * 3
+        body = {"message": "编写 C 程序，从成绩文件逐行读取并跳过坏行。", "space": "work", "open_in_ide": True}
+
+        async def local_app(scope, receive, send):
+            await app({**scope, "client": ("127.0.0.1", 1234)}, receive, send)
+
+        base = "http://127.0.0.1:8765"
+        with (TestClient(local_app, base_url=base, headers={"Origin": base}) as client,
+              patch("app.services.local_ide.launch_ide"),
+              patch("app.services.local_ide.show_sandbox_result", return_value=True)):
+            for index, (code, case, expected_status) in enumerate((
+                (source, {**sample, "row_check": {**schema, "delimiter": "space"}}, "failed"),
+                (source.replace("continue;", "break;"), sample, "mismatch"),
+                (source, sample, "awaiting_file"),
+            ), 1):
+                reply = (f"[需要数据文件]\n[逐行验收]\n[文件名: main.c]\n{fence}c\n{code}{fence}\n"
+                         f"{fence}visionsoul-cases\n{json.dumps(case, ensure_ascii=False)}\n{fence}")
+                with patch.object(self.service.client, "complete", return_value=ModelReply(answer=reply, model="test")):
+                    response = client.post("/api/chat/messages", json={**body, "request_id": str(index) * 32})
+                self.assertEqual(response.status_code, 200, response.text)
+                delivery = response.json()["local_source"]
+                self.assertIsNotNone(delivery, response.text)
+                self.assertIsNotNone(delivery["python_check"], delivery)
+                self.assertEqual(delivery["python_check"]["status"], expected_status, delivery)
+                if expected_status != "awaiting_file":
+                    self.assertEqual(delivery["status"], "error")
+                    self.assertIsNone(delivery["path"])
+                    self.assertFalse(list(workspace.glob("C/*.c")))
+
+            self.assertIn("后续合法记录", delivery["python_check"]["detail"])
+            self.assertTrue(Path(delivery["path"]).is_file())
+            rerun = {"run_id": delivery["sandbox_run_id"], "open_result_window": False}
+            wrong = client.post("/api/chat/sandbox-runs", json={**rerun, "approved_file": {
+                "filename": "another.txt", "content": "2\nA 4\nB 6\n",
+            }}).json()
+            self.assertEqual((wrong["status"], wrong["attempts"]), ("file_unused", 0))
+            self.assertIn("2 列", wrong["detail"])
+            verified = client.post("/api/chat/sandbox-runs", json={**rerun, "approved_file": {
+                "filename": "real.txt", "content": "3\nA,4\nbad\nB,9\n",
+            }, "expected": "警告：第 2 行数据非法，已跳过\n总数：13\n"}).json()
+            self.assertEqual((verified["status"], verified["data_file"]), ("passed", "real.txt"), verified)
+
     def test_c_and_cpp_desktop_delivery_and_local_rerun(self):
         if not self.settings.c_sandbox_compiler.is_file():
             self.skipTest("Wasm compiler assets are optional")

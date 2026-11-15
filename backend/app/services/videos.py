@@ -407,14 +407,14 @@ class VideoService:
                         "编程任务需要实际交付。若现有题面足够，在 reply 中写入文件名声明和一份完整可运行的源码。"
                         "省略任务复述和交付承诺。缺少会改变结果的关键条件时，只问对应缺项。"
                         "若程序需要输入，附带至少一组非空的 visionsoul-cases 自测样例。")
-                elif self.auto_sample_retry and missing_input_sample(content.reply):
+                elif self.auto_sample_retry and missing_input_sample(content.reply, question):
                     first_content = content
                     try:
                         content = retry_reply(INPUT_SAMPLE_RETRY)
                     except (DeepSeekError, ValueError):
                         content = first_content
                     else:
-                        if not has_source_and_sample(content.reply) and not visual_review_request(content.reply, question)[0]:
+                        if not has_source_and_sample(content.reply, question) and not visual_review_request(content.reply, question)[0]:
                             content = first_content
                 if retried:
                     review_pending, proposed_range = visual_review_request(content.reply, question)
