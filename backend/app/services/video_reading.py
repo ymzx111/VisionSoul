@@ -14,12 +14,16 @@ READING_TASK = """本轮是题目/屏幕文字阅读。先核对画面中的题�
 
 VISUAL_REVIEW_TASK = """编程题如果缺的是画面中看不清、跳过或遮挡的关键题干、规则、输入输出、样例或代码骨架，先在 reply 的独立一行输出 [需看清画面: 7–11 秒]（用随图时间替换，区间最长 5 秒）。能确认大概位置也给区间；完全无法定位时用 [需看清画面]，并用一句话写明没读到的关键内容。此时先不生成源码或向用户追问，服务端会自动回看。若字已经读清，只是题意有两种会改变结果的解释，使用 [需确认题意] 提问。用户后续才提供的真实数据及无关排版不触发回看。"""
 VISUAL_REREAD_TASK = """这是同一段视频的自动高清复核。结合概览和本轮高清图，重点核对阻塞解题的题干、规则、输入输出和代码骨架。已足够解题时，本轮直接交付完整源码及可验收样例。仍读不清会改变解法或结果的关键条件时，在 reply 的独立一行写 [需确认题意]，用一个具体问题请用户补充，仅问仍缺的关键项，不交付源码。"""
+INLINE_DATA_TASK = """把题面中表格、清单等作为程序的内置数据时，先跨帧读齐各行，同一行的标识、数值、单位和标志逐列配对。看到表标题不等于读清数据。定位未读到的关键行列所在时段优先复核；数据足够就写入源码并计算。参考输出用于核对，不替代输入，不硬编码结果。未规定的输出排版依可读规则处理。用户指出数据已在画面里时，按原图重新核对，不依赖旧摘要。只处理用户所指的题，已确认不相关的后续画面直接略过。"""
 
 _REQUIREMENT_REFERENCE = re.compile(r"第\s*[0-9一二三四五六七八九十]+\s*(?:项|条|点)|(?:要求|条件)\s*[0-9一二三四五六七八九十]+")
 READ_AGAIN = re.compile(r"重新|再看|再读|仔细|看不清|读不清|模糊")
 _VISUAL_REVIEW_MARKER = re.compile(r"^\s*\[需看清画面(?:\s*[:：]\s*([^\]\r\n]+))?\]\s*$", re.MULTILINE)
-_UNREADABLE = re.compile(r"看不清|读不清|无法(?:看清|辨认|读全)|辨认不出|未能读全|没有拍全|被遮挡|未完整露出|没有完整露出|画面.{0,12}模糊|字迹模糊")
-_TASK_TEXT = re.compile(r"题干|题面|要求|规则|代码|骨架|样例|输入|输出|数据格式|字段|统计|条件|流程图")
+_UNREADABLE = re.compile(r"看不清|读不清|无法(?:看清|辨认|读全)|辨认不出|未能读全|没有拍全|被遮挡|未完整露出|没有完整露出|画面.{0,12}模糊|字迹模糊|(?:未|没(?:有)?)完整显示|尚未显示")
+_RECAPTURE = re.compile(r"请(?:你|先|再)?\s*(?:补拍|重拍|拍一下|重新拍摄|补(?:一张|个)(?:清晰)?截图)")
+_TASK_TEXT = re.compile(r"题目|题干|题面|要求|规则|代码|骨架|样例|输入|输出|数据|字段|统计|条件|流程图|表格|边表|权重|运费")
+_VISUAL_SOURCE = re.compile(r"视频|画面|截图|原片|表格|题面")
+_ALREADY_VISIBLE = re.compile(r"已(?:经)?(?:显示|展示|列出|写出|给出|拍到|有|是完整)|(?:里|上|中)\s*(?:有|显示|写着|列着|写了|给了)")
 
 
 def visual_review_request(reply: str, question: str) -> tuple[bool, tuple[int, int] | None]:
@@ -30,7 +34,8 @@ def visual_review_request(reply: str, question: str) -> tuple[bool, tuple[int, i
         return True, interval if valid_focus_range(interval) else None
     # 兼容模型漏写标记的情况，同时避免把明确可解的题和无关模糊细节拦住。
     pending = "[需确认题意]" in prose or "[文件名" not in prose
-    return bool(pending and _UNREADABLE.search(prose) and _TASK_TEXT.search(prose + question)), None
+    missing_picture = _UNREADABLE.search(prose) or _RECAPTURE.search(prose)
+    return bool(pending and missing_picture and _TASK_TEXT.search(prose + question)), None
 
 
 def review_interval(interval, observations, frames, duration_seconds):
@@ -39,7 +44,9 @@ def review_interval(interval, observations, frames, duration_seconds):
         return interval[0], min(interval[1], end_limit)
     times = {frame.index: frame.time_seconds for frame in frames}
     for item in reversed(observations):
-        if item.uncertain and _TASK_TEXT.search(item.description) and item.frame_index in times:
+        # 模糊的参考样例未必含解题所需的数据，别把整次复核锁在样例所在片段。
+        if (item.uncertain and _TASK_TEXT.search(item.description) and item.frame_index in times
+                and not re.search(r"样例|示例|参考结果|排版", item.description)):
             anchor = round(times[item.frame_index] * 1000)
             start = max(0, min(anchor - 2000, end_limit - 4000))
             return start, min(start + 4000, end_limit)
@@ -77,8 +84,18 @@ def valid_focus_range(interval) -> bool:
     return 0 <= start < end <= 30000 and end - start <= MAX_FOCUS_DURATION_MS
 
 
-def needs_text_refresh(message: str, context: dict | None) -> bool:
+def points_to_visible_task(message: str) -> bool:
+    if not _TASK_TEXT.search(message):
+        return False
+    if _VISUAL_SOURCE.search(message):
+        return bool(_ALREADY_VISIBLE.search(message) or READ_AGAIN.search(message))
+    return bool(_ALREADY_VISIBLE.search(message) and re.search(r"完整(?:的)?题目|题目(?:已经)?完整", message))
+
+
+def needs_text_refresh(message: str, context: dict | None, *, work_video: bool = False) -> bool:
     if context and parse_focus_range(message) is not None:
+        return True
+    if context and work_video and points_to_visible_task(message):
         return True
     if not context or not wants_text_detail(message):
         return False

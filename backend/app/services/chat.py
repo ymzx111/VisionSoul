@@ -176,7 +176,7 @@ class ChatService:
                         prior = context_messages(history,self.settings,message,len(memory_text),persona_prompt)
                         video_context, result = videos.start_conversation(attached_video,message,prior[1:],memory_text=memory_text)
                         video_context["opening_message"] = display_message
-                    elif attached_video and needs_text_refresh(message, video_context):
+                    elif attached_video and needs_text_refresh(message, video_context, work_video=source_delivery):
                         prior = context_messages(history, self.settings, message, len(memory_text), persona_prompt)
                         opening = video_context.get("opening_message", message)
                         video_context, result = videos.read_text(attached_video, message, prior[1:], memory_text)

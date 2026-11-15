@@ -35,8 +35,8 @@ from app.services.local_ide import (
     missing_input_sample, needs_task_clarification,
 )
 from app.services.video_reading import (
-    DetailSelection, FrameAdjustment, READ_AGAIN, READING_TASK, VISUAL_REVIEW_TASK, VISUAL_REREAD_TASK,
-    parse_focus_range, review_interval, valid_focus_range, visual_clarification,
+    DetailSelection, FrameAdjustment, INLINE_DATA_TASK, READ_AGAIN, READING_TASK, VISUAL_REVIEW_TASK, VISUAL_REREAD_TASK,
+    parse_focus_range, points_to_visible_task, review_interval, valid_focus_range, visual_clarification,
     visual_review_request, wants_text_detail,
 )
 from app.services.video_result import decode_video_result, result_failure, sanitize_video_result
@@ -287,7 +287,8 @@ class VideoService:
             question = " ".join(segment.text + (" " + segment.retry.text if segment.retry else "")
                                 for segment in speech.segments)
         delivery = self.source_delivery and not inspect and not debug_code
-        reading = reread or (not inspect and not debug_code and wants_text_detail(question))
+        visible_task = delivery and points_to_visible_task(caption)
+        reading = reread or visible_task or (not inspect and not debug_code and wants_text_detail(question))
         interval = focus_override if reread else parse_focus_range(caption)
         profile = "text" if reading or debug_code or interval else "general"
         if interval:
@@ -299,7 +300,7 @@ class VideoService:
                 logger.info("局部高清抽帧不可用，改用全片高清候选 error=%s", type(exc).__name__)
                 interval = None
         if not interval:
-            use_detail = inspect or debug_code or reread or (reading and (not delivery or READ_AGAIN.search(caption)))
+            use_detail = inspect or debug_code or reread or visible_task or (reading and (not delivery or READ_AGAIN.search(caption)))
             detailed = self._detail_frames(info, directory, profile=profile) if use_detail else {}
             selection = DetailSelection(profile=profile, frame_indices=sorted(detailed),
                 source_indices=sorted(index for index, path in detailed.items() if path == detail_path(directory, index)))
@@ -344,7 +345,7 @@ class VideoService:
         if interval:
             prompt += f"\n本轮优先分析 {interval[0] / 1000:g}–{interval[1] / 1000:g} 秒。引用重点画面时使用随图提供的编号和实际时间，无法辨认的字符请明确标注。"
         if delivery:
-            prompt += "\n" + CODE_DELIVERY_TASK
+            prompt += "\n" + CODE_DELIVERY_TASK + "\n" + INLINE_DATA_TASK
             prompt += "\n" + (VISUAL_REREAD_TASK if reread else VISUAL_REVIEW_TASK)
         if caption:
             parts.append({"type": "text", "text": caption})

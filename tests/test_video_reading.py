@@ -127,12 +127,16 @@ class ReadingChatTests(unittest.TestCase):
             chat_database_path=root/"chat.sqlite3", role_database_path=root/"roles.sqlite3", video_storage_dir=root/"videos")
         self.calls = []
         self.long_reply = False
+        self.overview_reply = None
         self.forge_selection = False
         def handler(request):
             body = json.loads(request.content)
             self.calls.append(body)
             value = result_payload()
-            if self.long_reply:
+            if self.overview_reply and not any(part["type"] == "image_url" and part["image_url"]["detail"] == "high"
+                    for part in body["messages"][-1]["content"] if isinstance(part, dict)):
+                value["reply"] = self.overview_reply
+            elif self.long_reply:
                 code = "int main(void) {\n" + "    /* 保留完整题解。 */\n" * 16 + "    return 0;\n}\n"
                 value["reply"] = f"[文件名: main.c]\n```c\n{code}```"
             else:
@@ -205,6 +209,30 @@ class ReadingChatTests(unittest.TestCase):
         self.send("刚才出现了什么？", first["conversation_id"])
         self.assertEqual(self.pictures(), [])
         self.assertEqual(len(self.calls), 2)
+
+    def test_video_request_to_film_more_triggers_review_before_asking(self):
+        self.overview_reply = ("图中可见边表和规则，但样例下方说明尚未显示，无法确定最终输出格式。"
+                               "请拍一下题面下半部分。")
+        self.long_reply = True
+        result = self.send("分析这段视频")
+        self.assertEqual(len(self.calls), 2)
+        self.assertIn("[文件名: main.c]", result["assistant_message"]["content"])
+        self.assertTrue(result["video_context"]["detail_selection"]["frame_indices"])
+        self.assertIn("同一行的标识、数值、单位和标志逐列配对", self.calls[1]["messages"][0]["content"])
+
+    def test_user_pointing_to_visible_weights_resends_images_in_existing_topic(self):
+        first = self.send("分析这段视频")
+        self.assertFalse(first["video_context"]["detail_selection"]["frame_indices"])
+        self.long_reply = True
+        for message in ("下面不属于这道题目，已经是完整题目了", "权重值在视频中表格已经显示了",
+                        "表格里显示比如A-B 4这类的，你是看不清楚内容吗"):
+            with self.subTest(message=message):
+                before = len(self.calls)
+                result = self.send(message, first["conversation_id"])
+                self.assertEqual(len(self.calls), before + 1)
+                self.assertTrue(any(part["image_url"]["detail"] == "high" for part in self.pictures()))
+                self.assertIn(message, self.calls[-1]["messages"][-1]["content"][-1]["text"])
+                self.assertEqual(result["video_context"]["opening_message"], "分析这段视频")
 
     def test_forged_model_selection_is_overwritten_by_actual_sent_frames(self):
         self.forge_selection = True
