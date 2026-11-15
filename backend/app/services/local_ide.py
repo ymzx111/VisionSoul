@@ -24,32 +24,14 @@ from app.services.source_files import (
 
 logger = logging.getLogger(__name__)
 REQUIRES_DATA_FILE = re.compile(r"^\s*\[需要数据文件\]\s*$", re.MULTILINE)
-TEXT_FILE_MENTION = re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]+\.txt(?![A-Za-z0-9_-])", re.IGNORECASE)
+CLARIFICATION_REQUIRED = re.compile(r"^[ \t]*\[需确认题意\][ \t]*$", re.MULTILINE)
 
 
-def reusable_file_task(clarification: str, prior_replies: list[str]) -> str | None:
-    """Reuse Python code only for an already-seen pair of whitespace-delimited TXT files."""
-    if FENCE_BLOCK.search(clarification) or "空格分隔" not in clarification:
-        return None
-    if not re.search(r"请(?:先)?确认[^。\n]*(?:字段|记录|分隔)", clarification):
-        return None
-    filenames = {name.casefold() for name in TEXT_FILE_MENTION.findall(clarification)}
-    if len(filenames) != 2:
-        return None
-    for reply in prior_replies:
-        try:
-            filename, code = parse_generated_code(reply)
-        except ValueError:
-            continue
-        if (Path(filename).suffix != ".py" or "VISIONSOUL_DATA_FILE" not in code
-                or not re.search(r"\.split\(\s*\)", code)
-                or not filenames.issubset({name.casefold() for name in TEXT_FILE_MENTION.findall(code)})):
-            continue
-        return (
-            "已沿用这段视频先前交付的空白分隔格式。请选择并授权本轮数据文件。\n\n"
-            f"[需要数据文件]\n[文件名: {filename}]\n```python\n{code}```\n"
-        )
-    return None
+def needs_task_clarification(reply: str) -> bool:
+    prose = FENCE_BLOCK.sub("", reply.replace("\r\n", "\n"))
+    return CLARIFICATION_REQUIRED.search(prose) is not None
+
+
 CODE_DELIVERY_TASK = (Path(__file__).resolve().parents[1] / "prompts" / "code_delivery.md").read_text(encoding="utf-8").strip()
 
 
@@ -176,7 +158,8 @@ def incomplete_code_reply(reply: str, caption: str = "") -> bool:
     if re.search(r"(?:只|仅)(?:需|要)?(?:讲解|分析|概括)|(?:不要|不用|无需|不需要)(?:生成|提供|编写|写)?(?:代码|源码|程序)", caption):
         return False
     prose = FENCE_BLOCK.sub("", reply)
-    if re.search(r"请(?:你|先)?(?:补充|确认|提供|重新拍摄)|无法(?:确定|辨认)|题面.{0,8}(?:缺少|看不清)|[？?]", prose):
+    if needs_task_clarification(reply) or re.search(
+            r"请(?:你|先)?(?:补充|确认|提供|重新拍摄)|无法(?:确定|辨认)|题面.{0,8}(?:缺少|看不清)|[？?]", prose):
         return False
     committed = (FILE_DECLARATION.search(reply)
                  or re.search(r"(?:以下|下面|接下来|现)[^。\n]{0,16}(?:源码|完整代码|完整程序)"
@@ -209,6 +192,8 @@ def reads_standard_input(code: str, suffix: str) -> bool:
 
 
 def missing_input_sample(reply: str) -> bool:
+    if needs_task_clarification(reply):
+        return False
     source_reply, test = split_model_cases(reply)
     try:
         filename, code = parse_generated_code_or_infer(source_reply)
@@ -228,7 +213,7 @@ INPUT_SAMPLE_RETRY = (
 
 def has_source_and_sample(reply: str) -> bool:
     source_reply, test = split_model_cases(reply)
-    if not (test.approved_file or test.cases) or missing_input_sample(reply):
+    if needs_task_clarification(reply) or not (test.approved_file or test.cases) or missing_input_sample(reply):
         return False
     try:
         parse_generated_code_or_infer(source_reply)
@@ -243,6 +228,8 @@ def open_generated_source(settings: Settings, turn: dict,
                           origin: str | None = None, requires_file: bool = False,
                           output_name: str | None = None) -> dict | None:
     reply = turn["assistant_message"]["content"]
+    if needs_task_clarification(reply):
+        return None
     caption = (turn.get("user_message") or {}).get("content", "")
     requested = bool(CODE_REQUEST.search(caption) or incomplete_code_reply(reply, caption))
     declared = bool(FILE_DECLARATION.search(reply))

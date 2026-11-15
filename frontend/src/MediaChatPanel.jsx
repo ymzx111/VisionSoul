@@ -197,8 +197,13 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
           const current = item.id === chat.messages.at(-1)?.id;
           const source = current ? chat.localSource : null;
           const delivered = current && Boolean(source?.path);
-          const content = !companion && item.role === 'assistant' && (workMedia || delivered) && (!source || delivered)
-            ? withoutDeliveredSource(item.content, delivered) : item.content;
+          const clarification = item.role === 'assistant'
+            && /^[ \t]*\[需确认题意\][ \t]*\r?$/m.test(item.content);
+          const content = clarification
+            ? item.content.replace(/^[ \t]*\[需确认题意\][ \t]*\r?\n?/m, '')
+              .split(/\r?\n[ \t]*(?:\[(?:语言|文件名|需要数据文件|输出文件)|`{3,})/)[0].trim()
+            : !companion && item.role === 'assistant' && (workMedia || delivered) && (!source || delivered)
+              ? withoutDeliveredSource(item.content, delivered) : item.content;
           return <article key={item.id} className={`chat-message ${item.role === 'user' ? 'from-user' : 'from-companion'}`}>
           <span className="chat-author">{item.role === 'user' ? '你' : chat.persona.name}{item.id === 'pending' ? ' · 正在发送' : ''}</span>
           {item.video_id && <span className="shared-video-chip">▷ 已分享视频</span>}

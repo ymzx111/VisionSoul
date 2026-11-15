@@ -15,7 +15,9 @@ from app.services.videos import VideoError, VideoService
 from app.services.role_store import RoleStore
 from app.services.audio_evidence import AudioTranscript, AudioLink, add_time_citations, current_context, model_context
 from app.services.video_reading import needs_text_refresh
-from app.services.local_ide import CODE_DELIVERY_TASK, INPUT_SAMPLE_RETRY, has_source_and_sample, missing_input_sample, reusable_file_task
+from app.services.local_ide import (
+    CODE_DELIVERY_TASK, INPUT_SAMPLE_RETRY, has_source_and_sample, missing_input_sample, needs_task_clarification,
+)
 from app.services.source_files import CODE_REQUEST
 
 
@@ -145,7 +147,9 @@ class ChatService:
                         roles = RoleStore(self.settings.roles_path)
                         video_prompt, persona_prompt, persona_version = load_persona(self.settings, roles)
                         memory_text = roles.memory_context(target, message, allowed_conversations=self.store.companion_ids())
-                    source_delivery = bool(effective_space == "work" and (attached or attached_video or CODE_REQUEST.search(message))
+                    followup = bool(history and history[-1]["role"] == "assistant"
+                                    and needs_task_clarification(history[-1]["content"]))
+                    source_delivery = bool(effective_space == "work" and (attached or attached_video or followup or CODE_REQUEST.search(message))
                                            and not inspect_video and not debug_code)
                     if source_delivery and sandbox_filename is not None:
                         persona_prompt += (
@@ -172,10 +176,6 @@ class ChatService:
                         prior = context_messages(history,self.settings,message,len(memory_text),persona_prompt)
                         video_context, result = videos.start_conversation(attached_video,message,prior[1:],memory_text=memory_text)
                         video_context["opening_message"] = display_message
-                        if source_delivery and not conversation and not message and result and not result.truncated:
-                            reused = reusable_file_task(result.answer, self.store.prior_video_replies(attached_video))
-                            if reused:
-                                result = result.model_copy(update={"answer": reused})
                     elif attached_video and needs_text_refresh(message, video_context):
                         prior = context_messages(history, self.settings, message, len(memory_text), persona_prompt)
                         opening = video_context.get("opening_message", message)
@@ -222,12 +222,13 @@ class ChatService:
                         if saved_audio:
                             result = result.model_copy(update={"answer": add_time_citations(result.answer, message,
                                 saved_audio, saved_links)})
-                    return self.store.finish_turn(
+                    turn = self.store.finish_turn(
                         conversation=conversation, conversation_id=target, image_id=attached,
                         message=display_message, model_reply=result.model_dump(), request_id=request_id,
                         fingerprint=fingerprint, persona_id=persona_version, video_id=attached_video, video_context=video_context,
                         space=effective_space,
                     )
+                    return {**turn, "_source_delivery": source_delivery}
         except ChatConflict as exc:
             raise DeepSeekError(str(exc), 409) from exc
         except VideoError as exc:

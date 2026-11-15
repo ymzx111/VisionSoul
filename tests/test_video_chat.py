@@ -19,7 +19,7 @@ from app.main import app
 from app.services.audio_evidence import AudioTranscript, SpeechSegment
 from app.services.chat import ChatService
 from app.services.chat_store import ChatStore
-from app.services.deepseek import DeepSeekClient, DeepSeekError
+from app.services.deepseek import DeepSeekClient, DeepSeekError, ModelReply
 from app.services.videos import VideoService
 from test_video import make_video, result_payload
 
@@ -148,7 +148,7 @@ class VideoChatTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
         self.assertFalse(pictures(self.calls[0]))
 
-    def test_same_work_video_reuses_python_file_delivery_after_format_question(self):
+    def test_same_work_video_keeps_format_question_instead_of_using_old_source(self):
         fence = chr(96) * 3
         code = (
             "import os\n"
@@ -164,9 +164,7 @@ class VideoChatTests(unittest.TestCase):
         send("1")
         question = "读取inventory.txt并写出restock_order.txt及屏幕统计。请先确认库存记录是否空格分隔。"
         self.payload["reply"] = question
-        reused = send("2")["assistant_message"]["content"]
-        self.assertIn("[需要数据文件]", reused)
-        self.assertIn(code, reused)
+        self.assertEqual(send("2")["assistant_message"]["content"], question)
         self.assertEqual(len(self.calls), 2)
         self.assertNotIn("output.write", json.dumps(self.calls[-1]["messages"], ensure_ascii=False))
 
@@ -177,6 +175,47 @@ class VideoChatTests(unittest.TestCase):
         self.assertNotEqual(other.video_id, self.video.video_id)
         self.assertEqual(send("3", other.video_id)["assistant_message"]["content"], question)
         self.assertEqual(send("4", space="companion")["assistant_message"]["content"], question)
+
+    def test_ambiguous_video_pauses_delivery_until_user_confirms_counting_rule(self):
+        self.settings.local_source_workspace = Path(self.temp.name) / "workspace"
+        question = "[需确认题意]\n“豆浆好喝，豆浆很香”应输出没有重复片段，还是豆浆出现两次？"
+        fence = chr(96) * 3
+        source = "print(input().count('豆浆'))\n"
+        # A stray code block while asking for clarification must not launch or start a retry.
+        self.payload["reply"] = f"{question}\n[文件名: main.py]\n{fence}python\n{source}{fence}"
+        app.dependency_overrides[get_chat_service] = lambda: self.chat
+        self.addCleanup(app.dependency_overrides.clear)
+
+        async def local_app(scope, receive, send):
+            await app({**scope, "client": ("127.0.0.1", 1234)}, receive, send)
+
+        base = "http://127.0.0.1:8765"
+        body = {"space": "work", "video_id": self.video.video_id, "open_in_ide": True}
+        with (TestClient(local_app, base_url=base, headers={"Origin": base}) as client,
+              patch("app.services.local_ide.launch_ide") as launch,
+              patch("app.services.local_ide.show_sandbox_result", return_value=True)):
+            initial = client.post("/api/chat/messages", json={**body, "request_id": "a" * 32, "message": ""})
+            self.assertEqual(initial.status_code, 200, initial.text)
+            waiting = initial.json()
+            self.assertIsNone(waiting["local_source"])
+            self.assertEqual(len(self.calls), 1)
+            self.assertFalse(self.settings.local_source_workspace.exists())
+            launch.assert_not_called()
+            self.assertIn("正确理解题目优先", self.calls[0]["messages"][0]["content"])
+            samples = [{"name": "区分片段和关键词", "stdin": "豆浆好喝，豆浆很香", "expected": "2"}]
+            answer = (f"[文件名: main.py]\n{fence}python\n{source}{fence}\n"
+                      f"{fence}visionsoul-cases\n{json.dumps(samples)}\n{fence}")
+            with patch.object(self.client, "complete", return_value=ModelReply(answer=answer, model="test")) as complete:
+                response = client.post("/api/chat/messages", json={
+                    **body, "request_id": "b" * 32, "conversation_id": waiting["conversation_id"],
+                    "message": "统计豆浆这个词出现了几次。",
+                })
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertIn("统计豆浆", json.dumps(complete.call_args.args[0], ensure_ascii=False))
+            delivered = response.json()["local_source"]
+            self.assertEqual(Path(delivered["path"]).read_text(encoding="utf8"), source)
+            self.assertEqual(delivered["python_check"]["case_results"][0]["status"], "passed")
+            self.assertEqual(delivered["python_check"]["status"], "awaiting_input")
 
     def test_opening_share_survives_recent_window_and_latest_correction_is_included(self):
         first = self.send()

@@ -240,7 +240,8 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
     except DeepSeekError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
 
-    if (local_delivery and turn["space"] == "work" and (turn["image_id"] or turn["video_id"] or CODE_REQUEST.search(body.message))
+    if (local_delivery and turn["space"] == "work"
+            and (turn.get("_source_delivery") or turn["image_id"] or turn["video_id"] or CODE_REQUEST.search(body.message))
             and not turn["replayed"] and not turn["truncated"]):
         manual_test = body.python_test or PythonTest()
         reply = turn["assistant_message"]["content"]
