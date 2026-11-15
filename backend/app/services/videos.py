@@ -35,7 +35,8 @@ from app.services.local_ide import (
     missing_input_sample,
 )
 from app.services.video_reading import (
-    DetailSelection, FrameAdjustment, INLINE_DATA_TASK, READ_AGAIN, READING_TASK, VISUAL_REVIEW_TASK, VISUAL_REREAD_TASK,
+    DetailSelection, FrameAdjustment, INLINE_DATA_TASK, READ_AGAIN, READING_TASK, SCREEN_RULES_TASK,
+    VISUAL_REVIEW_TASK, VISUAL_REREAD_TASK,
     parse_focus_range, points_to_visible_task, review_interval, valid_focus_range, visual_clarification,
     visual_review_request, wants_text_detail,
 )
@@ -345,7 +346,7 @@ class VideoService:
         if interval:
             prompt += f"\n本轮优先分析 {interval[0] / 1000:g}–{interval[1] / 1000:g} 秒。引用重点画面时使用随图提供的编号和实际时间，无法辨认的字符请明确标注。"
         if delivery:
-            prompt += "\n" + CODE_DELIVERY_TASK + "\n" + INLINE_DATA_TASK
+            prompt += "\n" + CODE_DELIVERY_TASK + "\n" + INLINE_DATA_TASK + "\n" + SCREEN_RULES_TASK
             prompt += "\n" + (VISUAL_REREAD_TASK if reread else VISUAL_REVIEW_TASK)
         if caption:
             parts.append({"type": "text", "text": caption})

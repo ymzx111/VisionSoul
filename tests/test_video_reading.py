@@ -128,6 +128,7 @@ class ReadingChatTests(unittest.TestCase):
         self.calls = []
         self.long_reply = False
         self.overview_reply = None
+        self.overview_observations = None
         self.forge_selection = False
         def handler(request):
             body = json.loads(request.content)
@@ -136,6 +137,8 @@ class ReadingChatTests(unittest.TestCase):
             if self.overview_reply and not any(part["type"] == "image_url" and part["image_url"]["detail"] == "high"
                     for part in body["messages"][-1]["content"] if isinstance(part, dict)):
                 value["reply"] = self.overview_reply
+                if self.overview_observations:
+                    value["observations"] = self.overview_observations
             elif self.long_reply:
                 code = "int main(void) {\n" + "    /* 保留完整题解。 */\n" * 16 + "    return 0;\n}\n"
                 value["reply"] = f"[文件名: main.c]\n```c\n{code}```"
@@ -233,6 +236,27 @@ class ReadingChatTests(unittest.TestCase):
                 self.assertTrue(any(part["image_url"]["detail"] == "high" for part in self.pictures()))
                 self.assertIn(message, self.calls[-1]["messages"][-1]["content"][-1]["text"])
                 self.assertEqual(result["video_context"]["opening_message"], "分析这段视频")
+
+    def test_scrolling_task_asks_for_screenshot_only_after_reviewing_both_sections(self):
+        rule, output = self.video.frames[1:3]
+        self.overview_reply = ("已经定位题目要求与输出格式，但关键的排序规则与禁止函数看不全。"
+                               "请补充能完整显示「题目要求—输出格式」区的高清截图。")
+        self.overview_observations = [
+            {"frame_index": rule.index, "keywords": ["题目要求"], "description": "滚动到具体要求。", "uncertain": False},
+            {"frame_index": output.index, "keywords": ["输出格式"], "description": "滚动到输出示例和限制条件。", "uncertain": False},
+        ]
+        self.long_reply = True
+        result = self.send("分析这段视频")
+        self.assertEqual(len(self.calls), 2)
+        selection = result["video_context"]["detail_selection"]
+        start, end = selection["focus_range_ms"]
+        self.assertLessEqual(start, round(rule.time_seconds * 1000))
+        self.assertGreaterEqual(end, round(output.time_seconds * 1000))
+        self.assertLessEqual(end - start, 5000)
+        self.assertTrue(1 <= len(selection["focus_frames"]) <= 4)
+        self.assertIn("跨帧拼读", self.calls[-1]["messages"][0]["content"])
+        self.assertIn("排除该词", self.calls[-1]["messages"][0]["content"])
+        self.assertIn("[文件名: main.c]", result["assistant_message"]["content"])
 
     def test_forged_model_selection_is_overwritten_by_actual_sent_frames(self):
         self.forge_selection = True
