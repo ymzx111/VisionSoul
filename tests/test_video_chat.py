@@ -49,11 +49,12 @@ class VideoChatTests(unittest.TestCase):
         self.calls = []
         self.status = 200
         self.payload = result_payload()
+        self.text_answer = "记得，你说去了西湖。"
 
         def handler(request):
             payload = json.loads(request.content)
             self.calls.append(payload)
-            answer = json.dumps(self.payload, ensure_ascii=False) if payload.get("response_format") else "记得，你说去了西湖。"
+            answer = json.dumps(self.payload, ensure_ascii=False) if payload.get("response_format") else self.text_answer
             return httpx.Response(self.status, json={"model": "deepseek-flash", "choices": [
                 {"message": {"content": answer}, "finish_reason": "stop"}],
                 "usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}})
@@ -420,6 +421,40 @@ class VideoChatTests(unittest.TestCase):
         self.assertEqual([part["image_url"]["detail"] for part in pictures(self.calls[-1])][-2:], ["high", "high"])
         self.assertGreater(len(pictures(self.calls[-1])), len(photos))
         self.assertIn("response_format", self.calls[-1])
+
+    def test_work_video_rewrite_keeps_older_photo_task_and_code_after_restore(self):
+        self.settings.image_storage_dir = Path(self.temp.name) / "images"
+        self.settings.chat_context_turns = 1
+        buffer = BytesIO()
+        Image.new("RGB", (24, 16), "green").save(buffer, "PNG")
+        photo = save_image(buffer.getvalue(), self.settings).image_id
+        opening = "请分析视频，长句按原文超过二十个字符判断。"
+        first = self.chat.send(conversation_id=None, request_id="a" * 32, message=opening,
+                               image_id=None, video_id=self.video.video_id, space="work")
+        topic = first["conversation_id"]
+        caption = "补图是第八秒的统计规则，保留并列结果。"
+        self.text_answer = '[文件名: main.c]\n```c\nint main(void) { return 17; }\n```'
+        self.chat.send(conversation_id=topic, request_id="b" * 32, message=caption,
+                       image_id=None, image_ids=[photo], space="work")
+        self.text_answer = "这次仍按真实文件计算。"
+        self.chat.send(conversation_id=topic, request_id="c" * 32, message="按授权文件输出。",
+                       image_id=None, space="work")
+        restored = ChatService(self.settings, self.client)
+        options = dict(conversation_id=topic, request_id="d" * 32, message="代码有误，请重新编写 C 程序。",
+                       image_id=None, space="work")
+        result = restored.send(**options)
+        payload = self.calls[-1]
+        recovered = json.dumps(payload["messages"], ensure_ascii=False)
+        self.assertNotIn("response_format", payload)
+        self.assertEqual([part["image_url"]["detail"] for part in pictures(payload)], ["high"])
+        for expected in (opening, caption, "按授权文件输出。", "return 17;", options["message"]):
+            self.assertIn(expected, recovered)
+        self.assertEqual(result["user_message"]["image_ids"], [])
+        self.assertTrue(restored.send(**options)["replayed"])
+        self.assertEqual(len(self.calls), 4)
+        restored.send(conversation_id=None, request_id="e" * 32, message="新问题", image_id=None, space="work")
+        self.assertFalse(pictures(self.calls[-1]))
+        self.assertNotIn(caption, json.dumps(self.calls[-1], ensure_ascii=False))
 
     def test_video_missing_stdin_sample_retries_before_running_real_input(self):
         self.settings.local_source_workspace = Path(self.temp.name) / "workspace"

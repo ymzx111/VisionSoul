@@ -104,6 +104,28 @@ class ChatStore:
             ).fetchall()
             return [media_row(row) for row in reversed(rows)]
 
+    def recent_image_turns(self, conversation_id: str) -> list[dict]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT content, image_id, image_ids FROM messages WHERE conversation_id=? AND role='user' "
+                "AND (image_ids IS NOT NULL OR image_id IS NOT NULL) ORDER BY id DESC LIMIT 12",
+                (conversation_id,),
+            ).fetchall()
+            return [media_row(row) for row in rows]
+
+    def task_history(self, conversation_id: str) -> tuple[str, list[str]]:
+        with self.connection() as conn:
+            opening = conn.execute(
+                "SELECT content FROM messages WHERE conversation_id=? AND role='user' ORDER BY id LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+            replies = conn.execute(
+                "SELECT content FROM messages WHERE conversation_id=? AND role='assistant' "
+                "AND instr(content, ?) > 0 ORDER BY id DESC LIMIT 12",
+                (conversation_id, "```"),
+            ).fetchall()
+            return opening["content"] if opening else "", [row["content"] for row in replies]
+
     def recent(self, kind: str | None = None, space: str | None = None) -> list[dict]:
         filters = ["c.video_id IS NOT NULL"] if kind == "video" else ["c.video_id IS NULL"] if kind == "image" else []
         if space is not None:

@@ -5,6 +5,7 @@ const [bundle, language] = process.argv.slice(2);
 if (!['c', 'cpp'].includes(language)) throw new Error('Unsupported language');
 const name = language === 'cpp' ? 'main.cpp' : 'main.c';
 const compiler = language === 'cpp' ? 'clang++' : 'clang';
+const stackSize = 4 * 1024 * 1024;
 const maxModule = 8 * 1024 * 1024;
 const maxDiagnostics = 4096;
 const source = readFileSync(0);
@@ -20,7 +21,7 @@ const capture = bytes => {
 try {
   // Load the local assets before runClang calls the driver with its default progress logger.
   await runLLVM([compiler, '--version'], {}, { stdout: () => {}, stderr: capture, fetchProgress: () => {} });
-  const files = await runClang([compiler, '-O1', '-fno-exceptions', '-o', 'program.wasm', name], { [name]: source },
+  const files = await runClang([compiler, '-O1', '-fno-exceptions', `-Wl,-z,stack-size=${stackSize}`, '-o', 'program.wasm', name], { [name]: source },
     { stdout: capture, stderr: capture, fetchProgress: () => {} });
   const module = files?.['program.wasm'];
   if (!(module instanceof Uint8Array) || module.length > maxModule) {

@@ -350,7 +350,7 @@ class VideoService:
         if caption:
             parts.append({"type": "text", "text": caption})
         if supplemental:
-            parts.append({"type": "text", "text": "以下为本轮补充图片，用于核对原视频中的关键信息。"
+            parts.append({"type": "text", "text": "以下是同话题的补充图片，用于核对原视频中的关键信息。"
                           "observations.frame_index 只引用前面标有图号与秒数的原片画面。"})
             parts.extend(supplemental)
         if inspect or debug_code or (reading and not delivery):
@@ -506,13 +506,14 @@ class VideoService:
         finally:
             ANALYSIS_LOCK.release()
 
-    def read_text(self, video_id: str, message: str, history: list[dict], memory_text: str = ""):
+    def read_text(self, video_id: str, message: str, history: list[dict], memory_text: str = "", *,
+                  supplemental: list[dict] | None = None):
         """用户新提出读题请求时，重看同一素材。"""
         if not ANALYSIS_LOCK.acquire(blocking=False):
             raise VideoError("已有视频正在观察，请稍等后再发送。", 409)
         try:
             info = self.info(video_id)
-            answer = self._observe(info, message, history, memory_text)
+            answer = self._observe(info, message, history, memory_text, supplemental=supplemental)
             return self._snapshot(info, answer), ModelReply(answer=answer.reply, model=answer.model, usage=answer.usage)
         finally:
             ANALYSIS_LOCK.release()

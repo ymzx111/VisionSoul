@@ -17,7 +17,7 @@ MAX_MODULE = 8 * 1024 * 1024
 
 
 def execute(module_path: Path, job: Path, filename: str | None = None) -> dict:
-    from wasmtime import Config, Engine, ExitTrap, Linker, Module, Store, Trap, TrapCode, WasiConfig
+    from wasmtime import Config, Engine, ExitTrap, Linker, Module, Store, Trap, TrapCode, WasiConfig, WasmtimeError
 
     if module_path.is_symlink():
         raise ValueError("redirected module")
@@ -83,11 +83,13 @@ def execute(module_path: Path, job: Path, filename: str | None = None) -> dict:
         exports["_start"](store)
     except ExitTrap as error:
         code = error.code
-    except Trap as error:
+    except (Trap, WasmtimeError) as error:
         code = None
         if access.awaiting_input:
             pass
-        elif error.trap_code in {TrapCode.OUT_OF_FUEL, TrapCode.INTERRUPT, TrapCode.MEMORY_OUT_OF_BOUNDS}:
+        elif isinstance(error, Trap) and error.trap_code in {
+            TrapCode.OUT_OF_FUEL, TrapCode.INTERRUPT, TrapCode.MEMORY_OUT_OF_BOUNDS,
+        }:
             limit = "resource"
         else:
             limit = "trap"

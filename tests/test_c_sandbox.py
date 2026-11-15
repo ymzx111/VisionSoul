@@ -130,6 +130,29 @@ class CSandboxTests(unittest.TestCase):
                                PythonTest(approved_file={"filename": "演示使用.txt", "content": "data"}))
         self.assertEqual((result.status, result.data_file), ("file_unused", None))
 
+    def test_large_c_buffer_can_read_approved_utf8_file(self):
+        self.require_compiler()
+        code = """#include <stdio.h>
+#include <stdlib.h>
+int main(void) {
+    char line[1024 * 1024];
+    FILE *file = fopen(getenv("VISIONSOUL_DATA_FILE"), "rb");
+    if (!file) return 1;
+    char *read = fgets(line, sizeof(line), file);
+    fclose(file);
+    if (!read) return 2;
+    fputs(line, stdout);
+    return 0;
+}
+"""
+        test = PythonTest(approved_file={"filename": "选定的句子.txt", "content": "我爱学习\n"}, expected="我爱学习")
+        result = run_c_sandbox(self.settings, code, "c", test)
+        self.assertEqual((result.status, result.data_file), ("passed", "选定的句子.txt"), result)
+        oversized = run_c_sandbox(self.settings, code.replace("1024 * 1024", "5 * 1024 * 1024"), "c", test)
+        self.assertEqual((oversized.status, oversized.data_file), ("limit", None), oversized)
+        self.assertIn("尚未读到本轮所选文件", oversized.detail)
+        self.jobs_empty()
+
     def test_file_task_cannot_present_demo_output_as_user_data(self):
         self.require_compiler()
         source = '#include <stdio.h>\nint main(void){FILE *f=fopen("d.txt","r");if(f)putchar(fgetc(f));else puts("DEMO");return 0;}'

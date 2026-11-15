@@ -164,7 +164,10 @@ def _run_once(settings: Settings, code: str, language: str, stdin: str, expected
             "phase": "run"}
     file_check = check_data_file(result, approved_file, data, expected=expected)
     if result["limit"]:
-        return PythonCheck(status="limit", detail=LIMIT_DETAIL[result["limit"]], **data)
+        detail = LIMIT_DETAIL[result["limit"]]
+        if approved_file and not result.get("file_read"):
+            detail += " 程序停止前尚未读到本轮所选文件的数据。"
+        return PythonCheck(status="limit", detail=detail, **data)
     if file_check is not None:
         return file_check
     if result.get("awaiting_input"):
