@@ -91,7 +91,7 @@ def upload(file: Annotated[UploadFile, File(description="H.264/H.265 MP4，不�
 
 
 @router.post("/analyze", response_model=VideoAnswer, summary="识别主要事物并生成角色回应（可能产生 API 用量）",
-             description="首次分析合并采样画面为一次模型请求；成功后保存结果，同视频同配置直接复用，不自动重试。")
+             description="先分析每秒概览帧，关键画面不清时在相关时段每半秒补抽，选最多4张高清图复核一次；同视频同配置可直接复用已保存结果。")
 def analyze(request: AnalyzeRequest, service: Annotated[VideoService, Depends(get_video_service)]):
     try:
         return service.analyze(request.video_id)

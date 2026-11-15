@@ -250,7 +250,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
             {chat.localSource.detail}{chat.localSource.path && <> <code>{chat.localSource.path}</code></>}
           </p>)}
       {chat.truncated && <p className="chat-image-note">上一条回复达到长度上限，可以继续追问。</p>}
-      {state.kind === 'video' && <p className="chat-image-note">关键题面看不清时会自动回看，最多选 4 张高清图。也可输入「重点看 3–5 秒」指定区间。</p>}
+      {state.kind === 'video' && <p className="chat-image-note">先按每秒一帧分析，关键画面看不清时自动在相关片段每半秒补抽，挑最多 4 张高清图复核。</p>}
       {workMedia && state.kind === 'image' && <div className="python-test">
         <label htmlFor="python-test-file">选择本轮数据文件（TXT、CSV 或 JSON，最多 8 KiB）</label>
         <input id="python-test-file" ref={fileInput} type="file" accept=".txt,.csv,.json" disabled={busy}

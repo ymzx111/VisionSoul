@@ -229,5 +229,5 @@ class DetailExtractionTests(unittest.TestCase):
         for path in self.directory.glob("detail-*.jpg"):
             path.unlink()
         self.service.inspect(self.video.video_id, "细看", [])
-        self.assertIn("只有旧版概览图", self.calls[0]["messages"][0]["content"])
+        self.assertIn("本轮只有概览图", self.calls[0]["messages"][0]["content"])
         self.assertFalse(any(part["image_url"]["detail"] == "high" for part in self.calls[0]["messages"][-1]["content"] if part["type"] == "image_url"))

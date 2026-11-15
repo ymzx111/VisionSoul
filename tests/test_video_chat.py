@@ -125,7 +125,7 @@ class VideoChatTests(unittest.TestCase):
         self.assertIn("本轮是题目/屏幕文字阅读", prompt)
         parts = self.calls[0]["messages"][-1]["content"]
         self.assertTrue(any("C 远离" in part.get("text", "") for part in parts))
-        self.assertGreater(sum(part["image_url"]["detail"] == "high" for part in pictures(self.calls[0])), 0)
+        self.assertTrue(all(part["image_url"]["detail"] == "low" for part in pictures(self.calls[0])))
         self.assertEqual(first["assistant_message"]["content"], self.payload["reply"])
 
         self.videos.isolated = True
@@ -143,6 +143,34 @@ class VideoChatTests(unittest.TestCase):
         sent = json.dumps(self.calls[-1], ensure_ascii=False)
         self.assertNotIn("地名秘密", sent)
         self.assertNotIn(first["assistant_message"]["content"], sent)
+
+    def test_general_video_chat_reuses_facts_from_automatically_selected_half_second_frame(self):
+        self.payload["reply"] = "[需看清画面: 0.5–2.5 秒]\n远处站牌的字会影响地点判断。"
+        complete = self.client.complete
+
+        def results(messages, **options):
+            parts = messages[-1]["content"]
+            if isinstance(parts, list):
+                labels = [parts[index - 1]["text"] for index, part in enumerate(parts)
+                          if part.get("image_url", {}).get("detail") == "high"]
+                if labels:
+                    frame_index = int(labels[0].split("@")[0])
+                    self.assertGreaterEqual(frame_index, 61)
+                    self.payload = {"observations": [{"frame_index": frame_index, "keywords": ["站牌"],
+                                                       "description": "高清图可辨认站牌。", "uncertain": False}],
+                                    "summary": "路旁有站牌。", "reply": "高清图已读出站牌。"}
+            return complete(messages, **options)
+
+        with patch.object(self.client, "complete", side_effect=results):
+            first = self.send("看看这块站牌。")
+            second = self.send("再说说站牌。", "2")
+        self.assertEqual(len(self.calls), 3)
+        self.assertTrue(all(part["image_url"]["detail"] == "low" for part in pictures(self.calls[0])))
+        self.assertTrue(1 <= sum(part["image_url"]["detail"] == "high" for part in pictures(self.calls[1])) <= 4)
+        self.assertFalse(pictures(self.calls[2]))
+        self.assertEqual(second["video_context"]["detail_selection"], first["video_context"]["detail_selection"])
+        self.assertEqual(second["video_context"]["observations"], first["video_context"]["observations"])
+        self.assertNotIn(first["assistant_message"]["content"], json.dumps(self.calls[-1], ensure_ascii=False))
 
     def test_existing_standalone_analysis_is_reused_without_resending_images(self):
         self.videos.analyze(self.video.video_id)
@@ -421,6 +449,28 @@ class VideoChatTests(unittest.TestCase):
         self.assertEqual([part["image_url"]["detail"] for part in pictures(self.calls[-1])][-2:], ["high", "high"])
         self.assertGreater(len(pictures(self.calls[-1])), len(photos))
         self.assertIn("response_format", self.calls[-1])
+
+    def test_video_json_repair_leaves_room_for_a_visual_review(self):
+        replies = iter((
+            {"reply": "本次输出遗漏字段。"},
+            {**result_payload(), "reply": "[需看清画面: 0.5–2.5 秒]\n天边的目标看不清。"},
+            {**result_payload(), "reply": "已用高清观察核对目标。"},
+        ))
+        complete = self.client.complete
+
+        def results(*args, **options):
+            self.payload = next(replies)
+            return complete(*args, **options)
+
+        with patch.object(self.client, "complete", side_effect=results):
+            result = self.chat.send(conversation_id=None, request_id="a" * 32, message="分析这段视频",
+                                    image_id=None, video_id=self.video.video_id, space="work")
+        self.assertEqual(len(self.calls), 3)
+        counts = [sum(part["image_url"]["detail"] == "high" for part in pictures(call)) for call in self.calls]
+        self.assertEqual(counts[:2], [0, 0])
+        self.assertTrue(1 <= counts[-1] <= 4)
+        self.assertEqual(result["assistant_message"]["content"], "已用高清观察核对目标。")
+        self.assertEqual(result["usage"]["total_tokens"], 360)
 
     def test_work_video_rewrite_keeps_older_photo_task_and_code_after_restore(self):
         self.settings.image_storage_dir = Path(self.temp.name) / "images"

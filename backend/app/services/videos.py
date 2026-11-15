@@ -35,7 +35,7 @@ from app.services.local_ide import (
     missing_input_sample,
 )
 from app.services.video_reading import (
-    DetailSelection, FrameAdjustment, INLINE_DATA_TASK, READ_AGAIN, READING_TASK, SCREEN_RULES_TASK,
+    AUTO_REVIEW_VERSION, DetailSelection, FrameAdjustment, INLINE_DATA_TASK, READ_AGAIN, READING_TASK, SCREEN_RULES_TASK,
     VISUAL_REVIEW_TASK, VISUAL_REREAD_TASK,
     parse_focus_range, points_to_visible_task, review_interval, valid_focus_range, visual_clarification,
     visual_review_request, wants_text_detail,
@@ -279,7 +279,7 @@ class VideoService:
                                     focus_range_ms=interval, focus_frames=focus_frames)
         return selection, paths
 
-    def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None, memory_text: str = "", inspect: bool = False, debug_code: bool = False, *, auto_task: bool = False, reread: bool = False, focus_override: tuple[int, int] | None = None, supplemental: list[dict] | None = None) -> VideoAnswer:
+    def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None, memory_text: str = "", inspect: bool = False, debug_code: bool = False, *, auto_task: bool = False, reread: bool = False, reread_text: bool = False, focus_override: tuple[int, int] | None = None, supplemental: list[dict] | None = None) -> VideoAnswer:
         directory = video_directory(info.video_id, self.settings)
         parts = [{"type": "text", "text": "图号@原视频秒，区间是重复图的采样点，不代表连续动作。"}]
         question = caption
@@ -289,9 +289,10 @@ class VideoService:
                                 for segment in speech.segments)
         delivery = self.source_delivery and not inspect and not debug_code
         visible_task = delivery and points_to_visible_task(caption)
-        reading = reread or visible_task or (not inspect and not debug_code and wants_text_detail(question))
+        reading = reread_text or visible_task or (not inspect and not debug_code and wants_text_detail(question))
         interval = focus_override if reread else parse_focus_range(caption)
-        profile = "text" if reading or debug_code or interval else "general"
+        profile = "text" if reading or debug_code or (interval and not reread) else "general"
+        use_detail = inspect or debug_code or reread or visible_task or (reading and READ_AGAIN.search(caption))
         if interval:
             try:
                 selection, detailed = self._focus_details(info, directory, interval, profile)
@@ -301,7 +302,6 @@ class VideoService:
                 logger.info("局部高清抽帧不可用，改用全片高清候选 error=%s", type(exc).__name__)
                 interval = None
         if not interval:
-            use_detail = inspect or debug_code or reread or visible_task or (reading and (not delivery or READ_AGAIN.search(caption)))
             detailed = self._detail_frames(info, directory, profile=profile) if use_detail else {}
             selection = DetailSelection(profile=profile, frame_indices=sorted(detailed),
                 source_indices=sorted(index for index, path in detailed.items() if path == detail_path(directory, index)))
@@ -347,16 +347,15 @@ class VideoService:
             prompt += f"\n本轮优先分析 {interval[0] / 1000:g}–{interval[1] / 1000:g} 秒。引用重点画面时使用随图提供的编号和实际时间，无法辨认的字符请明确标注。"
         if delivery:
             prompt += "\n" + CODE_DELIVERY_TASK + "\n" + INLINE_DATA_TASK + "\n" + SCREEN_RULES_TASK
-            prompt += "\n" + (VISUAL_REREAD_TASK if reread else VISUAL_REVIEW_TASK)
+        prompt += "\n" + (VISUAL_REREAD_TASK if reread else VISUAL_REVIEW_TASK)
         if caption:
             parts.append({"type": "text", "text": caption})
         if supplemental:
             parts.append({"type": "text", "text": "以下是同话题的补充图片，用于核对原视频中的关键信息。"
                           "observations.frame_index 只引用前面标有图号与秒数的原片画面。"})
             parts.extend(supplemental)
-        if inspect or debug_code or (reading and not delivery):
-            if not detailed:
-                prompt += "\n此视频只有旧版概览图，没有额外细节图；不要声称看到了叶脉、小字等缺失细节。必要时提示重新上传原视频。"
+        if use_detail and not detailed:
+            prompt += "\n本轮只有概览图，请依据可见内容作答。"
         messages = [{"role": "system", "content": prompt},
             *([{"role":"user","content":memory_text}] if memory_text else []), *(history or []),
             {"role": "user", "content": parts}]
@@ -401,39 +400,39 @@ class VideoService:
                 reminder = ("上次 JSON 根字段不符合要求。按原始任务与画面重新生成；必须包含 observations、summary 和 reply，"
                             "仅使用规定字段。看不清可明确说明，不补造画面或对白依据。")
                 content = retry_reply(reminder)
-            review_pending, proposed_range = visual_review_request(content.reply, question) if delivery else (False, None)
-            if review_pending:
-                focus = review_interval(proposed_range, content.observations, frames, info.duration_seconds)
-                if not reread and not retried and (not detailed or (focus and focus != interval)):
+            review_pending, proposed_range = visual_review_request(content.reply, question)
+            if delivery and not reread and not retried and not review_pending:
+                if incomplete_code_reply(content.reply, caption):
+                    content = retry_reply(
+                        "编程任务需要实际交付。若现有题面足够，在 reply 中写入文件名声明和一份完整可运行的源码。"
+                        "省略任务复述和交付承诺。缺少会改变结果的关键条件时，只问对应缺项。"
+                        "若程序需要输入，附带至少一组非空的 visionsoul-cases 自测样例。")
+                elif self.auto_sample_retry and missing_input_sample(content.reply):
+                    first_content = content
                     try:
-                        reviewed = self._observe(info, caption, history, memory_text, auto_task=auto_task,
-                                                 reread=True, focus_override=focus, supplemental=supplemental)
+                        content = retry_reply(INPUT_SAMPLE_RETRY)
+                    except (DeepSeekError, ValueError):
+                        content = first_content
+                    else:
+                        if not has_source_and_sample(content.reply) and not visual_review_request(content.reply, question)[0]:
+                            content = first_content
+                if retried:
+                    review_pending, proposed_range = visual_review_request(content.reply, question)
+            if review_pending:
+                focus = review_interval(proposed_range, content.observations, frames, info.duration_seconds,
+                                        clue=content.reply + question)
+                # 交付或结构重试仍查看了同一组图片；视觉复核则使用新证据。
+                if not reread and (not detailed or (focus and focus != interval)):
+                    try:
+                        reviewed = self._observe(info, caption, history, memory_text, inspect=inspect,
+                                                 debug_code=debug_code, auto_task=auto_task, reread=True,
+                                                 reread_text=reading or wants_text_detail(content.summary + content.reply),
+                                                 focus_override=focus, supplemental=supplemental)
                     except (DeepSeekError, VideoError, OSError) as exc:
                         logger.warning("视频自动高清复核未完成 error=%s", type(exc).__name__)
                     else:
                         return reviewed.model_copy(update={"usage": add_usage(reply.usage, reviewed.usage)})
                 content.reply = visual_clarification(content.reply, focus or interval)
-            elif (delivery and not reread and not retried
-                    and incomplete_code_reply(content.reply, caption)):
-                content = retry_reply(
-                    "编程任务需要实际交付。若现有题面足够，在 reply 中写入文件名声明和一份完整可运行的源码。"
-                    "省略任务复述和交付承诺。缺少会改变结果的关键条件时，只问对应缺项。"
-                    "若程序需要输入，附带至少一组非空的 visionsoul-cases 自测样例。")
-            elif (self.auto_sample_retry and delivery and not reread and not retried
-                  and missing_input_sample(content.reply)):
-                first_content = content
-                try:
-                    content = retry_reply(INPUT_SAMPLE_RETRY)
-                except (DeepSeekError, ValueError):
-                    content = first_content
-                else:
-                    if not has_source_and_sample(content.reply):
-                        content = first_content
-            if delivery and retried and not review_pending:
-                still_unclear, proposed_range = visual_review_request(content.reply, question)
-                if still_unclear:
-                    focus = review_interval(proposed_range, content.observations, frames, info.duration_seconds)
-                    content.reply = visual_clarification(content.reply, focus or interval)
             stage = "evidence"
             normalized_links, auto_notes = normalize_model_links(content.audio_links, info.audio, frames)
             content.audio_links = normalized_links
@@ -445,9 +444,9 @@ class VideoService:
                 content.evidence_notes.append(f"已保存{len(content.audio_links)}条音画依据，页面默认展示前4条，其余可展开。")
             # evidence_notes 上限 8 条，保留最前面的关键提示，避免写回时超限。
             content.evidence_notes = content.evidence_notes[:8]
-            if debug_code and content.code_debug is None:
+            if debug_code and content.code_debug is None and not review_pending:
                 raise ValueError('missing code debug report')
-            if inspect and not debug_code and content.comparison is None:
+            if inspect and not debug_code and content.comparison is None and not review_pending:
                 raise ValueError("missing comparison")
             frame_times = {frame.index: frame.time_seconds for frame in frames}
             if content.comparison:
@@ -478,7 +477,8 @@ class VideoService:
             raise DeepSeekError(message, 502) from exc
         payload = content.model_dump()
         payload["detail_selection"] = selection.model_dump()
-        payload["reply"] = add_time_citations(debug_reply(content.code_debug, frames) if debug_code else content.reply, caption, info.audio, content.audio_links)
+        debug_answer = debug_reply(content.code_debug, frames) if debug_code and content.code_debug and not review_pending else content.reply
+        payload["reply"] = add_time_citations(debug_answer, caption, info.audio, content.audio_links)
         return VideoAnswer(**payload, video_id=info.video_id, model=reply.model, usage=reply.usage, audio_revision=info.audio_revision)
 
     @staticmethod
@@ -521,7 +521,7 @@ class VideoService:
 
     def start_conversation(self, video_id: str, message: str, history: list[dict], memory_text: str = "", *,
                            supplemental: list[dict] | None = None) -> tuple[dict, ModelReply | None]:
-        """首次无观察时一次请求同时看图和接话；已有观察时让聊天服务仅用文字接话。"""
+        """首次分析先看概览，按需复核；已有观察时用保存的证据接话。"""
         info = self.info(video_id)
         if not message or supplemental or self.isolated or wants_text_detail(message) or parse_focus_range(message) is not None:
             # 新空间的分析只随当前话题保存，不跨话题复用可能混入配文/角色记忆的综合观察。
@@ -542,9 +542,11 @@ class VideoService:
             if evidence_path.is_file():
                 try:
                     content = VideoEvidence.model_validate_json(evidence_path.read_text(encoding="utf-8"))
-                    if any(row.frame_index >= len(info.frames) for row in content.observations):
+                    frames = content.detail_selection.evidence_frames(info.frames) if content.detail_selection else info.frames
+                    indices = {frame.index for frame in frames}
+                    if any(row.frame_index not in indices for row in content.observations):
                         raise ValueError("unknown frame")
-                    validate_links(content.audio_links, info.audio, info.frames)
+                    validate_links(content.audio_links, info.audio, frames)
                     return self._snapshot(info, content)
                 except ValueError as exc:
                     raise VideoError("保存的视频观察无法读取，不会自动重新付费分析。", 500) from exc
@@ -562,8 +564,12 @@ class VideoService:
                     old_revision = payload.get("audio_revision", 0)
                     if old_revision >= info.audio_revision:
                         continue
-                    evidence = VideoEvidence.model_validate({key: payload[key] for key in ("observations", "summary", "comparison") if key in payload})
-                    if any(row.frame_index >= len(info.frames) for row in evidence.observations):
+                    evidence = VideoEvidence.model_validate({key: payload[key] for key in (
+                        "observations", "summary", "comparison", "detail_selection",
+                    ) if key in payload})
+                    frames = evidence.detail_selection.evidence_frames(info.frames) if evidence.detail_selection else info.frames
+                    indices = {frame.index for frame in frames}
+                    if any(row.frame_index not in indices for row in evidence.observations):
                         continue
                     snapshot = self._snapshot(info, evidence)
                     snapshot["analysis_audio_revision"] = old_revision
@@ -585,7 +591,8 @@ class VideoService:
             # 只缓存视觉事实，不把针对这一条消息的个性回应带进其他话题。
             evidence = {"observations": [row.model_dump() for row in answer.observations],
                         "summary": answer.summary, "audio_links": [row.model_dump() for row in answer.audio_links],
-                        "evidence_notes": answer.evidence_notes}
+                        "evidence_notes": answer.evidence_notes,
+                        "detail_selection": answer.detail_selection.model_dump(mode="json") if answer.detail_selection else None}
             temporary = None
             try:
                 with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=directory, prefix=".evidence-", delete=False) as output:
@@ -613,7 +620,8 @@ class VideoService:
         audio = ((directory / "audio.json").read_text(encoding="utf-8") + AUDIO_TASK) if pipeline == PIPELINE_VERSION and (directory / "audio.json").is_file() else ""
         if (directory / "audio-corrections.json").is_file():
             audio += (directory / "audio-corrections.json").read_text(encoding="utf-8")
-        fingerprint = hashlib.sha256((pipeline + self.prompt + self.settings.deepseek_model
+        policy = AUTO_REVIEW_VERSION if pipeline == PIPELINE_VERSION else ""
+        fingerprint = hashlib.sha256((pipeline + policy + self.prompt + self.settings.deepseek_model
             + str(self.settings.video_max_tokens) + manifest + audio).encode()).hexdigest()[:24]
         return directory / f"analysis-{fingerprint}.json"
 
@@ -630,6 +638,8 @@ class VideoService:
                 frames = answer.detail_selection.evidence_frames(frames)
             validate_links(answer.audio_links, transcript, frames)
             frame_indices = {frame.index for frame in frames}
+            if any(row.frame_index not in frame_indices for row in answer.observations):
+                raise ValueError("unknown frame")
             if answer.comparison:
                 answer.comparison.check_references(frame_indices)
             if answer.code_debug:

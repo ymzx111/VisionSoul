@@ -90,7 +90,7 @@ class RefinementTests(unittest.TestCase):
             anchor = next(frame for frame in info.frames if frame.time_seconds == 1)
             info = info.model_copy(update={"audio": AudioTranscript(status="ready", segments=[
                 SpeechSegment(id=0, start=0.8, end=1.2, text="请看这道题。")])})
-            result = service._observe(info, "读题")
+            result = service._observe(info, "重新读题")
             adjustment = result.detail_selection.adjustments[anchor.index]
             self.assertEqual(adjustment.kind, "nearby")
             self.assertIn(adjustment.time_seconds, (0.875, 1.125))

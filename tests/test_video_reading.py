@@ -260,7 +260,7 @@ class ReadingChatTests(unittest.TestCase):
 
     def test_forged_model_selection_is_overwritten_by_actual_sent_frames(self):
         self.forge_selection = True
-        actual = self.videos._observe(self.video, "读取题目")
+        actual = self.videos._observe(self.video, "重新读题")
         indices = actual.detail_selection.frame_indices
         self.assertTrue(indices)
         self.assertNotIn(60, indices)

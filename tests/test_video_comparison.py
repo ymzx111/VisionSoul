@@ -94,7 +94,7 @@ class ComparisonTests(unittest.TestCase):
         directory=self.settings.video_storage_dir/self.video.video_id
         for path in directory.glob('detail-*.jpg'):path.unlink()
         self.service.inspect(self.video.video_id,'比较',[])
-        self.assertIn('只有旧版概览图',self.calls[0]['messages'][0]['content'])
+        self.assertIn('本轮只有概览图',self.calls[0]['messages'][0]['content'])
         self.assertNotIn('"detail": "high"',json.dumps(self.calls[-1]))
 
     def test_followup_inspection_reopens_images_saves_report_and_replay_is_free(self):

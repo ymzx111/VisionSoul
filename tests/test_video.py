@@ -100,6 +100,27 @@ class VideoTests(unittest.TestCase):
         self.assertEqual(len(video.frames[0].seen_at),13)
         self.assertEqual(video.frames[0].seen_at[-1],11.9)
 
+    def test_general_analysis_rechecks_unreadable_sign_before_asking(self):
+        video = self.uploaded()
+        self.payload = {
+            "observations": [{"frame_index": 1, "keywords": ["站牌"],
+                              "description": "远处站牌的小字不清楚。", "uncertain": True}],
+            "summary": "画面中出现一块站牌。",
+            "reply": "站牌上的字看不清，无法确认站名。可以发一张清晰照片吗？",
+        }
+        result = self.service.analyze(video.video_id)
+        self.assertEqual(len(self.calls), 2)
+        stages = [[part["image_url"]["detail"] for part in call["messages"][-1]["content"]
+                   if part["type"] == "image_url"] for call in self.calls]
+        self.assertTrue(all(detail == "low" for detail in stages[0]))
+        self.assertTrue(1 <= stages[1].count("high") <= 4)
+        self.assertEqual(result.detail_selection.profile, "general")
+        self.assertEqual(result.detail_selection.focus_range_ms, (1000, 5000))
+        self.assertIn("1–5 秒", result.reply)
+        self.assertIn("用文字说明", result.reply)
+        self.assertTrue(self.service.analyze(video.video_id).cached)
+        self.assertEqual(len(self.calls), 2)
+
     def test_hevc_mp4_preserves_original_and_serves_h264_preview(self):
         path = Path(self.temp.name) / "mobile.mp4"
         make_video(path, seconds=3, rotation=90, encoder="libx265")
