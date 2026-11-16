@@ -43,6 +43,14 @@ LIMIT_DETAIL = {"output": "输出超过 16 KiB 上限，沙箱已停止。",
                 "trap": "运行被隔离器终止。"}
 COMPILE_ERROR = re.compile(r"main\.(?:c|cpp):(\d+):(\d+): error: (.+)")
 RUNTIME_LINE = re.compile(r"main\.(?:c|cpp):(\d+)")
+STANDARD_HEADER_NOTE = re.compile(
+    r"^main\.(?:c|cpp):\d+:\d+: note: include the header <([a-z][a-z0-9]*\.h)> or explicitly provide a declaration",
+    re.MULTILINE,
+)
+STANDARD_HEADERS = frozenset({
+    "ctype.h", "errno.h", "inttypes.h", "limits.h", "math.h", "stdbool.h", "stddef.h",
+    "stdint.h", "stdio.h", "stdlib.h", "string.h", "time.h",
+})
 # A selected file can replace a single literal read-only input in older C source.
 LITERAL_INPUT = re.compile(r'\bfopen\s*\(\s*"([\w-][\w .-]{0,114}\.(?:txt|csv|json))"\s*,\s*"r[bt]?"\s*\)',
                            re.IGNORECASE)
@@ -201,6 +209,15 @@ def run_c_sandbox(settings: Settings, code: str, language: str, test: PythonTest
                                               test.approved_file, Path(cache), compile_only=compile_only), test)
 
 
+def add_missing_standard_headers(code: str, check: PythonCheck) -> str:
+    if check.status != "failed" or check.phase != "compile":
+        return code
+    requested = set(STANDARD_HEADER_NOTE.findall(check.stderr)) & STANDARD_HEADERS
+    existing = re.findall(r"(?m)^[ \t]*#[ \t]*include[ \t]*<([^>\r\n]+)>", code)
+    headers = sorted(requested.difference(existing))
+    return "".join(f"#include <{header}>\n" for header in headers) + code
+
+
 def _repair_payload(task: str, code: str, check: PythonCheck) -> dict:
     """仅发送失败类型、行号和用例序号。"""
     payload = {"task": task[:2000], "code": code, "status": check.status, "phase": check.phase or "run"}
@@ -221,9 +238,9 @@ def _repair_payload(task: str, code: str, check: PythonCheck) -> dict:
 
 
 def debug_c(settings: Settings, client: DeepSeekClient, task: str, code: str, language: str,
-            test: PythonTest) -> PythonCheck:
+            test: PythonTest, *, initial_check: PythonCheck | None = None) -> PythonCheck:
     """编译或运行失败、输出不符时最多自动修复 3 次，每次都在新沙箱重编重跑。"""
-    check = run_c_sandbox(settings, code, language, test)
+    check = initial_check if initial_check is not None else run_c_sandbox(settings, code, language, test)
     if not settings.c_sandbox_auto_repair:
         return check
 

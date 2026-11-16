@@ -19,7 +19,7 @@ from app.services.audio_evidence import current_context
 from app.services.local_ide import (
     REQUIRES_DATA_FILE, open_generated_source, reads_standard_input, row_acceptance, show_sandbox_result, split_model_cases,
 )
-from app.services.c_sandbox import c_literal_input, debug_c, run_c_sandbox
+from app.services.c_sandbox import add_missing_standard_headers, c_literal_input, debug_c, run_c_sandbox
 from app.services.code_reruns import source_snapshot
 from app.services.python_sandbox import (
     ApprovedFile, PythonCheck, PythonTest, check_python_before_data, debug_python, run_python_sandbox,
@@ -330,16 +330,39 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
         def verify_c(code: str, language: str) -> PythonCheck:
             runtime_code, result_name = c_text_output(code, output_name)
             needs_file = bool(requires_file or "VISIONSOUL_DATA_FILE" in code or c_literal_input(code))
-            check = verify_delivery(
-                lambda test: run_c_sandbox(service.settings, runtime_code, language, test),
-                result_name, needs_file, code, runtime_code, language)
-            if check is not None:
-                return check
-            if needs_file:
-                check = run_c_sandbox(service.settings, runtime_code, language, PythonTest(), compile_only=True)
-                return diagnose_run(check, code, language, runtime_code)
-            return diagnose_run(debug_c(service.settings, service.client, turn["user_message"]["content"],
-                                        code, language, manual_test), code, language)
+            repaired_source = None
+            header_attempted = False
+
+            def run(test: PythonTest, *, compile_only: bool = False) -> PythonCheck:
+                nonlocal runtime_code, repaired_source, header_attempted
+                check = run_c_sandbox(service.settings, runtime_code, language, test, compile_only=compile_only)
+                if header_attempted:
+                    return check
+                candidate = add_missing_standard_headers(code, check)
+                if candidate == code:
+                    return check
+                header_attempted = True
+                candidate_runtime, _ = c_text_output(candidate, output_name)
+                verified = run_c_sandbox(service.settings, candidate_runtime, language, test, compile_only=compile_only)
+                if verified.status not in {"passed", "ran", "awaiting_file", "awaiting_input"}:
+                    return check
+                repaired_source, runtime_code = candidate, candidate_runtime
+                return verified
+
+            check = verify_delivery(run, result_name, needs_file, code, runtime_code, language)
+            if check is None:
+                if needs_file:
+                    check = run(PythonTest(), compile_only=True)
+                else:
+                    check = debug_c(service.settings, service.client, turn["user_message"]["content"], code,
+                                    language, manual_test, initial_check=run(manual_test))
+                check = diagnose_run(check, repaired_source or code, language, runtime_code)
+            if repaired_source:
+                check = check.model_copy(update={
+                    "repaired_code": repaired_source,
+                    "detail": f"已按编译器提示补齐标准头文件。{check.detail}",
+                })
+            return check
 
         turn["local_source"] = open_generated_source(
             service.settings, turn,

@@ -17,8 +17,8 @@ from app.services.role_store import RoleStore
 from app.services.audio_evidence import AudioTranscript, AudioLink, add_time_citations, current_context, model_context
 from app.services.video_reading import needs_text_refresh, parse_focus_range, points_to_visible_task
 from app.services.local_ide import (
-    CODE_DELIVERY_TASK, INPUT_SAMPLE_RETRY, has_source_and_sample, missing_input_sample, needs_task_clarification,
-    split_model_cases,
+    CODE_DELIVERY_TASK, INPUT_SAMPLE_RETRY, LEGACY_C_INPUT_RETRY, has_legacy_c_input, has_source_and_sample,
+    missing_input_sample, needs_task_clarification, split_model_cases,
 )
 from app.services.source_files import CODE_REQUEST, parse_generated_code_or_infer
 
@@ -329,8 +329,14 @@ class ChatService:
                         messages.append({"role": "user", "content": content})
                         options = {"max_tokens": self.settings.video_max_tokens} if source_delivery else {}
                         result = self.client.complete(messages, **options)
-                        if auto_sample_retry and source_delivery and not result.truncated and missing_input_sample(result.answer, message):
-                            retry_messages = [{**messages[0], "content": messages[0]["content"] + "\n" + INPUT_SAMPLE_RETRY},
+                        if auto_sample_retry and source_delivery and not result.truncated:
+                            legacy_input = not attached_video and has_legacy_c_input(result.answer)
+                            reminder = LEGACY_C_INPUT_RETRY if legacy_input else (
+                                INPUT_SAMPLE_RETRY if missing_input_sample(result.answer, message) else None)
+                        else:
+                            reminder = None
+                        if reminder:
+                            retry_messages = [{**messages[0], "content": messages[0]["content"] + "\n" + reminder},
                                               *messages[1:]]
                             try:
                                 candidate = self.client.complete(retry_messages, **options)
@@ -338,7 +344,8 @@ class ChatService:
                                 candidate = None
                             if candidate is not None:
                                 usage = add_usage(result.usage, candidate.usage)
-                                if not candidate.truncated and has_source_and_sample(candidate.answer, message):
+                                if (not candidate.truncated and has_source_and_sample(candidate.answer, message)
+                                        and (attached_video or not has_legacy_c_input(candidate.answer))):
                                     result = candidate
                                 result = result.model_copy(update={"usage": usage})
                         if saved_audio:

@@ -26,6 +26,12 @@ from app.services.source_files import (
 logger = logging.getLogger(__name__)
 REQUIRES_DATA_FILE = re.compile(r"^\s*\[需要数据文件\]\s*$", re.MULTILINE)
 CLARIFICATION_REQUIRED = re.compile(r"^[ \t]*\[需确认题意\][ \t]*$", re.MULTILINE)
+C_LEXICAL_NOISE = re.compile(
+    r"/\*[\s\S]*?(?:\*/|\Z)|//(?:\\\r?\n|[^\r\n])*"
+    r"""|"(?:\\[^\r\n]|[^"\\\r\n])*"|'(?:\\[^\r\n]|[^'\\\r\n])*'""",
+)
+C_MAIN = re.compile(r"\bmain\s*\([^)]*\)\s*\{")
+C_LEGACY_LINE_INPUT = re.compile(r"\bgets\s*\(")
 
 
 def needs_task_clarification(reply: str) -> bool:
@@ -213,7 +219,17 @@ def reads_standard_input(code: str, suffix: str) -> bool:
             if isinstance(node, ast.Attribute) and node.attr == "stdin" and isinstance(node.value, ast.Name) and node.value.id == "sys":
                 return True
         return False
-    return bool(re.search(r"\b(?:scanf|getchar|cin|stdin)\b", code))
+    return bool(re.search(r"\b(?:scanf|getchar|gets|cin|stdin)\b", C_LEXICAL_NOISE.sub(" ", code)))
+
+
+def has_legacy_c_input(reply: str) -> bool:
+    source_reply, _ = split_model_cases(reply)
+    try:
+        filename, code = parse_generated_code_or_infer(source_reply)
+    except ValueError:
+        return False
+    return Path(filename).suffix in {".c", ".cpp", ".cc", ".cxx"} and bool(
+        C_LEGACY_LINE_INPUT.search(C_LEXICAL_NOISE.sub(" ", code)))
 
 
 def missing_input_sample(reply: str, task: str = "") -> bool:
@@ -236,6 +252,12 @@ INPUT_SAMPLE_RETRY = (
     "文件题给合规的 sample_file。题目要求跳过坏行时，用[逐行验收]和 row_check，样例按题面真实的分隔符与字段数，"
     "中间放一条缺列坏行，并在 expected 中同时验证对应警告和后续合法记录产生的结果。"
     "自行按题目规则推导 expected，不使用真实用户数据，不向用户索要样例。"
+)
+
+LEGACY_C_INPUT_RETRY = (
+    "题面骨架的 gets 已被现代 C 标准移除。保留题面注释、变量名、算法及每行一个字符串的输入约定，"
+    "重新交付完整源码，只将该输入语句改为带缓冲区上限的 fgets，并检查读取结果、去除末尾换行。"
+    "逐行输出时显式换行。附至少一组完整非空 stdin 及对应预期输出，最后一行不附换行符，题目允许时含行内空格。"
 )
 
 
@@ -286,7 +308,7 @@ def open_generated_source(settings: Settings, turn: dict,
             launcher = settings.local_pycharm or Path(sys.executable).with_name("pythonw.exe")
             ide = "PyCharm" if settings.local_pycharm else "Python IDLE"
         elif extension in {".c", ".cpp", ".cc", ".cxx"}:
-            if not re.search(r"\bmain\s*\([^)]*\)\s*\{", code):
+            if not C_MAIN.search(C_LEXICAL_NOISE.sub(" ", code)):
                 raise ValueError("C/C++ 代码缺少完整的 main 函数，未生成源文件。")
             launcher, ide = settings.local_visual_studio, "Visual Studio"
         else:
@@ -320,7 +342,8 @@ def open_generated_source(settings: Settings, turn: dict,
         check = verify()
     if check and check.repaired_code:
         try:
-            target = save_dated_source(workspace, filename, check.repaired_code)
+            target = save_dated_source(workspace, filename, check.repaired_code,
+                                       encoding="utf-8-sig" if ide == "Visual Studio" else "utf-8")
             code = check.repaired_code
         except (OSError, ValueError):
             logger.warning("修复版源码保存失败", exc_info=True)

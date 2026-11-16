@@ -354,6 +354,85 @@ int main(void) {
             }, "expected": "警告：第 2 行数据非法，已跳过\n总数：13\n"}).json()
             self.assertEqual((verified["status"], verified["data_file"]), ("passed", "real.txt"), verified)
 
+    def test_legacy_c_photo_keeps_main_comments_and_uses_line_input_in_sandbox(self):
+        if not self.settings.c_sandbox_compiler.is_file():
+            self.skipTest("Wasm compiler assets are optional")
+        root = Path(self.temp.name)
+        self.settings.local_source_workspace = root / "workspace"
+        self.settings.local_visual_studio = root / "devenv.exe"
+        self.settings.local_visual_studio.touch()
+        app.dependency_overrides[get_chat_service] = lambda: self.service
+        self.addCleanup(app.dependency_overrides.clear)
+
+        legacy = r'''#include <stdio.h>
+#include <string.h>
+int main() // 定义主函数
+/* 函数开始 */
+{
+    char lines[8][128], temp[128];
+    for (int i = 0; i < 8; ++i) {
+        gets(lines[i]);
+    }
+    for (int j = 0; j < 7; ++j) {
+        for (int i = 0; i < 7 - j; ++i) {
+            if (strcmp(lines[i], lines[i + 1]) > 0) {
+                strcpy(temp, lines[i]);
+                strcpy(lines[i], lines[i + 1]);
+                strcpy(lines[i + 1], temp);
+            }
+        }
+    }
+    for (int i = 0; i < 8; ++i) puts(lines[i]);
+    return 0;
+}
+'''
+        repaired = legacy.replace("gets(lines[i]);",
+            'if (!fgets(lines[i], sizeof lines[i], stdin)) return 1;\n'
+            '        lines[i][strcspn(lines[i], "\\r\\n")] = \'\\0\'; // 兼容旧版 gets(lines[i])')
+        words = ["pear", "apple pie", "fig", "plum", "date", "kiwi", "melon", "berry"]
+        stdin = "\n".join(words)
+        expected = "\n".join(sorted(words)) + "\n"
+        fence = chr(96) * 3
+        def answer(code):
+            return f"[文件名: main.c]\n{fence}c\n{code}{fence}\n"
+        cases = json.dumps([{"name": "八行输入含空格", "stdin": stdin, "expected": expected}])
+        responses = [
+            ModelReply(answer=answer(legacy), model="test"),
+            ModelReply(answer=answer(repaired.replace("#include <string.h>\n", ""))
+                       + f"{fence}visionsoul-cases\n{cases}\n{fence}", model="test"),
+        ]
+        base = "http://127.0.0.1:8765"
+        async def local_app(scope, receive, send):
+            await app({**scope, "client": ("127.0.0.1", 1234)}, receive, send)
+
+        with (TestClient(local_app, base_url=base, headers={"Origin": base}) as client,
+              patch.object(self.service.client, "complete", side_effect=responses) as model,
+              patch("app.services.local_ide.launch_ide") as launch,
+              patch("app.services.local_ide.show_sandbox_result", return_value=True)):
+            response = client.post("/api/chat/messages", json={
+                "request_id": "a" * 32, "space": "work", "image_id": self.image(),
+                "message": "完成题目中的代码填空题", "open_in_ide": True,
+            })
+            self.assertEqual(response.status_code, 200, response.text)
+            delivery = response.json()["local_source"]
+            self.assertEqual(delivery["status"], "opened", delivery)
+            self.assertEqual(delivery["python_check"]["status"], "awaiting_input")
+            self.assertEqual(delivery["python_check"]["case_results"][0]["stdout"], expected)
+            self.assertIn("已按编译器提示补齐标准头文件", delivery["python_check"]["detail"])
+            self.assertEqual(Path(delivery["path"]).read_text(encoding="utf-8-sig"),
+                             "#include <string.h>\n" + repaired.replace("#include <string.h>\n", ""))
+            self.assertEqual(model.call_count, 2)
+            self.assertIn("gets 已被现代 C 标准移除", model.call_args.args[0][0]["content"])
+            launch.assert_called_once()
+
+            rerun = client.post("/api/chat/sandbox-runs", json={
+                "run_id": delivery["sandbox_run_id"], "stdin": "\n".join(reversed(words)) + "\n",
+                "expected": expected, "open_result_window": False,
+            }).json()
+            self.assertEqual(rerun["status"], "passed", rerun)
+            self.assertEqual(rerun["stdout"], expected)
+            self.assertEqual(model.call_count, 2)
+
     def test_c_and_cpp_desktop_delivery_and_local_rerun(self):
         if not self.settings.c_sandbox_compiler.is_file():
             self.skipTest("Wasm compiler assets are optional")
@@ -373,7 +452,8 @@ int main(void) {
         base = "http://127.0.0.1:8765"
         origin = {"Origin": base}
         fence = chr(96) * 3
-        code = '#include <stdio.h>\nint main(void) { int n; if (scanf("%d", &n) == 1) printf("%d\\n", n * 2); return 0; }\n'
+        code = ('#include <stdio.h>\nint main(void) // 原题保留的主函数注释\n/* 函数体 */\n'
+                '{ int n; if (scanf("%d", &n) == 1) printf("%d\\n", n * 2); return 0; }\n')
         with (TestClient(local_app, base_url=base) as client,
               patch("app.services.local_ide.launch_ide") as launch,
               patch("app.services.local_ide.show_sandbox_result", return_value=True) as viewer,
