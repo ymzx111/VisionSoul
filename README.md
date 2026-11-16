@@ -1,6 +1,93 @@
 # VisionSoul
 
-快速查看下一步目标与已完成变化：[开发便签](开发便签.md)。各大任务下的红字随任务目标调整更新，不标时间；实际完成的修改才追加到带日期的历史中。普通讨论不写入完成记录。详细过程仍见 `prompts/`，协作约定见 [AGENTS.md](AGENTS.md)。
+VisionSoul 是面向编程学习的本机工作台。上传题目照片或 30 秒内的短视频，工作台读题、生成 Python 或 C 源码，在本机编辑器打开，并通过隔离沙箱显示试跑结果。需要输入数据时，可填写标准输入或授权本轮读取一个本地文件。
+
+- 视频按每秒一帧读题。12 秒以内使用长边最多 1280 像素的帧；较长视频遇到关键内容模糊时，对局部区间按半秒补抽，再选最多 4 张高清图复核。
+- DeepSeek 负责读题和生成代码，Whisper 可在本机转写视频对白，Wasmtime 执行隔离试跑。应用以 React 和 FastAPI 运行，使用 SQLite 保存本机话题。
+- [第三方组件与数据去向](docs/第三方模型与数据使用说明.md) · [开发便签](开发便签.md) · [AI 辅助开发记录](prompts/)
+
+## 10 分钟复现指南（Windows）
+
+准备好 Windows 电脑、Git、64 位 Python 3.13（安装时保留 Tcl/Tk 和 IDLE）、Node.js 24 及可用的 DeepSeek API Key。首次下载依赖和运行时的耗时取决于网络。如需让 C 源码自动在 Visual Studio 打开，在配置里填写本机 `LOCAL_VISUAL_STUDIO` 对应的 `devenv.exe` 路径。
+
+### 1. 获取源码并安装依赖
+
+在 PowerShell 中执行。已经克隆项目时，从项目根目录执行 `python -m venv .venv` 开始。
+
+```powershell
+git clone https://github.com/ymzx111/VisionSoul.git
+Set-Location VisionSoul
+python --version
+node --version
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r .\backend\requirements.txt -r .\backend\requirements-sandbox.txt
+npm.cmd --prefix .\frontend ci
+npm.cmd --prefix .\frontend run build
+```
+
+### 2. 安装两种语言的沙箱
+
+在项目根目录执行。两个脚本会下载并校验对应的运行时。
+
+```powershell
+.\.venv\Scripts\python.exe .\tools\install_python_sandbox.py
+.\.venv\Scripts\python.exe .\tools\install_c_sandbox.py
+```
+
+### 3. 配置模型并启动
+
+```powershell
+if (-not (Test-Path .\backend\.env)) {
+    Copy-Item .\backend\.env.example .\backend\.env
+}
+notepad .\backend\.env
+```
+
+在 `backend/.env` 中填写自己的 `DEEPSEEK_API_KEY`。首先验证照片或纯画面视频时，将 `AUDIO_ENABLED` 设为 `false`。如需验证视频对白，在项目根目录运行 `.\.venv\Scripts\python.exe .\backend\tools\setup_audio_model.py`，再将 `AUDIO_ENABLED` 设为 `true`。首次下载的语音权重约 480 MB，服务已启动时需在改完配置后重启。实际密钥仅填在本机 `.env` 中，仓库提供字段模板。
+
+保存配置后执行：
+
+```powershell
+Set-Location .\backend
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8765
+```
+
+浏览器打开 [本机工作台](http://127.0.0.1:8765/app/)。顶部显示「DeepSeek Flash · 已配置」表示本机已填写密钥。可用 [健康接口](http://127.0.0.1:8765/health) 确认后端已启动。结束时在启动终端按 `Ctrl+C`。
+
+### 4. 验收照片和视频两条流程
+
+#### Python 照片题
+
+将下方题目复制到文本编辑器并截图，上传后点击「开始分析」。
+
+> 编写完整 Python 程序。程序无需输入。依次累加 1 到 9，跳过 3 的倍数，只输出最后的总和。
+
+预期输出 **27**。源码保存在 `workspace/Python/`，沙箱输出显示在桌面。
+
+#### C 录屏题与本地数据文件
+
+将下方题目放大显示在屏幕上，用录屏工具录制 8–12 秒，保存为 H.264 MP4。
+
+> 用 C 编写完整程序，从本地文本文件逐行读取整数，每行一个。读取到文件末尾后，只输出所有整数的总和。
+
+1. 上传录屏，文字框留空，点击「开始分析」。工作台应读出语言、文件输入和求和要求，生成源码并提示选择数据文件。
+2. 创建一个 UTF-8 的 `demo.txt`，三行依次写入 `12`、`-3`、`8`。
+3. 在桌面结果窗口的「手动试跑」中点「选择数据文件」，选择 `demo.txt` 后点「授权并试跑」。预期输出 **17**，源码保存在 `workspace/C/`。
+
+两条演示的读题与代码生成都会调用 DeepSeek。授权文件的内容用于本机补跑。
+
+## 复现性说明
+
+- `backend/requirements.txt`、`backend/requirements-sandbox.txt` 和 `frontend/package-lock.json` 记录依赖。配置字段见 [环境变量模板](backend/.env.example)。
+- `prompts/` 和 Git 提交对应项目各阶段的功能变更及验证。可对照 [自动高清复核](prompts/P104_长视频读题补帧区间修复.md)、[标准输入与数据文件分流](prompts/P102_标准输入与数据文件分流.md) 和 [参赛版语言范围](prompts/P105_参赛版语言范围.md)。
+- 下载的运行时、本地媒体、数据库和生成源码保存在各自的本机目录。配置及忽略规则见 [.gitignore](.gitignore)。
+
+## 历史开发记录
+
+<details>
+<summary>展开各阶段的开发与验证记录</summary>
+
+下面保留各阶段的实现和命令。当前参赛版的运行方式见上方复现指南。
 
 ## 1. 项目简介
 
@@ -592,3 +679,5 @@ API：`GET /api/videos/{video_id}/audio` 返回原始、当前对白及版本；
 补跑绑定当前回复创建时的源码快照。该入口随当前页面回复显示，刷新或切换话题后不会从历史恢复。服务端快照仅保留在内存中，最长一小时或最近 64 份，服务重启即清除。每次试跑仍使用独立临时目录和原有资源上限。
 
 C 也可在 Visual Studio 打开源码，同时查看桌面只读沙箱结果。补输入复用当轮归档的源码快照，在隔离环境重新编译和运行，无需调用模型。自动检测等待输入目前适用于 Python 的 input() EOF；C 可直接展开同一补输入入口。
+
+</details>
