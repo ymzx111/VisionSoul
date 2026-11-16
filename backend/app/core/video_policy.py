@@ -1,5 +1,6 @@
 """统一采样协议，避免帧数上限在接口、抽帧和比对中漂移。"""
 SAMPLE_INTERVAL_SECONDS = 1.0
+SHORT_VIDEO_SECONDS = 12
 NEW_MAX_SAMPLES = 31  # 30个整秒点，加最后一个不同的实际画面。
 MAX_SAMPLES = 61  # 读取旧半秒视频的兼容容量；新上传单独限制为31。
 MAX_DETAIL_FRAMES = 4

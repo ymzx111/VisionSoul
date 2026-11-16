@@ -45,6 +45,7 @@ def make_reading_video(path):
     clear = page()
     other = page("Compute the larger of two integers a and b.")
     images = [clear.filter(ImageFilter.GaussianBlur(4)), clear, clear.copy(), other, other.copy(), page(dark=True)]
+    images.extend([images[-1]] * 7)
     with av.open(str(path), "w", format="mp4") as output:
         stream = output.add_stream("libx264", rate=2)
         stream.width, stream.height, stream.pix_fmt = 1280, 720, "yuv420p"

@@ -3,6 +3,7 @@ import { IMAGE_ACCEPT } from './media-workflow.mjs';
 import { MAX_CHAT_IMAGES } from './workflow.mjs';
 
 const topicDateFormat = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric' });
+const SHORT_VIDEO_SECONDS = 12;
 
 async function readApprovedFile(file) {
   if (!/\.(txt|csv|json)$/i.test(file.name)) throw new Error('请选择 TXT、CSV 或 JSON 文件。');
@@ -138,6 +139,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
     || chat.messages.some(item => item.image_ids?.length || item.image_id));
   const check = chat.localSource?.python_check;
   const runId = chat.localSource?.sandbox_run_id || chat.localSource?.python_run_id;
+  const shortVideo = state.video.video?.duration_seconds <= SHORT_VIDEO_SECONDS;
   const ready = !state.kind || (state.kind === 'image' ? state.image.upload?.image_id || state.restoredImageId : state.video.video?.video_id);
   const canSend = chat.persona.configured && !busy && !state.error && ready
     && (draft.trim() || state.draftImages.length || (state.kind && !chat.conversationId));
@@ -257,7 +259,9 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
             {chat.localSource.detail}{chat.localSource.path && <> <code>{chat.localSource.path}</code></>}
           </p>)}
       {chat.truncated && <p className="chat-image-note">上一条回复达到长度上限，可以继续追问。</p>}
-      {state.kind === 'video' && <p className="chat-image-note">先按每秒一帧分析，关键画面看不清时自动在相关片段每半秒补抽，挑最多 4 张高清图复核。</p>}
+      {state.kind === 'video' && <p className="chat-image-note">{shortVideo
+        ? '每秒一张清晰图（长边最高 1280 像素）。缺少关键条件时会请你补充。'
+        : '先按每秒一帧分析，关键画面看不清时自动在相关片段每半秒补抽，挑最多 4 张高清图复核。'}</p>}
       {workMedia && state.kind === 'image' && <div className="python-test">
         <label htmlFor="python-test-file">选择本轮数据文件（TXT、CSV 或 JSON，最多 8 KiB）</label>
         <input id="python-test-file" ref={fileInput} type="file" accept=".txt,.csv,.json" disabled={busy}
@@ -306,7 +310,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
         </div>)}
       </div>}
       {state.attachmentError && <p className="notice notice-error" role="alert">{state.attachmentError}</p>}
-      <div className="question-actions media-chat-actions"><span className="cost-note">点击后才调用模型{workMedia && state.kind === 'video' ? ' · 画面复核或交付异常时可能追加一次调用' : ''}{chat.usage ? chat.replayed ? ' · 已恢复原回复' : ` · 本次${chat.usage.total_tokens} token` : ''}</span>
+      <div className="question-actions media-chat-actions"><span className="cost-note">点击后才调用模型{workMedia && state.kind === 'video' ? ` · ${shortVideo ? '' : '画面复核或'}交付异常时可能追加一次调用` : ''}{chat.usage ? chat.replayed ? ' · 已恢复原回复' : ` · 本次${chat.usage.total_tokens} token` : ''}</span>
         <button type="button" className="button button-secondary" disabled={busy || state.draftImages.length >= MAX_CHAT_IMAGES}
           onClick={() => photoInput.current?.click()}>{state.attaching ? '正在上传图片…' : `添加图片 ${state.draftImages.length}/${MAX_CHAT_IMAGES}`}</button>
         <button className="button button-primary" disabled={!canSend} onClick={() => void send()}>{chat.sending ? '正在回复…' : chat.conversationId || !state.kind ? '发送消息 →' : '开始分析 →'}</button>

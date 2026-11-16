@@ -17,7 +17,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.config import Settings
-from app.core.video_policy import MAX_DETAIL_FRAMES, MAX_EVIDENCE_FRAMES, MAX_SAMPLES, PIPELINE_VERSION, LEGACY_PIPELINE, LEGACY_HALF_PIPELINE
+from app.core.video_policy import MAX_DETAIL_FRAMES, MAX_EVIDENCE_FRAMES, MAX_SAMPLES, PIPELINE_VERSION, LEGACY_PIPELINE, LEGACY_HALF_PIPELINE, SHORT_VIDEO_SECONDS
 from app.core.persona import PERSONA_CORE, load_persona
 from app.services.deepseek import DeepSeekClient, DeepSeekError, ModelReply, TokenUsage, add_usage, has_api_key
 from app.services.video_comparison import Comparison, DETAIL_VERSION, compact_times
@@ -36,7 +36,7 @@ from app.services.local_ide import (
 )
 from app.services.video_reading import (
     AUTO_REVIEW_VERSION, DetailSelection, FrameAdjustment, INLINE_DATA_TASK, READ_AGAIN, READING_TASK, SCREEN_RULES_TASK,
-    VISUAL_REVIEW_TASK, VISUAL_REREAD_TASK,
+    SHORT_VIDEO_TASK, VISUAL_REVIEW_TASK, VISUAL_REREAD_TASK,
     parse_focus_range, points_to_visible_task, review_interval, valid_focus_range, visual_clarification,
     visual_review_request, wants_text_detail,
 )
@@ -281,6 +281,7 @@ class VideoService:
 
     def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None, memory_text: str = "", inspect: bool = False, debug_code: bool = False, *, auto_task: bool = False, reread: bool = False, reread_text: bool = False, focus_override: tuple[int, int] | None = None, supplemental: list[dict] | None = None) -> VideoAnswer:
         directory = video_directory(info.video_id, self.settings)
+        short_video = info.duration_seconds <= SHORT_VIDEO_SECONDS
         parts = [{"type": "text", "text": "图号@原视频秒，区间是重复图的采样点，不代表连续动作。"}]
         question = caption
         if auto_task:
@@ -293,7 +294,14 @@ class VideoService:
         interval = focus_override if reread else parse_focus_range(caption)
         profile = "text" if reading or debug_code or (interval and not reread) else "general"
         use_detail = inspect or debug_code or reread or visible_task or (reading and READ_AGAIN.search(caption))
-        if interval:
+        if short_video:
+            if interval and (not valid_focus_range(interval) or interval[1] > round(info.duration_seconds * 1000)):
+                raise VideoError("请指定视频时长内、最长 5 秒的重点区间，例如“重点看 3–5 秒”。", 422)
+            selection = DetailSelection(profile=profile, frame_indices=[])
+            # 上传时已有按原宽高比缩放到长边最多 1280 的时序帧，不做第二次抽帧。
+            detailed = {frame.index: path for frame in info.frames
+                        if (path := directory / f"detail-{frame.index}.jpg").is_file()}
+        elif interval:
             try:
                 selection, detailed = self._focus_details(info, directory, interval, profile)
             except (OSError, ValueError) as exc:
@@ -301,7 +309,7 @@ class VideoService:
                     raise
                 logger.info("局部高清抽帧不可用，改用全片高清候选 error=%s", type(exc).__name__)
                 interval = None
-        if not interval:
+        if not short_video and not interval:
             detailed = self._detail_frames(info, directory, profile=profile) if use_detail else {}
             selection = DetailSelection(profile=profile, frame_indices=sorted(detailed),
                 source_indices=sorted(index for index, path in detailed.items() if path == detail_path(directory, index)))
@@ -319,12 +327,22 @@ class VideoService:
         if reread and not detailed:
             raise VideoError("原视频没有可用于复核的高清画面。", 422)
         frames = selection.evidence_frames(info.frames)
+        if short_video and info.sampling_policy != "one_second":
+            # 旧素材保留原图号与证据，只从已存采样点里恢复约每秒一张和末帧。
+            samples = sorted((time, frame.index) for frame in frames for time in frame.seen_at)
+            last_index = samples[-1][1]
+            picked, target = {last_index}, 0
+            for time, index in samples:
+                if time + 0.001 >= target:
+                    picked.add(index)
+                    target = int(time + 0.001) + 1
+            frames = [frame for frame in frames if frame.index in picked]
         if interval:
             frames.sort(key=lambda frame: frame.time_seconds)
         for frame in frames:
             high = frame.index in detailed
             adjustment = selection.adjustments.get(frame.index)
-            label = " 高清候选（不保证可读）" if high else ""
+            label = " 高清候选（不保证可读）" if high and not short_video else ""
             if adjustment and adjustment.kind == "enhanced":
                 label = " 轻度锐化辅助图，无法确认的字符标待确认"
             if frame.index in selection.focus_frames:
@@ -347,14 +365,15 @@ class VideoService:
             prompt += f"\n本轮优先分析 {interval[0] / 1000:g}–{interval[1] / 1000:g} 秒。引用重点画面时使用随图提供的编号和实际时间，无法辨认的字符请明确标注。"
         if delivery:
             prompt += "\n" + CODE_DELIVERY_TASK + "\n" + INLINE_DATA_TASK + "\n" + SCREEN_RULES_TASK
-        prompt += "\n" + (VISUAL_REREAD_TASK if reread else VISUAL_REVIEW_TASK)
+        visual_task = SHORT_VIDEO_TASK if short_video else VISUAL_REREAD_TASK if reread else VISUAL_REVIEW_TASK
+        prompt += "\n" + visual_task
         if caption:
             parts.append({"type": "text", "text": caption})
         if supplemental:
             parts.append({"type": "text", "text": "以下是同话题的补充图片，用于核对原视频中的关键信息。"
                           "observations.frame_index 只引用前面标有图号与秒数的原片画面。"})
             parts.extend(supplemental)
-        if use_detail and not detailed:
+        if (short_video or use_detail) and not detailed:
             prompt += "\n本轮只有概览图，请依据可见内容作答。"
         messages = [{"role": "system", "content": prompt},
             *([{"role":"user","content":memory_text}] if memory_text else []), *(history or []),
@@ -422,7 +441,7 @@ class VideoService:
                 focus = review_interval(proposed_range, content.observations, frames, info.duration_seconds,
                                         clue=content.reply + question)
                 # 交付或结构重试仍查看了同一组图片；视觉复核则使用新证据。
-                if not reread and (not detailed or (focus and focus != interval)):
+                if not short_video and not reread and (not detailed or (focus and focus != interval)):
                     try:
                         reviewed = self._observe(info, caption, history, memory_text, inspect=inspect,
                                                  debug_code=debug_code, auto_task=auto_task, reread=True,

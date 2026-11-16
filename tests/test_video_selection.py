@@ -132,7 +132,7 @@ class DetailExtractionTests(unittest.TestCase):
             stream.width, stream.height, stream.pix_fmt = 2400, 1350, "yuv420p"
             stream.options = {"preset": "ultrafast", "crf": "18"}
             stream.set_display_rotation(90)
-            for color in ["red", "blue", "green", "yellow"]:
+            for color in ["red", "blue", "green"] + ["yellow"] * 23:
                 image = Image.new("RGB", (2400, 1350), color)
                 for packet in stream.encode(av.VideoFrame.from_image(image)):
                     output.mux(packet)

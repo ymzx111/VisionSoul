@@ -28,6 +28,7 @@ class VideoFocusTests(unittest.TestCase):
         root = Path(temporary.name)
         source = root / "focus.mp4"
         colors = ["black"] * 6 + ["red", "white", "blue", "yellow", "green", "purple"]
+        colors.extend(["purple"] * 14)
         with av.open(str(source), "w", format="mp4") as container:
             stream = container.add_stream("libx264", rate=8)
             stream.width, stream.height, stream.pix_fmt = 160, 96, "yuv420p"
@@ -92,7 +93,7 @@ class VideoFocusTests(unittest.TestCase):
             self.assertEqual(client.get(path).content, image)
 
     def test_invalid_interval_is_rejected_before_model_call(self):
-        for message in ("重点看 3–2 秒", "重点看 0–6 秒", "重点看 5–7 秒"):
+        for message in ("重点看 3–2 秒", "重点看 0–6 秒", "重点看 12–14 秒"):
             with self.subTest(message=message), self.assertRaises(DeepSeekError) as error:
                 self.send(message, "a")
             self.assertEqual(error.exception.status_code, 422)

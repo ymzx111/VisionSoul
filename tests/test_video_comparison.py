@@ -27,7 +27,7 @@ class ComparisonTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.fixtures=tempfile.TemporaryDirectory();cls.addClassCleanup(cls.fixtures.cleanup)
-        path=Path(cls.fixtures.name)/'clip.mp4';make_video(path)
+        path=Path(cls.fixtures.name)/'clip.mp4';make_video(path,seconds=13)
         cls.data=path.read_bytes()
 
     def setUp(self):
@@ -56,12 +56,13 @@ class ComparisonTests(unittest.TestCase):
     def test_comparison_schema_only_in_inspection_and_high_images_stay_at_four(self):
         self.service._observe(self.video)
         self.assertNotIn('supporting_features',self.calls[-1]['messages'][0]['content'])
-        path=Path(self.temp.name)/'distinct.mp4';make_video(path,seconds=5,varying=True)
+        path=Path(self.temp.name)/'distinct.mp4';make_video(path,seconds=13,varying=True)
         video=self.service.upload(BytesIO(path.read_bytes()))
         self.service.inspect(video.video_id,'比对',[])
         self.assertIn('supporting_features',self.calls[-1]['messages'][0]['content'])
         images=[part for part in self.calls[-1]['messages'][-1]['content'] if part['type']=='image_url']
-        self.assertEqual(len(images),6)
+        self.assertGreater(len(images),4)
+        self.assertEqual(len(images),len(video.frames))
         self.assertGreater(sum(part['image_url']['detail']=='high' for part in images),0)
         self.assertLessEqual(sum(part['image_url']['detail']=='high' for part in images),4)
 

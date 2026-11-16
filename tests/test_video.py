@@ -1,5 +1,6 @@
 """使用实际 H.264/H.265 视频与模拟模型验证上传、采样和证据。"""
 from io import BytesIO
+import base64
 import json
 from pathlib import Path
 import subprocess
@@ -23,20 +24,21 @@ from app.services.deepseek import DeepSeekClient, DeepSeekError
 from app.services.videos import ANALYSIS_LOCK, VideoError, VideoService
 
 
-def make_video(path, *, seconds=6, static=False, rotation=0, fps=10, varying=False, revisit=False, encoder="libx264"):
+def make_video(path, *, seconds=6, static=False, rotation=0, fps=10, varying=False, revisit=False, encoder="libx264", size=(96, 64)):
     with av.open(str(path), "w", format="mp4") as output:
         stream = output.add_stream(encoder, rate=fps)
-        stream.width, stream.height, stream.pix_fmt = 96, 64, "yuv420p"
+        stream.width, stream.height = size
+        stream.pix_fmt = "yuv420p"
         stream.options = {"crf": "0" if revisit else "18", "preset": "ultrafast"}
         if encoder == "libx265":
             stream.options = {**stream.options, "x265-params": "log-level=error:pools=1:frame-threads=1"}
         if rotation:
             stream.set_display_rotation(rotation)
-        for index in range(seconds * fps):
+        for index in range(round(seconds * fps)):
             color = (index % 200, 50 + (index // 200) * 20, 255 - index % 200) if varying else "red" if static or index < seconds * fps / 2 else "blue"
             if revisit:
                 color = "red" if (index // fps) % 2 == 0 else "blue"
-            image = Image.new("RGB", (96, 64), color)
+            image = Image.new("RGB", size, color)
             for packet in stream.encode(av.VideoFrame.from_image(image)):
                 output.mux(packet)
         for packet in stream.encode():
@@ -101,7 +103,9 @@ class VideoTests(unittest.TestCase):
         self.assertEqual(video.frames[0].seen_at[-1],11.9)
 
     def test_general_analysis_rechecks_unreadable_sign_before_asking(self):
-        video = self.uploaded()
+        path = Path(self.temp.name) / "long.mp4"
+        make_video(path, seconds=13)
+        video = self.service.upload(BytesIO(path.read_bytes()))
         self.payload = {
             "observations": [{"frame_index": 1, "keywords": ["站牌"],
                               "description": "远处站牌的小字不清楚。", "uncertain": True}],
@@ -115,11 +119,38 @@ class VideoTests(unittest.TestCase):
         self.assertTrue(all(detail == "low" for detail in stages[0]))
         self.assertTrue(1 <= stages[1].count("high") <= 4)
         self.assertEqual(result.detail_selection.profile, "general")
-        self.assertEqual(result.detail_selection.focus_range_ms, (1000, 5000))
-        self.assertIn("1–5 秒", result.reply)
+        self.assertEqual(result.detail_selection.focus_range_ms, (5000, 9000))
+        self.assertIn("5–9 秒", result.reply)
         self.assertIn("用文字说明", result.reply)
         self.assertTrue(self.service.analyze(video.video_id).cached)
         self.assertEqual(len(self.calls), 2)
+
+    def test_twelve_second_boundary_uses_1280_then_restores_standard_refinement(self):
+        self.payload["reply"] = "[需看清画面: 2–5 秒]\n输出格式会影响答案。"
+        for duration in (12, 12.1):
+            with self.subTest(duration=duration):
+                path = Path(self.temp.name) / f"boundary-{duration}.mp4"
+                make_video(path, seconds=duration, varying=True, size=(1440, 810))
+                video = self.service.upload(BytesIO(path.read_bytes()))
+                self.assertEqual(video.duration_seconds, duration)
+                self.calls.clear()
+                answer = self.service.analyze(video.video_id)
+                pictures = [part["image_url"] for part in self.calls[0]["messages"][-1]["content"]
+                            if part["type"] == "image_url"]
+                self.assertEqual(len(pictures), len(video.frames))
+                for image in pictures:
+                    raw = base64.b64decode(image["url"].split(",", 1)[1])
+                    with Image.open(BytesIO(raw)) as frame:
+                        self.assertEqual(max(frame.size), 1280 if duration == 12 else 768)
+                    self.assertEqual(image["detail"], "high" if duration == 12 else "low")
+                self.assertIn("2–5 秒", answer.reply)
+                self.assertEqual(len(self.calls), 1 if duration == 12 else 2)
+                if duration == 12:
+                    self.assertIsNone(answer.detail_selection.focus_range_ms)
+                    self.assertIn("题目要求填写", self.calls[0]["messages"][0]["content"])
+                else:
+                    self.assertEqual(answer.detail_selection.focus_range_ms, (2000, 5000))
+                    self.assertLessEqual(len(answer.detail_selection.frame_indices), 4)
 
     def test_hevc_mp4_preserves_original_and_serves_h264_preview(self):
         path = Path(self.temp.name) / "mobile.mp4"
@@ -228,7 +259,7 @@ class VideoTests(unittest.TestCase):
         with Image.open(settings.video_storage_dir / video.video_id / "frame-0.jpg") as image:
             self.assertEqual(image.size, (64, 96))
 
-    def test_one_request_low_detail_json_and_cached_across_service_restart(self):
+    def test_one_request_short_video_json_and_cached_across_service_restart(self):
         video = self.uploaded()
         result = self.service.analyze(video.video_id)
         self.assertFalse(result.cached)
@@ -241,7 +272,7 @@ class VideoTests(unittest.TestCase):
         self.assertEqual(len(sent["messages"]), 2)
         images = [part for part in sent["messages"][1]["content"] if part["type"] == "image_url"]
         self.assertEqual(len(images), 2)
-        self.assertTrue(all(part["image_url"]["detail"] == "low" for part in images))
+        self.assertTrue(all(part["image_url"]["detail"] == "high" for part in images))
         restored = VideoService(self.settings, self.client).analyze(video.video_id)
         self.assertTrue(restored.cached)
         self.assertEqual(restored.reply, result.reply)

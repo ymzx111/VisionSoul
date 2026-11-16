@@ -39,6 +39,9 @@ class VideoChatTests(unittest.TestCase):
         path = Path(cls.fixture.name) / "clip.mp4"
         make_video(path)
         cls.data = path.read_bytes()
+        long_path = Path(cls.fixture.name) / "long.mp4"
+        make_video(long_path, seconds=13)
+        cls.long_data = long_path.read_bytes()
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="visionsoul-video-chat-")
@@ -125,7 +128,7 @@ class VideoChatTests(unittest.TestCase):
         self.assertIn("本轮是题目/屏幕文字阅读", prompt)
         parts = self.calls[0]["messages"][-1]["content"]
         self.assertTrue(any("C 远离" in part.get("text", "") for part in parts))
-        self.assertTrue(all(part["image_url"]["detail"] == "low" for part in pictures(self.calls[0])))
+        self.assertTrue(all(part["image_url"]["detail"] == "high" for part in pictures(self.calls[0])))
         self.assertEqual(first["assistant_message"]["content"], self.payload["reply"])
 
         self.videos.isolated = True
@@ -145,6 +148,7 @@ class VideoChatTests(unittest.TestCase):
         self.assertNotIn(first["assistant_message"]["content"], sent)
 
     def test_general_video_chat_reuses_facts_from_automatically_selected_half_second_frame(self):
+        self.video = self.videos.upload(BytesIO(self.long_data))
         self.payload["reply"] = "[需看清画面: 0.5–2.5 秒]\n远处站牌的字会影响地点判断。"
         complete = self.client.complete
 
@@ -355,6 +359,7 @@ class VideoChatTests(unittest.TestCase):
             launch.assert_called_once()
 
     def test_video_visual_review_precedes_local_delivery_and_is_bounded(self):
+        self.video = self.videos.upload(BytesIO(self.long_data))
         self.settings.local_source_workspace = Path(self.temp.name) / "workspace"
         fence = chr(96) * 3
         code = 'print(int(input()) * 7)\n'
@@ -451,6 +456,7 @@ class VideoChatTests(unittest.TestCase):
         self.assertIn("response_format", self.calls[-1])
 
     def test_video_json_repair_leaves_room_for_a_visual_review(self):
+        self.video = self.videos.upload(BytesIO(self.long_data))
         replies = iter((
             {"reply": "本次输出遗漏字段。"},
             {**result_payload(), "reply": "[需看清画面: 0.5–2.5 秒]\n天边的目标看不清。"},

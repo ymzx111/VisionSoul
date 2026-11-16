@@ -63,7 +63,7 @@ class RefinementTests(unittest.TestCase):
                 stream.width, stream.height = sharp.size
                 stream.pix_fmt = "yuv420p"
                 stream.options = {"preset": "ultrafast", "crf": "18"}
-                for image in [red] * 7 + [sharp, blur, sharp] + [blue] * 10:
+                for image in [red] * 7 + [sharp, blur, sharp] + [blue] * 94:
                     for packet in stream.encode(av.VideoFrame.from_image(image)):
                         container.mux(packet)
                 for packet in stream.encode():
