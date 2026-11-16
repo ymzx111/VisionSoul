@@ -358,6 +358,73 @@ class VideoChatTests(unittest.TestCase):
             self.assertIsNone(foreign["local_source"])
             launch.assert_called_once()
 
+    def test_auto_video_retries_code_delivery_without_waiting_for_permission(self):
+        if not self.settings.c_sandbox_compiler.is_file():
+            self.skipTest("Wasm compiler assets are optional")
+        self.video = self.videos.upload(BytesIO(self.long_data))
+        root = Path(self.temp.name)
+        self.settings.local_source_workspace = root / "workspace"
+        self.settings.local_visual_studio = root / "devenv.exe"
+        self.settings.local_visual_studio.touch()
+        app.dependency_overrides[get_chat_service] = lambda: self.chat
+        self.addCleanup(app.dependency_overrides.clear)
+        fence = chr(96) * 3
+        solved = (
+            '#include <stdio.h>\nint main(void) {\n'
+            '    int a, b;\n    if (scanf("%d %d", &a, &b) != 2) return 1;\n'
+            '    int x = a, y = b;\n    while (y) { int r = x % y; x = y; y = r; }\n'
+            '    printf("%d %d\\n", x, x ? a / x * b : 0);\n    return 0;\n}\n'
+        )
+        cases = json.dumps([{"name": "两个整数", "stdin": "12 18", "expected": "6 36"}])
+        source = f"[文件名: main.c]\n{fence}c\n{solved}{fence}\n{fence}visionsoul-cases\n{cases}\n{fence}"
+        summary = "画面是C语言编程题，读入两个整数并输出最大公约数和最小公倍数。"
+        waiting = ("能确认任务是完成画面中的C语言题：读入两个整数，用循环（while/for）求最大公约数，"
+                   "再用两数乘积除以最大公约数得到最小公倍数，按输出示例输出。"
+                   "可据此编写完整main.c，请在下一轮确认即可生成。")
+        complete = self.client.complete
+        base = "http://127.0.0.1:8765"
+
+        async def local_app(scope, receive, send):
+            await app({**scope, "client": ("127.0.0.1", 1234)}, receive, send)
+
+        for request, answers in (
+            ("a", [waiting, source]),
+            ("b", ["[需看清画面: 0.5–2.5 秒]\n输出格式尚看不清。", waiting, source]),
+            ("c", ["[需确认题意]\n两个数都为零时要求输出什么？"]),
+            ("d", ["需要确认输入是否允许负数，请确认取值范围。"]),
+        ):
+            with self.subTest(request=request):
+                self.calls.clear()
+                replies = iter(answers)
+
+                def model_reply(*args, **kwargs):
+                    self.payload = {**result_payload(), "summary": summary, "reply": next(replies)}
+                    return complete(*args, **kwargs)
+
+                with (TestClient(local_app, base_url=base, headers={"Origin": base}) as client,
+                      patch.object(self.client, "complete", side_effect=model_reply),
+                      patch("app.services.local_ide.launch_ide") as launch,
+                      patch("app.services.local_ide.show_sandbox_result", return_value=True)):
+                    response = client.post("/api/chat/messages", json={
+                        "request_id": request * 32, "space": "work", "video_id": self.video.video_id,
+                        "message": "", "open_in_ide": True,
+                    })
+                self.assertEqual(response.status_code, 200, response.text)
+                result = response.json()
+                self.assertEqual(len(self.calls), len(answers))
+                self.assertEqual(result["usage"]["total_tokens"], 120 * len(answers))
+                self.assertEqual(result["assistant_message"]["content"], answers[-1])
+                if request in {"a", "b"}:
+                    self.assertIn("不需再询问是否生成", self.calls[-1]["messages"][0]["content"])
+                    delivery = result["local_source"]
+                    self.assertEqual(delivery["status"], "opened", delivery)
+                    self.assertEqual(delivery["python_check"]["case_results"][0]["status"], "passed")
+                    self.assertEqual(delivery["python_check"]["status"], "awaiting_input")
+                    launch.assert_called_once()
+                else:
+                    self.assertIsNone(result["local_source"])
+                    launch.assert_not_called()
+
     def test_video_visual_review_precedes_local_delivery_and_is_bounded(self):
         self.video = self.videos.upload(BytesIO(self.long_data))
         self.settings.local_source_workspace = Path(self.temp.name) / "workspace"

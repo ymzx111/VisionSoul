@@ -33,6 +33,16 @@ C_LEXICAL_NOISE = re.compile(
 )
 C_MAIN = re.compile(r"\bmain\s*\([^)]*\)\s*\{")
 C_LEGACY_LINE_INPUT = re.compile(r"\bgets\s*\(")
+CODE_PROCEED_CONFIRMATION = re.compile(
+    r"请(?:你|您)?(?:在)?\s*(?:下一轮|下轮|现在|先)?\s*确认\s*(?:后|即可|就)?(?:再|我再)?"
+    r"(?:生成|编写|补全|交付)(?:完整)?(?:代码|源码|程序)?[。！？?!]?"
+    r"|(?:是否需要我|需要我|要不要我|要我)(?:现在|继续)?(?:生成|编写|补全|交付)"
+    r"(?:完整)?(?:代码|源码|程序)(?:吗)?[？?]?"
+)
+VIDEO_PROGRAMMING_TASK = re.compile(
+    r"编程(?:题|作业|练习)|程序设计题|(?:C(?:\+\+)?(?:语言)?|Python)\s*(?:题|填空)|代码填空",
+    re.IGNORECASE,
+)
 
 
 def needs_task_clarification(reply: str) -> bool:
@@ -185,15 +195,17 @@ def row_acceptance(reply: str, test: PythonTest, *, required: bool = False) -> t
     return (None, "缺少逐行验收样例及输入格式说明。") if required else (None, None)
 
 
-def incomplete_code_reply(reply: str, caption: str = "") -> bool:
+def incomplete_code_reply(reply: str, caption: str = "", *, video_evidence: str = "") -> bool:
     """Detect delivery promises that did not include a usable source block."""
     if re.search(r"(?:只|仅)(?:需|要)?(?:讲解|分析|概括)|(?:不要|不用|无需|不需要)(?:生成|提供|编写|写)?(?:代码|源码|程序)", caption):
         return False
-    prose = FENCE_BLOCK.sub("", reply)
+    prose = CODE_PROCEED_CONFIRMATION.sub("", FENCE_BLOCK.sub("", reply))
     if needs_task_clarification(reply) or re.search(
-            r"请(?:你|先)?(?:补充|确认|提供|重新拍摄)|无法(?:确定|辨认)|题面.{0,8}(?:缺少|看不清)|[？?]", prose):
+            r"请(?:你|先)?(?:补充|确认|提供|重新拍摄)|(?:还需|需要)(?:先)?确认|无法(?:确定|辨认)|"
+            r"题面.{0,8}(?:缺少|看不清)|缺少(?:关键|输入|输出|计算|排序)|[？?]", prose):
         return False
     committed = (FILE_DECLARATION.search(reply)
+                 or (video_evidence and VIDEO_PROGRAMMING_TASK.search(video_evidence + "\n" + prose))
                  or re.search(r"(?:以下|下面|接下来|现)[^。\n]{0,16}(?:源码|完整代码|完整程序)"
                               r"|(?:题目|题面)要求[^。\n]{0,28}(?:编写|实现|写出)[^。\n]{0,24}(?:程序|代码|源码)", reply)
                  or re.search(r"(?:编写|生成|写出|补全)[^。\n]{0,16}(?:代码|源码|程序)", caption))
@@ -294,7 +306,8 @@ def open_generated_source(settings: Settings, turn: dict,
     if needs_task_clarification(reply):
         return None
     caption = (turn.get("user_message") or {}).get("content", "")
-    requested = bool(CODE_REQUEST.search(caption) or incomplete_code_reply(reply, caption))
+    video_evidence = (turn.get("video_context") or {}).get("summary", "") if caption == "分析这段视频" else ""
+    requested = bool(CODE_REQUEST.search(caption) or incomplete_code_reply(reply, caption, video_evidence=video_evidence))
     declared = bool(FILE_DECLARATION.search(reply))
     if declared:
         parser, required = parse_generated_code, True

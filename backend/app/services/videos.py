@@ -279,7 +279,7 @@ class VideoService:
                                     focus_range_ms=interval, focus_frames=focus_frames)
         return selection, paths
 
-    def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None, memory_text: str = "", inspect: bool = False, debug_code: bool = False, *, auto_task: bool = False, reread: bool = False, reread_text: bool = False, focus_override: tuple[int, int] | None = None, supplemental: list[dict] | None = None) -> VideoAnswer:
+    def _observe(self, info: VideoInfo, caption: str = "", history: list[dict] | None = None, memory_text: str = "", inspect: bool = False, debug_code: bool = False, *, auto_task: bool = False, reread: bool = False, reread_text: bool = False, focus_override: tuple[int, int] | None = None, supplemental: list[dict] | None = None, allow_delivery_retry: bool = True) -> VideoAnswer:
         directory = video_directory(info.video_id, self.settings)
         short_video = info.duration_seconds <= SHORT_VIDEO_SECONDS
         parts = [{"type": "text", "text": "图号@原视频秒，区间是重复图的采样点，不代表连续动作。"}]
@@ -420,13 +420,18 @@ class VideoService:
                             "仅使用规定字段。看不清可明确说明，不补造画面或对白依据。")
                 content = retry_reply(reminder)
             review_pending, proposed_range = visual_review_request(content.reply, question)
-            if delivery and not reread and not retried and not review_pending:
-                if incomplete_code_reply(content.reply, caption):
-                    content = retry_reply(
-                        "编程任务需要实际交付。若现有题面足够，在 reply 中写入文件名声明和一份完整可运行的源码。"
-                        "省略任务复述和交付承诺。缺少会改变结果的关键条件时，只问对应缺项。"
-                        "若程序需要输入，附带至少一组非空的 visionsoul-cases 自测样例。")
-                elif self.auto_sample_retry and missing_input_sample(content.reply, question):
+            if delivery and allow_delivery_retry and not retried and not review_pending:
+                if incomplete_code_reply(content.reply, caption, video_evidence=content.summary if auto_task else ""):
+                    first_content = content
+                    try:
+                        content = retry_reply(
+                            "编程任务需要实际交付。点击开始分析已同意本轮交付，不需再询问是否生成。"
+                            "题面足够时，在 reply 中写入文件名声明和一份完整可运行的源码。"
+                            "缺少会改变结果的关键条件时，只问具体缺项。"
+                            "若程序需要输入，附带至少一组非空的 visionsoul-cases 自测样例。")
+                    except (DeepSeekError, ValueError):
+                        content = first_content
+                elif not reread and self.auto_sample_retry and missing_input_sample(content.reply, question):
                     first_content = content
                     try:
                         content = retry_reply(INPUT_SAMPLE_RETRY)
@@ -446,7 +451,8 @@ class VideoService:
                         reviewed = self._observe(info, caption, history, memory_text, inspect=inspect,
                                                  debug_code=debug_code, auto_task=auto_task, reread=True,
                                                  reread_text=reading or wants_text_detail(content.summary + content.reply),
-                                                 focus_override=focus, supplemental=supplemental)
+                                                 focus_override=focus, supplemental=supplemental,
+                                                 allow_delivery_retry=allow_delivery_retry and not retried)
                     except (DeepSeekError, VideoError, OSError) as exc:
                         logger.warning("视频自动高清复核未完成 error=%s", type(exc).__name__)
                     else:
