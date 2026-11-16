@@ -15,7 +15,8 @@ from uuid import NAMESPACE_URL, uuid5
 from xml.sax.saxutils import escape
 
 from app.core.config import Settings
-from app.services.python_sandbox import PythonCheck, PythonTest
+from app.services.c_sandbox import c_literal_input
+from app.services.python_sandbox import PythonCheck, PythonTest, python_literal_input
 from app.services.file_row_check import FileRowCheck, requests_row_check
 from app.services.code_reruns import remember_source
 from app.services.source_files import (
@@ -102,7 +103,7 @@ def show_sandbox_result(source: Path, check: PythonCheck, *, run_id: str | None 
     if os.name != "nt" or not launcher.is_file() or not find_spec("tkinter"):
         return False
     fields = {"detail", "status", "stdin", "stdout", "stderr", "phase", "case_source", "data_file", "output_path",
-              "expected", "error_line", "source_line", "sample_file"}
+              "expected", "error_line", "source_line", "sample_file", "input_mode", "stdin_file"}
     result = check.model_dump(include=fields)
     result["case_results"] = [row.model_dump(include={"name", "status", "stdin", "stdout", "stderr", "phase", "expected"})
                               for row in check.case_results or []]
@@ -220,6 +221,17 @@ def reads_standard_input(code: str, suffix: str) -> bool:
                 return True
         return False
     return bool(re.search(r"\b(?:scanf|getchar|gets|cin|stdin)\b", C_LEXICAL_NOISE.sub(" ", code)))
+
+
+def sandbox_input_mode(code: str, language: str, *, requires_file: bool = False) -> str:
+    python = language == "python"
+    reads_stdin = reads_standard_input(code, ".py" if python else ".c")
+    literal = python_literal_input(code) if python else c_literal_input(code)
+    if requires_file or "VISIONSOUL_DATA_FILE" in code:
+        return "both" if reads_stdin else "file"
+    if literal:
+        return "stdin_optional_file" if reads_stdin else "file"
+    return "stdin" if reads_stdin else "none"
 
 
 def has_legacy_c_input(reply: str) -> bool:
@@ -350,7 +362,9 @@ def open_generated_source(settings: Settings, turn: dict,
             check = check.model_copy(update={"detail": "修复版在沙箱试跑成功，但写入失败。当前打开的是原始源码。"})
     result = {"path": str(target), "ide": ide, "python_check": check}
     if check is not None:
-        run_id = remember_source(code, target, language, requires_file or check.status == 'awaiting_file', output_name, row_check)
+        run_id = remember_source(code, target, language,
+                                 requires_file or check.input_mode in {"file", "both"} or check.status == "awaiting_file",
+                                 output_name, row_check)
         result["sandbox_run_id"] = run_id
         if language == "python":
             result["python_run_id"] = run_id

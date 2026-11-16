@@ -33,14 +33,22 @@ function SandboxRun({ initial, runId, disabled }) {
   const [expected, setExpected] = useState('');
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
+  const [fileSelected, setFileSelected] = useState(false);
   const filePicker = useRef(null);
   const result = latest || initial;
   if (result.desktop_result_opened) {
     return <div className="python-check python-run"><p role="status">试跑结果已经发送到桌面</p></div>;
   }
   const waitingForFile = ['awaiting_file', 'file_unused'].includes(result.status);
-  const needsFile = waitingForFile || initial.status === 'awaiting_file' || Boolean(result.data_file);
+  const mode = result.input_mode || initial.input_mode;
+  const needsFile = mode ? ['file', 'both'].includes(mode)
+    : waitingForFile || initial.status === 'awaiting_file' || Boolean(result.data_file);
   const showFailure = ['failed', 'mismatch', 'limit'].includes(result.status);
+
+  function clearFile() {
+    if (filePicker.current) filePicker.current.value = '';
+    setFileSelected(false);
+  }
 
   async function rerun(event) {
     event.preventDefault();
@@ -53,7 +61,7 @@ function SandboxRun({ initial, runId, disabled }) {
         setError('请先选择本轮要读取的数据文件。');
         return;
       }
-      const body = { run_id: runId, stdin: input };
+      const body = { run_id: runId, stdin: mode === 'file' || (mode === 'stdin' && file) ? '' : input };
       if (expected) body.expected = expected;
       if (file) {
         try { body.approved_file = await readApprovedFile(file); }
@@ -75,7 +83,7 @@ function SandboxRun({ initial, runId, disabled }) {
     } catch (error) {
       setError(error instanceof TypeError ? '连接中断，请重新试跑。' : error.message);
     } finally {
-      if (filePicker.current) filePicker.current.value = '';
+      clearFile();
       setRunning(false);
     }
   }
@@ -106,13 +114,15 @@ function SandboxRun({ initial, runId, disabled }) {
     <details open={waitingForFile || result.status === 'awaiting_input' ? true : undefined}>
       <summary>{needsFile ? '提供数据文件' : '补充输入并试跑'}</summary>
       <form onSubmit={rerun} className="python-test">
-        <label>{needsFile ? '选择数据文件（UTF-8 TXT、CSV 或 JSON，最多 8 KiB）' : '本轮只读文件（可选）'}
-          <input type="file" accept=".txt,.csv,.json" ref={filePicker} disabled={running || disabled}/>
+        <label>{mode === 'stdin' ? '选择数据文件作为标准输入（可选）' : '选择只读数据文件'}
+          <input type="file" accept=".txt,.csv,.json" ref={filePicker} disabled={running || disabled}
+            onChange={event => setFileSelected(Boolean(event.target.files?.length))}/>
         </label>
-        <label>标准输入
-          <textarea rows={3} maxLength={4096} value={input} disabled={running || disabled}
+        {fileSelected && <button className="text-button" type="button" disabled={running || disabled} onClick={clearFile}>清除所选文件</button>}
+        {mode !== 'file' && <label>标准输入
+          <textarea rows={3} maxLength={4096} value={input} disabled={running || disabled || (mode === 'stdin' && fileSelected)}
             onChange={event => setInput(event.target.value)} placeholder="按题目格式一次填完所有输入"/>
-        </label>
+        </label>}
         <label>参考屏幕输出（可选）
           <textarea rows={2} maxLength={4096} value={expected} disabled={running || disabled}
             onChange={event => setExpected(event.target.value)}/>

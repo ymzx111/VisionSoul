@@ -75,14 +75,12 @@ class CaseSpec(BaseModel):
     expected: str | None = Field(max_length=4096)
 
 
-def python_input_name(code: str, selected: str) -> str:
-    """Stage the approved file under one unambiguous literal input name."""
-    if "VISIONSOUL_DATA_FILE" in code:
-        return selected
+def python_literal_input(code: str) -> str | None:
+    """Recognize a single literal local data file opened for reading."""
     try:
         tree = ast.parse(code)
     except SyntaxError:
-        return selected
+        return None
     inputs = set()
     for call in ast.walk(tree):
         if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "open"
@@ -93,11 +91,16 @@ def python_input_name(code: str, selected: str) -> str:
         if isinstance(mode, ast.Constant) and mode.value in ("r", "rt", "rb"):
             inputs.add(call.args[0].value)
     if len(inputs) != 1:
-        return selected
+        return None
     try:
         return ApprovedFile.plain_text_filename(next(iter(inputs)))
     except ValueError:
-        return selected
+        return None
+
+
+def python_input_name(code: str, selected: str) -> str:
+    """Stage the approved file under one unambiguous literal input name."""
+    return selected if "VISIONSOUL_DATA_FILE" in code else python_literal_input(code) or selected
 
 
 class PythonTest(BaseModel):
@@ -139,6 +142,8 @@ class PythonCheck(BaseModel):
     case_results: list[CaseResult] | None = None
     case_source: Literal["model"] | None = None
     data_file: str | None = None
+    input_mode: Literal["stdin", "file", "both", "stdin_optional_file", "none"] | None = None
+    stdin_file: str | None = None
     output_path: str | None = None
     error_line: int | None = None
     source_line: str | None = None

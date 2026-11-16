@@ -20,6 +20,7 @@ from app.core.config import Settings, get_settings
 from app.core.persona import PERSONA_PROMPT
 from app.main import app
 from app.services.chat import ChatService, context_messages
+from app.services.code_reruns import remember_source
 from app.services.deepseek import DeepSeekClient, DeepSeekError, ModelReply
 from app.services.images import save_image
 
@@ -252,8 +253,10 @@ if os.path.isfile('sample.txt'):
             self.assertEqual(mismatch["status"], "mismatch", mismatch)
             self.assertFalse((self.settings.local_source_workspace / "outputs").exists())
             expected = "需要补货的物资列表：\n杯子 3\n低库存： 1\n"
-            result = client.post("/api/chat/sandbox-runs", json={**authorized, "expected": expected}).json()
+            result = client.post("/api/chat/sandbox-runs", json={**authorized, "stdin": "旧的手写输入", "expected": expected}).json()
             self.assertEqual(result["status"], "passed", result)
+            self.assertEqual(result["input_mode"], "file")
+            self.assertEqual(result["stdin"], "")
             self.assertEqual(result["data_file"], "仓库数据.txt")
             self.assertEqual(result["stdout"], "需要补货的物资列表：\n杯子 3\n低库存： 1\n")
             output = Path(result["output_path"])
@@ -278,6 +281,33 @@ if os.path.isfile('sample.txt'):
             self.assertIsNone(failure["data_file"])
             self.assertIsNone(failure["output_path"])
             self.assertEqual(len(list(output.parent.parent.iterdir())), 1)
+
+    def test_stdin_program_imports_text_without_retaining_file_requirement(self):
+        if not find_spec("wasmtime") or not (self.settings.python_sandbox_runtime / "python.wasm").is_file():
+            self.skipTest("Python WASI runtime is optional")
+        root = Path(self.temp.name)
+        self.settings.local_source_workspace = root / "workspace"
+        app.dependency_overrides[get_settings] = lambda: self.settings
+        self.addCleanup(app.dependency_overrides.clear)
+        base = "http://127.0.0.1:8765"
+        async def local_app(scope, receive, send):
+            await app({**scope, "client": ("127.0.0.1", 1234)}, receive, send)
+
+        run_id = remember_source("print(int(input()) * 2)\n", root / "main.py", "python")
+        with TestClient(local_app, base_url=base, headers={"Origin": base}) as client:
+            payload = {"run_id": run_id, "open_result_window": False}
+            imported = client.post("/api/chat/sandbox-runs", json={
+                **payload, "stdin": "遗留的手写输入", "expected": "42",
+                "approved_file": {"filename": "测试数据.txt", "content": "21"},
+            }).json()
+            self.assertEqual(imported["status"], "passed", imported)
+            self.assertEqual(imported["input_mode"], "stdin")
+            self.assertEqual(imported["stdin_file"], "测试数据.txt")
+            self.assertEqual(imported["stdin"], "21")
+            self.assertIsNone(imported["data_file"])
+            manual = client.post("/api/chat/sandbox-runs", json={**payload, "stdin": "7", "expected": "14"}).json()
+            self.assertEqual(manual["status"], "passed", manual)
+            self.assertIsNone(manual["stdin_file"])
 
     def test_csv_delivery_checks_bad_row_and_later_record_before_saving_source(self):
         if not self.settings.c_sandbox_compiler.is_file():

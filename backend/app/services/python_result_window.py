@@ -163,8 +163,12 @@ def show_result(text, result):
 def add_manual_run(root, tabs, initial, mono):
     page = ttk.Frame(tabs, padding=8)
     tabs.add(page, text="手动试跑")
-    ttk.Label(page, text="标准输入（按题目格式填写，可分多行）").pack(anchor="w")
-    entry = tk.Text(page, height=4, wrap="word", font=(mono, 11), undo=True)
+    mode = initial.get("input_mode")
+    stdin_group = ttk.Frame(page)
+    if mode != "file":
+        stdin_group.pack(fill="x")
+    ttk.Label(stdin_group, text="标准输入（按题目格式填写，可分多行）").pack(anchor="w")
+    entry = tk.Text(stdin_group, height=4, wrap="word", font=(mono, 11), undo=True)
     entry.pack(fill="x", pady=(4, 6))
     reference = ttk.Frame(page)
     reference.pack(fill="x", pady=(0, 6))
@@ -174,9 +178,18 @@ def add_manual_run(root, tabs, initial, mono):
     controls = ttk.Frame(page)
     controls.pack(fill="x", pady=(0, 6))
     selected_file = None
-    needs_file = initial["status"] in {"awaiting_file", "file_unused"} or bool(initial.get("data_file"))
-    status = tk.StringVar(value="填写数据或选择本轮只读文件后运行。")
-    file_label = tk.StringVar(value="未选择文件。请选择本轮允许程序读取的数据文件。")
+    needs_file = mode in {"file", "both"} if mode else (
+        initial["status"] in {"awaiting_file", "file_unused"} or bool(initial.get("data_file")))
+    status = tk.StringVar(value="请为本轮选择只读数据文件。" if needs_file else "可填写标准输入，或选择文件导入。")
+    file_hint = "未选择文件。所选文件内容会作为标准输入。" if mode == "stdin" else "未选择本轮只读数据文件。"
+    file_label = tk.StringVar(value=file_hint)
+
+    def clear_file():
+        nonlocal selected_file
+        selected_file = None
+        file_label.set(file_hint)
+        clear_button.configure(state="disabled")
+        entry.configure(state="normal")
 
     def choose_file():
         nonlocal selected_file
@@ -194,7 +207,7 @@ def add_manual_run(root, tabs, initial, mono):
                 raise ValueError("数据文件超过 8 KiB，请选择较小的文件。")
             selected_file = {"filename": path.name, "content": data.decode("utf-8-sig")}
         except (ValueError, OSError) as exc:
-            selected_file = None
+            clear_file()
             if isinstance(exc, UnicodeDecodeError):
                 file_label.set("文件不是 UTF-8 编码，请另存为 UTF-8 后再选择。")
             elif isinstance(exc, OSError):
@@ -202,10 +215,15 @@ def add_manual_run(root, tabs, initial, mono):
             else:
                 file_label.set(str(exc))
             return
-        file_label.set(f"本轮文件：{path.name}")
+        file_label.set(f"标准输入来自：{path.name}" if mode == "stdin" else f"本轮只读文件：{path.name}")
+        clear_button.configure(state="normal")
+        if mode == "stdin":
+            entry.configure(state="disabled")
 
     file_button = ttk.Button(controls, text="选择数据文件", command=choose_file)
     file_button.pack(side="left", padx=(0, 6))
+    clear_button = ttk.Button(controls, text="清除", command=clear_file, state="disabled")
+    clear_button.pack(side="left", padx=(0, 6))
     ttk.Label(page, textvariable=file_label, wraplength=450).pack(anchor="w")
     ttk.Label(controls, textvariable=status, wraplength=380).pack(side="left", fill="x", expand=True)
     output = output_panel(page, mono)
@@ -226,7 +244,11 @@ def add_manual_run(root, tabs, initial, mono):
             status.set(error)
             return
         filename = result.get("data_file")
-        needs_file = needs_file or bool(filename) or result["status"] in {"awaiting_file", "file_unused"}
+        returned_mode = result.get("input_mode")
+        if returned_mode:
+            needs_file = returned_mode in {"file", "both"}
+        else:
+            needs_file = needs_file or bool(filename) or result["status"] in {"awaiting_file", "file_unused"}
         button.configure(text="授权并试跑" if needs_file else "运行")
         status.set(f"实际读取：{filename} · {result['detail']}" if filename else result["detail"])
         show_result(output, result)
@@ -236,7 +258,7 @@ def add_manual_run(root, tabs, initial, mono):
         if needs_file and selected_file is None:
             status.set("请先从数据所在目录选择本轮要读取的文件。")
             return
-        stdin = entry.get("1.0", "end-1c")
+        stdin = "" if mode == "file" or (mode == "stdin" and selected_file) else entry.get("1.0", "end-1c")
         expected = expected_entry.get("1.0", "end-1c")
         if stdin and not stdin.endswith("\n"):
             stdin += "\n"
@@ -247,11 +269,12 @@ def add_manual_run(root, tabs, initial, mono):
             status.set("参考屏幕输出最多 4096 个字符。")
             return
         approved_file, selected_file = selected_file, None
-        file_label.set("下次试跑请重新选择文件。")
+        file_label.set(file_hint)
         entry.configure(state="disabled")
         expected_entry.configure(state="disabled")
         button.configure(state="disabled")
         file_button.configure(state="disabled")
+        clear_button.configure(state="disabled")
         status.set("正在沙箱试跑…")
 
         def worker():

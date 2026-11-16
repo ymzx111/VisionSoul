@@ -17,9 +17,9 @@ from app.services.deepseek import DeepSeekError, TokenUsage, has_api_key
 from app.services.videos import VideoService, VideoError
 from app.services.audio_evidence import current_context
 from app.services.local_ide import (
-    REQUIRES_DATA_FILE, open_generated_source, reads_standard_input, row_acceptance, show_sandbox_result, split_model_cases,
+    REQUIRES_DATA_FILE, open_generated_source, row_acceptance, sandbox_input_mode, show_sandbox_result, split_model_cases,
 )
-from app.services.c_sandbox import add_missing_standard_headers, c_literal_input, debug_c, run_c_sandbox
+from app.services.c_sandbox import add_missing_standard_headers, debug_c, run_c_sandbox
 from app.services.code_reruns import source_snapshot
 from app.services.python_sandbox import (
     ApprovedFile, PythonCheck, PythonTest, check_python_before_data, debug_python, run_python_sandbox,
@@ -200,6 +200,15 @@ class SandboxRerunResult(PythonCheck):
     desktop_result_opened: bool
 
 
+def route_sandbox_input(test: PythonTest, mode: str) -> PythonTest:
+    if mode == "stdin" and test.approved_file:
+        # The file is authorized for this run. Feed its text through stdin, without mounting it.
+        return test.model_copy(update={"stdin": test.approved_file.content, "approved_file": None, "cases": []})
+    if mode == "file":
+        return test.model_copy(update={"stdin": "", "cases": [case.model_copy(update={"stdin": ""}) for case in test.cases]})
+    return test
+
+
 @router.post("/sandbox-runs", response_model=SandboxRerunResult, summary="补充输入并在本机重新试跑源码")
 @router.post("/python-runs", response_model=SandboxRerunResult, include_in_schema=False)
 def rerun_source(body: SandboxRerun, request: Request, settings: Annotated[Settings, Depends(get_settings)]) -> dict:
@@ -210,9 +219,10 @@ def rerun_source(body: SandboxRerun, request: Request, settings: Annotated[Setti
         raise HTTPException(404, "这份源码的试跑入口已失效，请在新的代码回复中试跑。")
     code, source, language, requires_file, output_name, row_check = snapshot
     original_code = code
-    test = PythonTest(stdin=body.stdin, expected=body.expected, approved_file=body.approved_file)
+    mode = sandbox_input_mode(code, language, requires_file=requires_file)
+    test = route_sandbox_input(PythonTest(stdin=body.stdin, expected=body.expected, approved_file=body.approved_file), mode)
     file_problem = row_check.file_problem(body.approved_file.content) if row_check and body.approved_file else None
-    if requires_file and not body.approved_file:
+    if mode in {"file", "both"} and not body.approved_file:
         check = PythonCheck(status="awaiting_file", detail="这道题需要本地数据。请在文件选择器里打开存放数据的目录，选中文件并授权本轮试跑。", attempts=0)
     elif file_problem:
         check = PythonCheck(status="file_unused", detail=file_problem, attempts=0)
@@ -228,8 +238,13 @@ def rerun_source(body: SandboxRerun, request: Request, settings: Annotated[Setti
         check = run_c_sandbox(settings, code, language, test)
     check = save_sandbox_output(settings.local_source_workspace, output_name, check)
     check = diagnose_run(check, original_code, language, code)
+    check = check.model_copy(update={"input_mode": mode})
     if body.approved_file:
-        check = check.model_copy(update={"detail": f"本轮选择：{body.approved_file.filename} · {check.detail}"})
+        if mode == "stdin":
+            check = check.model_copy(update={"stdin_file": body.approved_file.filename,
+                "detail": f"标准输入来自：{body.approved_file.filename} · {check.detail}"})
+        else:
+            check = check.model_copy(update={"detail": f"本轮选择：{body.approved_file.filename} · {check.detail}"})
     opened = body.open_result_window and show_sandbox_result(source, check, run_id=body.run_id,
                                                               origin=f"{request.url.scheme}://{request.url.netloc}")
     return {**check.model_dump(), "desktop_result_opened": opened}
@@ -257,7 +272,7 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
         workspace = service.settings.local_source_workspace
         file_in_request = re.search(
             r"(?:[a-zA-Z]:[\\/]|\\\\)[^\n]*?\.(?:txt|csv|json)\b", body.message, re.IGNORECASE)
-        requires_file = bool(approved or model_test.approved_file or file_in_request or REQUIRES_DATA_FILE.search(reply))
+        requires_file = bool(model_test.approved_file or file_in_request or REQUIRES_DATA_FILE.search(reply))
         video_context = turn.get("video_context") or {}
         task = "\n".join([body.message, video_context.get("summary", ""),
                           *(row.get("description", "") for row in video_context.get("observations", []))])
@@ -267,13 +282,17 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
         requires_file |= require_row_acceptance
         sample_has_stdin = any(case.stdin.strip() for case in model_test.cases)
 
-        def show_approved_file(check: PythonCheck) -> PythonCheck:
+        def show_approved_file(check: PythonCheck, mode: str) -> PythonCheck:
             if not approved:
                 return check
+            if mode == "stdin":
+                return check.model_copy(update={"stdin_file": approved.filename,
+                    "detail": f"标准输入来自：{approved.filename} · {check.detail}"})
             return check.model_copy(update={"detail": f"本轮选择：{approved.filename} · {check.detail}"})
 
-        def verify_delivery(run, result_name: str | None, needs_file: bool,
+        def verify_delivery(run, result_name: str | None, mode: str, formal_test: PythonTest,
                             code: str, runtime_code: str, language: str) -> PythonCheck | None:
+            needs_file = mode in {"file", "both"}
             if row_problem:
                 return PythonCheck(status="failed", case_source="model", attempts=0,
                                    detail=f"逐行自测未通过。{row_problem}")
@@ -293,7 +312,7 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
                 if needs_file and not approved:
                     return PythonCheck(status="awaiting_file", case_source="model",
                                        detail=f"{summary} 请选择真实数据文件，再点击「授权并试跑」。")
-                if not needs_file and sample_has_stdin and not manual_test.cases and not manual_test.stdin:
+                if not needs_file and sample_has_stdin and not formal_test.cases and not formal_test.stdin and not approved:
                     return PythonCheck(status="awaiting_input", case_source="model",
                                        case_results=sample.case_results,
                                        detail=f"{summary} 请填写真实输入后再试跑。")
@@ -302,34 +321,42 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
             if row_check and approved:
                 file_problem = row_check.file_problem(approved.content)
                 if file_problem:
-                    return show_approved_file(PythonCheck(status="file_unused", detail=file_problem, attempts=0))
+                    return show_approved_file(PythonCheck(status="file_unused", detail=file_problem, attempts=0), mode)
             if sample_available or approved or result_name:
-                formal = save_sandbox_output(workspace, result_name, run(manual_test))
-                return show_approved_file(diagnose_run(formal, code, language, runtime_code))
+                formal = save_sandbox_output(workspace, result_name, run(formal_test))
+                return show_approved_file(diagnose_run(formal, code, language, runtime_code), mode)
             return None
+
+        def input_settings(code: str, language: str) -> tuple[str, PythonTest]:
+            mode = sandbox_input_mode(code, language, requires_file=requires_file)
+            if mode == "none" and approved:
+                mode = "file"
+            return mode, route_sandbox_input(manual_test, mode)
 
         def verify_python(code: str) -> PythonCheck:
             runtime_code, result_name = python_text_output(code, output_name)
-            needs_file = requires_file or "VISIONSOUL_DATA_FILE" in code
-            if not needs_file and reads_standard_input(code, ".py") and not sample_has_stdin and not manual_test.has_local_data:
+            mode, formal_test = input_settings(code, "python")
+            if mode in {"stdin", "stdin_optional_file"} and not sample_has_stdin and not manual_test.has_local_data:
                 check = check_python_before_data(code)
                 if check.status != "awaiting_file":
-                    return diagnose_run(check, code, "python")
+                    return diagnose_run(check, code, "python").model_copy(update={"input_mode": mode})
                 return PythonCheck(status="awaiting_input", phase="compile", attempts=0,
+                                   input_mode=mode,
                                    detail="语法检查通过，但未取得非空自测输入。可重新生成代码和样例，或填写输入和参考输出试跑。")
             check = verify_delivery(
                 lambda test: run_python_sandbox(service.settings, runtime_code, test),
-                result_name, needs_file, code, runtime_code, "python")
-            if check is not None:
-                return check
-            if needs_file:
-                return diagnose_run(check_python_before_data(code), code, "python")
-            return diagnose_run(debug_python(service.settings, service.client, turn["user_message"]["content"],
-                                             code, manual_test), code, "python")
+                result_name, mode, formal_test, code, runtime_code, "python")
+            if check is None:
+                if mode in {"file", "both"}:
+                    check = diagnose_run(check_python_before_data(code), code, "python")
+                else:
+                    check = diagnose_run(debug_python(service.settings, service.client, turn["user_message"]["content"],
+                                                      code, formal_test), code, "python")
+            return check.model_copy(update={"input_mode": mode})
 
         def verify_c(code: str, language: str) -> PythonCheck:
             runtime_code, result_name = c_text_output(code, output_name)
-            needs_file = bool(requires_file or "VISIONSOUL_DATA_FILE" in code or c_literal_input(code))
+            mode, formal_test = input_settings(code, language)
             repaired_source = None
             header_attempted = False
 
@@ -349,20 +376,20 @@ def send_message(body: SendMessage, request: Request, service: Annotated[ChatSer
                 repaired_source, runtime_code = candidate, candidate_runtime
                 return verified
 
-            check = verify_delivery(run, result_name, needs_file, code, runtime_code, language)
+            check = verify_delivery(run, result_name, mode, formal_test, code, runtime_code, language)
             if check is None:
-                if needs_file:
+                if mode in {"file", "both"}:
                     check = run(PythonTest(), compile_only=True)
                 else:
                     check = debug_c(service.settings, service.client, turn["user_message"]["content"], code,
-                                    language, manual_test, initial_check=run(manual_test))
+                                    language, formal_test, initial_check=run(formal_test))
                 check = diagnose_run(check, repaired_source or code, language, runtime_code)
             if repaired_source:
                 check = check.model_copy(update={
                     "repaired_code": repaired_source,
                     "detail": f"已按编译器提示补齐标准头文件。{check.detail}",
                 })
-            return check
+            return check.model_copy(update={"input_mode": mode})
 
         turn["local_source"] = open_generated_source(
             service.settings, turn,
