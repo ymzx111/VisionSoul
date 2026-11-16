@@ -21,7 +21,10 @@ SCREEN_RULES_TASK = """遇到滚动题面时跨帧拼读题目要求、输出格
 
 _REQUIREMENT_REFERENCE = re.compile(r"第\s*[0-9一二三四五六七八九十]+\s*(?:项|条|点)|(?:要求|条件)\s*[0-9一二三四五六七八九十]+")
 READ_AGAIN = re.compile(r"重新|再看|再读|仔细|看不清|读不清|模糊")
-_VISUAL_REVIEW_MARKER = re.compile(r"^\s*\[需看清画面(?:\s*[:：]\s*([^\]\r\n]+))?\]\s*$", re.MULTILINE)
+_VISUAL_REVIEW_MARKER = re.compile(
+    r"^[ \t]*(?:\[需确认题意\][ \t]*)?\[需看清画面(?:[ \t]*[:：][ \t]*([^\]\r\n]+))?\]",
+    re.MULTILINE,
+)
 _UNREADABLE = re.compile(r"看不清|读不清|看不全|读不全|无法(?:看清|辨认|读全)|辨认不出|未能读全|"
                          r"(?:未|没(?:有)?)拍全|被.{0,12}遮挡|未完整露出|没有完整露出|画面.{0,12}模糊|字迹模糊|"
                          r"(?:未|没(?:有)?)完整显示|尚未显示")
@@ -41,7 +44,7 @@ def visual_review_request(reply: str, question: str) -> tuple[bool, tuple[int, i
     marker = _VISUAL_REVIEW_MARKER.search(prose)
     if marker:
         interval = parse_focus_range(f"重点看 {marker[1]}") if marker[1] else None
-        return True, interval if valid_focus_range(interval) else None
+        return True, interval
     # 兼容模型漏写标记的情况，同时避免把明确可解的题和无关模糊细节拦住。
     pending = "[需确认题意]" in prose or "[文件名" not in prose
     missing_picture = _RECAPTURE.search(prose) or (
@@ -52,9 +55,19 @@ def visual_review_request(reply: str, question: str) -> tuple[bool, tuple[int, i
 
 def review_interval(interval, observations, frames, duration_seconds, *, clue: str = ""):
     end_limit = round(duration_seconds * 1000)
-    if interval and interval[0] < end_limit:
-        return interval[0], min(interval[1], end_limit)
     times = {frame.index: frame.time_seconds for frame in frames}
+    if interval and 0 <= interval[0] < min(interval[1], end_limit):
+        start, end = interval[0], min(interval[1], end_limit)
+        if end - start > MAX_FOCUS_DURATION_MS:
+            # 模型给出宽区间时，优先围绕区间内读不清的题面证据补抽。
+            anchors = [round(times[item.frame_index] * 1000) for item in observations
+                       if item.uncertain and item.frame_index in times
+                       and _TASK_TEXT.search(" ".join((*item.keywords, item.description)))]
+            anchor = next((time for time in sorted(anchors) if start <= time <= end), None)
+            if anchor is not None:
+                start = max(start, min(anchor - 2000, end - MAX_FOCUS_DURATION_MS))
+            end = start + MAX_FOCUS_DURATION_MS
+        return start, end
     rules, outputs = [], []
     for item in observations:
         if item.frame_index not in times:
@@ -75,10 +88,12 @@ def review_interval(interval, observations, frames, duration_seconds, *, clue: s
         return start, min(end_limit, start + MAX_FOCUS_DURATION_MS)
     target, mentioned = None, None
     for item in reversed(observations):
-        if item.frame_index not in times or _INCIDENTAL_SAMPLE.search(item.description):
+        if item.frame_index not in times:
             continue
         names = [word for word in item.keywords if len(word) >= 2 and word not in ("主体", "画面", "视频")]
         matching = any(word in clue for word in names)
+        if _INCIDENTAL_SAMPLE.search(item.description) and not (item.uncertain and matching):
+            continue
         if item.uncertain and matching:
             target = item
             break

@@ -493,6 +493,26 @@ class VideoChatTests(unittest.TestCase):
                     self.assertIn("聊天框补充", result["assistant_message"]["content"])
                     launch.assert_not_called()
 
+    def test_inline_broad_visual_request_revisits_original_after_global_high_frames(self):
+        self.video = self.videos.upload(BytesIO(self.long_data))
+        self.payload["reply"] = "[需看清画面: 5–12 秒] 题目文字太小，无法可靠读取输出要求。"
+
+        result = self.chat.send(conversation_id=None, request_id="f" * 32, message="请重新看清视频题目",
+                                image_id=None, video_id=self.video.video_id, space="work")
+
+        self.assertEqual(len(self.calls), 2)
+        self.assertTrue(any(part["image_url"]["detail"] == "high" for part in pictures(self.calls[0])))
+        selection = result["video_context"]["detail_selection"]
+        self.assertEqual(selection["focus_range_ms"], [5000, 10000])
+        high_count = sum(part["image_url"]["detail"] == "high" for part in pictures(self.calls[1]))
+        self.assertEqual(high_count, len(selection["focus_frames"]))
+        self.assertTrue(1 <= high_count <= 4)
+        self.assertIn("自动高清复核", self.calls[1]["messages"][0]["content"])
+        reply = result["assistant_message"]["content"]
+        self.assertIn("5–10 秒", reply)
+        self.assertIn("无法可靠读取输出要求", reply)
+        self.assertNotIn("[需看清画面", reply)
+
     def test_video_followup_uses_clear_photos_with_saved_context_and_no_frame_resend(self):
         self.settings.image_storage_dir = Path(self.temp.name) / "images"
         photos = []
