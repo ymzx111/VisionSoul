@@ -6,7 +6,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from app.services.source_files import (
-    UnsafeWorkspacePath, ensure_workspace_path, parse_generated_code,
+    UnsafeWorkspacePath, UnsupportedDeliveryLanguage, ensure_workspace_path, parse_generated_code,
     parse_generated_code_or_infer, save_dated_source,
 )
 
@@ -41,9 +41,9 @@ class WorkspacePathGuardTests(unittest.TestCase):
         self.assertEqual(ensure_workspace_path(self.workspace / "Python" / "main.py", self.workspace),
                          self.workspace / "Python" / "main.py")
 
-    def test_only_python_c_and_cpp_are_accepted(self):
+    def test_only_python_and_c_are_accepted(self):
         fence = chr(96) * 3
-        for filename, language in (("main.py", "python"), ("main.c", "c"), ("main.cpp", "c++")):
+        for filename, language in (("main.py", "python"), ("main.c", "c")):
             text = f"[文件名: {filename}]\n{fence}{language}\nint main(void){{return 0;}}\n{fence}"
             with self.subTest(filename=filename):
                 self.assertEqual(parse_generated_code(text)[0], filename)
@@ -51,6 +51,18 @@ class WorkspacePathGuardTests(unittest.TestCase):
             text = f"[文件名: {filename}]\n{fence}{language}\nclass A {{}}\n{fence}"
             with self.subTest(filename=filename), self.assertRaises(ValueError):
                 parse_generated_code(text)
+
+    def test_cpp_cannot_bypass_delivery_through_inference(self):
+        fence = chr(96) * 3
+        for declaration, language in (("[文件名: main.cpp]\n", "cpp"),
+                                      ("[文件名: main.cc]\n", "cc"),
+                                      ("[文件名: main.cxx]\n", "cxx"),
+                                      ("[语言: C++]\n[文件名: main.c]\n", "c"),
+                                      ("[文件名: main.c]\n", "c++"), ("", "cpp")):
+            with self.subTest(declaration=declaration, language=language):
+                text = f"{declaration}{fence}{language}\nint main() {{ return 0; }}\n{fence}"
+                with self.assertRaises(UnsupportedDeliveryLanguage):
+                    parse_generated_code_or_infer(text)
 
     def test_missing_filename_is_inferred_from_single_code_block(self):
         fence = chr(96) * 3

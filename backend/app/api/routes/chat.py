@@ -27,7 +27,7 @@ from app.services.python_sandbox import (
 from app.services.sandbox_output import (
     c_text_output, declared_text_output, python_text_output, save_sandbox_output,
 )
-from app.services.source_files import CODE_REQUEST
+from app.services.source_files import CODE_REQUEST, DELIVERY_LANGUAGE_MESSAGE
 from app.services.sandbox_diagnostics import diagnose_run
 from app.services.file_row_check import requests_row_check
 
@@ -43,7 +43,7 @@ class SendMessage(BaseModel):
     space: ChatSpace = Field(default="companion", title="对话空间", description="工作解析不读取角色或记忆；同话题不能跨空间。")
     inspect_video: bool = Field(default=False,title="重新细看视频并比较候选",description="显式重新发送画面，可能增加模型用量；普通追问为false。")
     open_in_ide: bool = Field(default=False, title="在本机打开生成的源码")
-    python_test: PythonTest | None = Field(default=None, title="本轮本机 Python 验收样例")
+    python_test: PythonTest | None = Field(default=None, title="本轮本机 Python 或 C 验收样例")
     debug_code: bool = Field(default=False,title="从视频辅助排查代码报错",description="显式读取最多4张高清并生成建议，不执行代码；产生API用量。")
     image_id: Identifier | None = Field(default=None, title="可选主素材图片编号")
     image_ids: list[Identifier] = Field(default_factory=list, max_length=5, title="本轮图片编号（含主素材，最多五张）")
@@ -218,6 +218,8 @@ def rerun_source(body: SandboxRerun, request: Request, settings: Annotated[Setti
     if snapshot is None:
         raise HTTPException(404, "这份源码的试跑入口已失效，请在新的代码回复中试跑。")
     code, source, language, requires_file, output_name, row_check = snapshot
+    if language not in {"python", "c"}:
+        raise HTTPException(422, DELIVERY_LANGUAGE_MESSAGE)
     original_code = code
     mode = sandbox_input_mode(code, language, requires_file=requires_file)
     test = route_sandbox_input(PythonTest(stdin=body.stdin, expected=body.expected, approved_file=body.approved_file), mode)
@@ -233,7 +235,7 @@ def rerun_source(body: SandboxRerun, request: Request, settings: Annotated[Setti
         check = run_python_sandbox(settings, code, test)
     else:
         if not settings.c_sandbox_enabled:
-            raise HTTPException(503, "本机 C/C++ 沙箱已关闭。")
+            raise HTTPException(503, "本机 C 沙箱已关闭。")
         code, output_name = c_text_output(code, output_name)
         check = run_c_sandbox(settings, code, language, test)
     check = save_sandbox_output(settings.local_source_workspace, output_name, check)

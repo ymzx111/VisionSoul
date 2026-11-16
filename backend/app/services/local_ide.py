@@ -21,7 +21,7 @@ from app.services.file_row_check import FileRowCheck, requests_row_check
 from app.services.code_reruns import remember_source
 from app.services.source_files import (
     CODE_REQUEST, FENCE_BLOCK, FILE_DECLARATION, parse_generated_code, parse_generated_code_or_infer,
-    save_dated_source, source_directory, write_source,
+    save_dated_source, source_directory, UnsupportedDeliveryLanguage, write_source,
 )
 
 logger = logging.getLogger(__name__)
@@ -215,6 +215,8 @@ def incomplete_code_reply(reply: str, caption: str = "", *, video_evidence: str 
     try:
         parser = parse_generated_code if FILE_DECLARATION.search(source_reply) else parse_generated_code_or_infer
         parser(source_reply)
+    except UnsupportedDeliveryLanguage:
+        return False
     except ValueError:
         return True
     return False
@@ -252,7 +254,7 @@ def has_legacy_c_input(reply: str) -> bool:
         filename, code = parse_generated_code_or_infer(source_reply)
     except ValueError:
         return False
-    return Path(filename).suffix in {".c", ".cpp", ".cc", ".cxx"} and bool(
+    return Path(filename).suffix == ".c" and bool(
         C_LEGACY_LINE_INPUT.search(C_LEXICAL_NOISE.sub(" ", code)))
 
 
@@ -332,13 +334,13 @@ def open_generated_source(settings: Settings, turn: dict,
                     raise ValueError("Python 代码语法不完整，未生成源文件。") from exc
             launcher = settings.local_pycharm or Path(sys.executable).with_name("pythonw.exe")
             ide = "PyCharm" if settings.local_pycharm else "Python IDLE"
-        elif extension in {".c", ".cpp", ".cc", ".cxx"}:
+        elif extension == ".c":
             if not C_MAIN.search(C_LEXICAL_NOISE.sub(" ", code)):
-                raise ValueError("C/C++ 代码缺少完整的 main 函数，未生成源文件。")
+                raise ValueError("C 代码缺少完整的 main 函数，未生成源文件。")
             launcher, ide = settings.local_visual_studio, "Visual Studio"
         else:
-            raise ValueError("自动打开支持 C、C++ 和 Python。")
-        language = "python" if extension == ".py" else "c" if extension == ".c" else "cpp"
+            raise ValueError("自动打开支持 Python 和 C。")
+        language = "python" if extension == ".py" else "c"
 
         def verify():
             if language == "python":
@@ -353,6 +355,8 @@ def open_generated_source(settings: Settings, turn: dict,
         workspace = source_directory(root.parent.resolve(), root.name)
         target = save_dated_source(workspace, filename, code,
                                    encoding="utf-8-sig" if ide == "Visual Studio" else "utf-8")
+    except UnsupportedDeliveryLanguage as exc:
+        return {"status": "error", "detail": str(exc)}
     except ValueError as exc:
         if not required:
             return None

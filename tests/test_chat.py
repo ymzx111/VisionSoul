@@ -392,6 +392,7 @@ int main(void) {
         self.settings.local_visual_studio = root / "devenv.exe"
         self.settings.local_visual_studio.touch()
         app.dependency_overrides[get_chat_service] = lambda: self.service
+        app.dependency_overrides[get_settings] = lambda: self.settings
         self.addCleanup(app.dependency_overrides.clear)
 
         legacy = r'''#include <stdio.h>
@@ -463,7 +464,7 @@ int main() // 定义主函数
             self.assertEqual(rerun["stdout"], expected)
             self.assertEqual(model.call_count, 2)
 
-    def test_c_and_cpp_desktop_delivery_and_local_rerun(self):
+    def test_c_desktop_delivery_and_local_rerun(self):
         if not self.settings.c_sandbox_compiler.is_file():
             self.skipTest("Wasm compiler assets are optional")
         root = Path(self.temp.name)
@@ -488,47 +489,80 @@ int main() // 定义主函数
               patch("app.services.local_ide.launch_ide") as launch,
               patch("app.services.local_ide.show_sandbox_result", return_value=True) as viewer,
               patch("app.api.routes.chat.show_sandbox_result", return_value=True) as rerun_viewer):
-            for index, lang in enumerate(("c", "cpp"), 1):
-                with self.subTest(language=lang):
-                    filename = f"main.{lang}"
-                    reply = f"[文件名: {filename}]\n{fence}{lang}\n{code}{fence}"
-                    with patch.object(self.service.client, "complete", return_value=ModelReply(answer=reply, model="test")):
-                        response = client.post("/api/chat/messages", headers=origin, json={
-                            "request_id": str(index) * 32, "space": "work", "image_id": picture,
-                            "message": f"写 {lang} 程序", "open_in_ide": True,
-                            "python_test": {"stdin": "21", "expected": "42"},
-                        })
-                    self.assertEqual(response.status_code, 200, response.text)
-                    source = response.json()["local_source"]
-                    self.assertEqual(source["status"], "opened")
-                    self.assertTrue(source["desktop_result_opened"])
-                    self.assertEqual(source["python_check"]["status"], "passed")
-                    self.assertEqual(viewer.call_args.args[1].stdout, "42\n")
-                    self.assertEqual(viewer.call_args.args[1].stdin, "21")
-                    path = Path(source["path"])
-                    self.assertTrue(launch.call_args.args[0][1].endswith(f"{path.name}.sln"))
-                    path.write_text("edited source", encoding="utf8")
-                    request = {"run_id": source["sandbox_run_id"], "stdin": "22"}
-                    with patch("app.services.deepseek.DeepSeekClient.complete", side_effect=AssertionError("model called")):
-                        retry = client.post("/api/chat/sandbox-runs", headers=origin, json=request)
-                    self.assertEqual(retry.status_code, 200, retry.text)
-                    self.assertEqual(retry.json()["stdout"], "44\n")
-                    self.assertTrue(retry.json()["desktop_result_opened"])
-                    self.assertEqual(rerun_viewer.call_args.args[0], path)
-                    self.assertEqual(rerun_viewer.call_args.args[1].stdout, "44\n")
-                    self.assertEqual(rerun_viewer.call_args.args[1].stdin, "22")
-                    self.assertEqual(viewer.call_args.kwargs, {"run_id": source["sandbox_run_id"], "origin": base})
-                    window_count = rerun_viewer.call_count
-                    with patch("app.services.deepseek.DeepSeekClient.complete", side_effect=AssertionError("model called")):
-                        manual = client.post("/api/chat/sandbox-runs", headers=origin,
-                                             json={**request, "stdin": "23\n", "open_result_window": False})
-                    self.assertEqual(manual.status_code, 200, manual.text)
-                    self.assertEqual(manual.json()["stdin"], "23\n")
-                    self.assertEqual(manual.json()["stdout"], "46\n")
-                    self.assertFalse(manual.json()["desktop_result_opened"])
-                    self.assertEqual(rerun_viewer.call_count, window_count)
-            self.assertEqual(launch.call_count, 2)
+            filename = "main.c"
+            reply = f"[文件名: {filename}]\n{fence}c\n{code}{fence}"
+            with patch.object(self.service.client, "complete", return_value=ModelReply(answer=reply, model="test")):
+                response = client.post("/api/chat/messages", headers=origin, json={
+                    "request_id": "1" * 32, "space": "work", "image_id": picture,
+                    "message": "写 C 程序", "open_in_ide": True,
+                    "python_test": {"stdin": "21", "expected": "42"},
+                })
+            self.assertEqual(response.status_code, 200, response.text)
+            source = response.json()["local_source"]
+            self.assertEqual(source["status"], "opened")
+            self.assertTrue(source["desktop_result_opened"])
+            self.assertEqual(source["python_check"]["status"], "passed")
+            self.assertEqual(viewer.call_args.args[1].stdout, "42\n")
+            self.assertEqual(viewer.call_args.args[1].stdin, "21")
+            path = Path(source["path"])
+            self.assertTrue(launch.call_args.args[0][1].endswith(f"{path.name}.sln"))
+            path.write_text("edited source", encoding="utf8")
+            request = {"run_id": source["sandbox_run_id"], "stdin": "22"}
+            with patch("app.services.deepseek.DeepSeekClient.complete", side_effect=AssertionError("model called")):
+                retry = client.post("/api/chat/sandbox-runs", headers=origin, json=request)
+            self.assertEqual(retry.status_code, 200, retry.text)
+            self.assertEqual(retry.json()["stdout"], "44\n")
+            self.assertTrue(retry.json()["desktop_result_opened"])
+            self.assertEqual(rerun_viewer.call_args.args[0], path)
+            self.assertEqual(rerun_viewer.call_args.args[1].stdout, "44\n")
+            self.assertEqual(rerun_viewer.call_args.args[1].stdin, "22")
+            self.assertEqual(viewer.call_args.kwargs, {"run_id": source["sandbox_run_id"], "origin": base})
+            window_count = rerun_viewer.call_count
+            with patch("app.services.deepseek.DeepSeekClient.complete", side_effect=AssertionError("model called")):
+                manual = client.post("/api/chat/sandbox-runs", headers=origin,
+                                     json={**request, "stdin": "23\n", "open_result_window": False})
+            self.assertEqual(manual.status_code, 200, manual.text)
+            self.assertEqual(manual.json()["stdin"], "23\n")
+            self.assertEqual(manual.json()["stdout"], "46\n")
+            self.assertFalse(manual.json()["desktop_result_opened"])
+            self.assertEqual(rerun_viewer.call_count, window_count)
+            launch.assert_called_once()
         self.assertEqual(list((root / "workspace" / ".sandbox-jobs").iterdir()), [])
+
+    def test_cpp_delivery_and_old_rerun_are_unavailable(self):
+        root = Path(self.temp.name)
+        self.settings.local_source_workspace = root / "workspace"
+        app.dependency_overrides[get_settings] = lambda: self.settings
+        app.dependency_overrides[get_chat_service] = lambda: self.service
+        self.addCleanup(app.dependency_overrides.clear)
+        fence = chr(96) * 3
+        source = f"[语言: C++]\n[文件名: main.cpp]\n{fence}cpp\nint main() {{ return 0; }}\n{fence}"
+        base = "http://127.0.0.1:8765"
+
+        async def local_app(scope, receive, send):
+            await app({**scope, "client": ("127.0.0.1", 1234)}, receive, send)
+
+        with (TestClient(local_app, base_url=base, headers={"Origin": base}) as client,
+              patch.object(self.service.client, "complete", return_value=ModelReply(answer=source, model="test")) as model,
+              patch("app.services.local_ide.launch_ide") as launch,
+              patch("app.api.routes.chat.run_c_sandbox") as runner):
+            response = client.post("/api/chat/messages", json={
+                "request_id": "a" * 32, "space": "work", "image_id": self.image(),
+                "message": "请用 C++ 编写程序", "open_in_ide": True,
+            })
+            self.assertEqual(response.status_code, 200, response.text)
+            rejected = response.json()["local_source"]
+            self.assertEqual(rejected["status"], "error")
+            self.assertIn("当前版本支持 Python 和 C", rejected["detail"])
+            self.assertFalse(self.settings.local_source_workspace.exists())
+            snapshot = ("int main() { return 0; }", root / "main.cpp", "cpp", False, None, None)
+            with patch("app.api.routes.chat.source_snapshot", return_value=snapshot):
+                rerun = client.post("/api/chat/sandbox-runs", json={"run_id": "b" * 32})
+            self.assertEqual(rerun.status_code, 422, rerun.text)
+            self.assertIn("当前版本支持 Python 和 C", rerun.json()["detail"])
+            model.assert_called_once()
+            launch.assert_not_called()
+            runner.assert_not_called()
 
     def test_two_turn_context_fixed_persona_and_persistence(self):
         first = self.send("我叫小夏")

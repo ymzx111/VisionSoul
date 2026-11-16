@@ -16,12 +16,13 @@ CODE_BLOCK = re.compile(
 )
 EXTENSIONS = {
     "c": {".c"},
-    "cpp": {".cpp", ".cc", ".cxx"},
-    "c++": {".cpp", ".cc", ".cxx"},
     "python": {".py"},
     "py": {".py"},
 }
-DECLARED_LANGUAGES = {"c语言": "c", "c++语言": "cpp", "python语言": "python"}
+DECLARED_LANGUAGES = {"c语言": "c", "python语言": "python"}
+DELIVERY_LANGUAGE_MESSAGE = "当前版本支持 Python 和 C，是否可以改用其中一种？"
+_CPP_LABELS = {"cpp", "c++", "cc", "cxx", "cpp语言", "c++语言"}
+_CPP_SUFFIXES = {".cpp", ".cc", ".cxx"}
 FILE_DECLARATION = re.compile(r"^[ \t]*\[文件名[ \t]*[:：]", re.MULTILINE)
 SAFE_FILENAME = re.compile(r"[\w-][\w .-]{0,119}")
 WINDOWS_DEVICE = re.compile(r"CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³]", re.IGNORECASE)
@@ -30,10 +31,13 @@ FENCE_BLOCK = re.compile(
     r"^[ \t]*(?P<fence>`{3,})[ \t]*(?P<language>[\w+#-]*)[ \t]*\n(?P<code>[\s\S]*?)^[ \t]*(?P=fence)[ \t]*(?:\n|\Z)",
     re.MULTILINE,
 )
-INFER_FILENAMES = {"python": "main.py", "py": "main.py", "c": "main.c",
-                   "cpp": "main.cpp", "c++": "main.cpp", "cc": "main.cpp"}
+INFER_FILENAMES = {"python": "main.py", "py": "main.py", "c": "main.c"}
 # 用户是否明确要代码；只在这类请求没有拿到源码时才提示，不打扰普通提问。
 CODE_REQUEST = re.compile(r"代码|源码|程序|写出|编写|补全|填空|实现|(?:Python|C\+\+|C语言)\s*(?:编程)?题", re.IGNORECASE)
+
+
+class UnsupportedDeliveryLanguage(ValueError):
+    """C++ 源码暂不进入本机交付。"""
 
 
 def parse_generated_code(text: str) -> tuple[str, str]:
@@ -51,13 +55,15 @@ def parse_generated_code(text: str) -> tuple[str, str]:
     if not SAFE_FILENAME.fullmatch(filename) or WINDOWS_DEVICE.fullmatch(device_name):
         raise ValueError("请使用普通文件名，文件名中不能包含路径或设备名。")
     extension = Path(filename).suffix
-    if block["declared"]:
-        label = "".join(block["declared"].lower().split())
+    label = "".join((block["declared"] or "").lower().split())
+    if extension.lower() in _CPP_SUFFIXES or language in _CPP_LABELS or label in _CPP_LABELS:
+        raise UnsupportedDeliveryLanguage(DELIVERY_LANGUAGE_MESSAGE)
+    if label:
         declared = DECLARED_LANGUAGES.get(label, label)
         if extension not in EXTENSIONS.get(declared, set()):
             raise ValueError("语言声明、代码块和文件扩展名须一致。")
     if extension not in EXTENSIONS.get(language, set()):
-        raise ValueError("文件扩展名与代码块语言不匹配，目前只支持 C、C++ 和 Python。")
+        raise ValueError("文件扩展名与代码块语言不匹配，目前只支持 Python 和 C。")
     if not code.strip():
         raise ValueError("代码块是空的。")
 
@@ -72,11 +78,16 @@ def parse_generated_code_or_infer(text: str) -> tuple[str, str]:
     try:
         return parse_generated_code(text)
     except ValueError as strict_error:
-        blocks = list(FENCE_BLOCK.finditer(text.replace("\r\n", "\n")))
+        normalized = text.replace("\r\n", "\n")
+        if FILE_DECLARATION.search(normalized):
+            raise
+        blocks = list(FENCE_BLOCK.finditer(normalized))
         if len(blocks) != 1:
             raise strict_error
         block = blocks[0]
         language = block["language"].strip()
+        if language.lower() in _CPP_LABELS:
+            raise UnsupportedDeliveryLanguage(DELIVERY_LANGUAGE_MESSAGE) from strict_error
         filename = INFER_FILENAMES.get(language.lower())
         code = block["code"]
         if not filename or not code.strip() or "```" in code:
@@ -135,7 +146,7 @@ def save_dated_source(workspace: Path, filename: str, code: str, *, encoding: st
     ensure_workspace_path(workspace, workspace)
     if source.suffix == ".py":
         folder = source_directory(workspace, "Python")
-    elif source.suffix in {".c", ".cpp", ".cc", ".cxx"}:
+    elif source.suffix == ".c" or source.suffix in _CPP_SUFFIXES:
         folder = source_directory(workspace, "C")
     else:
         folder = workspace  # 保留命令行原有的其他语言支持。
