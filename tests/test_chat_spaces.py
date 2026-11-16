@@ -80,6 +80,19 @@ class ChatSpaceTests(unittest.TestCase):
         self.assertEqual(first["space"], "work")
         self.assertEqual(first["persona_id"], "work-v1")
 
+    def test_work_history_lists_latest_fifteen_without_deleting_older_topics(self):
+        topics = []
+        for day in range(1, 18):
+            with patch("app.services.chat_store.now_iso", return_value=f"2026-11-{day:02d}T16:30:00+00:00"):
+                topics.append(self.send(message=f"话题 {day}")["conversation_id"])
+
+        with self.api() as api:
+            rows = api.get("/api/chat/conversations?kind=all&space=work").json()
+            self.assertEqual([row["id"] for row in rows], list(reversed(topics[-15:])))
+            self.assertEqual(rows[0]["created_at"], "2026-11-17T16:30:00+00:00")
+            self.assertEqual(rows[0]["title"], "话题 17")
+            self.assertEqual(api.get(f"/api/chat/conversations/{topics[0]}?space=work").status_code, 200)
+
     def test_companion_uses_confirmed_memory_work_does_not(self):
         self.roles.store.add_memory("preference", "角色记忆暗号紫色星星")
         self.send("companion")

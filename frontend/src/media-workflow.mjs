@@ -4,7 +4,7 @@ import { createChatWorkflow } from './chat-workflow.mjs';
 
 export const VIDEO_DURATION_MESSAGE = '超过视频时长上限，上限为30秒';
 export const IMAGE_ACCEPT = 'image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp';
-export const MEDIA_ACCEPT = IMAGE_ACCEPT + ',video/mp4,.mp4';
+export const VIDEO_ACCEPT = 'video/mp4,.mp4';
 const kindOf = file => /\.(jpe?g|png|webp)$/i.test(file.name) ? 'image' : /\.mp4$/i.test(file.name) ? 'video' : null;
 
 export function readVideoDuration(file, { signal } = {}) {

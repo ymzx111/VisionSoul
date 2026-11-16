@@ -17,7 +17,6 @@ export default function VideoWorkspace({ workflow, state, chatWorkflow, chatStat
   const player = useRef(null);
   const [position, setPosition] = useState('');
   const [playbackError, setPlaybackError] = useState('');
-  const [view, setView] = useState('video');
   const [audioBusy, setAudioBusy] = useState(false);
   const busy = audioBusy || uploadControls?.busy || state.uploading || state.loadingVideo || state.analyzing || chatState.sending || chatState.loading;
   useEffect(() => { onLocalBusyChange?.(audioBusy); return () => onLocalBusyChange?.(false); }, [audioBusy,onLocalBusyChange]);
@@ -27,10 +26,8 @@ export default function VideoWorkspace({ workflow, state, chatWorkflow, chatStat
   const keywords = result ? [...new Set(result.observations.flatMap(item => item.keywords))] : [];
   const detailFrames = selectedDetailFrames(result?.detail_selection, video?.frames || [], video?.video_id, video?.duration_seconds);
   const evidenceFrames = analysisFrames(result?.detail_selection, video?.frames || [], video?.video_id, video?.duration_seconds);
-  useEffect(() => { setView(result?.code_debug ? 'debug' : result?.comparison ? 'comparison' : 'video'); }, [result?.comparison,result?.code_debug,video?.video_id]);
   const seek = seconds => {
     if (!player.current) return;
-    setView('video');
     player.current.currentTime = seconds;
     setPosition(`已定位到原视频 ${formatTime(seconds)}`);
   };
@@ -43,14 +40,16 @@ export default function VideoWorkspace({ workflow, state, chatWorkflow, chatStat
   return <div className={`work-grid video-grid ${uploadControls ? 'unified-video-grid' : ''}`}>
     <section className="panel video-panel" aria-labelledby="video-heading">
       <div className="panel-heading"><div className="section-heading"><span className="step">01</span><h2 id="video-heading">{uploadControls ? '图片或视频' : '你的视频'}</h2></div>
-        {video && <div className="video-view-switch" aria-label="视频查看内容"><button aria-pressed={view === 'video'} onClick={() => setView('video')}>画面</button><button aria-pressed={view === 'comparison'} disabled={!result?.comparison} onClick={() => setView('comparison')}>比对</button><button aria-pressed={view === 'debug'} disabled={!result?.code_debug} onClick={() => setView('debug')}>排错</button></div>}
-        {uploadControls && video && <button className="text-button" disabled={busy} onClick={() => input.current?.click()}>更换素材</button>}
+        {uploadControls && video && <div className="media-picker-actions">
+          <button className="text-button" disabled={busy} onClick={uploadControls.chooseImages}>换成图片</button>
+          <button className="text-button" disabled={busy} onClick={uploadControls.chooseVideo}>更换视频</button>
+        </div>}
         {video && <button className="text-button" disabled={busy} onClick={() => { (uploadControls || workflow).clear(); setPosition(''); setPlaybackError(''); }}>清空</button>}</div>
       <div className="video-panel-content">
       {stale && <p className="notice notice-warning" role="status">对白已校对，旧综合分析待更新。新追问优先使用校对白；重新读题、细看比对或代码排错会重读画面并产生 API 用量。</p>}
-      <div className="video-media" hidden={view !== 'video'}>
-      <input type="file" ref={input} className="sr-only" tabIndex={-1} accept={uploadControls?.accept || 'video/mp4,.mp4'} multiple={!!uploadControls} aria-label={uploadControls ? '选择图片或视频' : '选择视频文件'} disabled={busy}
-        onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ''; if (files.length) chooseFiles(files); }}/>
+      <div className="video-media">
+      {!uploadControls && <input type="file" ref={input} className="sr-only" tabIndex={-1} accept="video/mp4,.mp4" aria-label="选择视频文件" disabled={busy}
+        onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ''; if (files.length) chooseFiles(files); }}/>}
       <div className={`preview-zone video-preview ${video ? '' : 'is-empty'}`}
         onDragOver={event => event.preventDefault()}
         onDrop={event => { event.preventDefault(); if (!busy) chooseFiles(event.dataTransfer.files); }}>
@@ -60,7 +59,7 @@ export default function VideoWorkspace({ workflow, state, chatWorkflow, chatStat
             <h3>{state.loadingVideo ? '正在恢复话题中的视频' : state.uploading ? '正在处理视频' : '分享画面，也能细看比对'}</h3>
             <p>{state.uploading || state.loadingVideo ? '画面与对白在本机处理，不调用付费 API。' : '拖入一个短视频，或从设备中选择'}</p>
             {state.uploading || state.loadingVideo ? <span className="video-processing" role="status">本地处理中，生成兼容预览和识别对白可能需要一点时间…</span>
-              : <button className="button button-primary" disabled={busy} onClick={() => input.current?.click()}>{uploadControls ? '选择图片或视频' : '选择视频'}</button>}
+              : <button className="button button-primary" disabled={busy} onClick={() => uploadControls ? uploadControls.chooseVideo() : input.current?.click()}>选择视频</button>}
             <span className="format-note">MP4（H.264 / H.265）· 最长 {state.maxSeconds} 秒 · 最大 {Math.round(state.maxBytes / 1024 / 1024)} MB</span>
             <span className="format-note">每 {state.sampleInterval} 秒采样，补上末帧 · 最多 {state.maxFrames} 次</span>
           </div>}
@@ -93,8 +92,12 @@ export default function VideoWorkspace({ workflow, state, chatWorkflow, chatStat
           </button>;
         })}</details>}
       </div>
-      {view === 'comparison' && video && result?.comparison && <VideoComparison comparison={result.comparison} frames={evidenceFrames} onSelect={jump} formatTime={formatTime} question={chatState.videoId === video.video_id ? chatState.videoContext?.comparison_question : ''}/>}
-      {view === 'debug' && video && result?.code_debug && <VideoCodeDebug report={result.code_debug} frames={evidenceFrames} onSelect={jump} formatTime={formatTime} stale={stale}/>}
+      {video && result?.comparison && <details className="video-evidence"><summary>比对依据</summary>
+        <VideoComparison comparison={result.comparison} frames={evidenceFrames} onSelect={jump} formatTime={formatTime} question={chatState.videoId === video.video_id ? chatState.videoContext?.comparison_question : ''}/>
+      </details>}
+      {video && result?.code_debug && <details className="video-evidence"><summary>排错依据</summary>
+        <VideoCodeDebug report={result.code_debug} frames={evidenceFrames} onSelect={jump} formatTime={formatTime} stale={stale}/>
+      </details>}
       {video?.audio?.status === 'ready' && <AudioEditor videoId={video.video_id} duration={video.duration_seconds} disabled={busy} onBusyChange={setAudioBusy} onSaved={async () => {
         await workflow.loadVideo(video.video_id);
         if (chatState.videoId === video.video_id && chatState.conversationId) await chatWorkflow.loadConversation(chatState.conversationId);

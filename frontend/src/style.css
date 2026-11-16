@@ -48,6 +48,7 @@ h2 { margin: 0; font-weight: 600; font-size: 15px; }
 .empty-upload h3 { font-size: 17px; font-weight: 550; letter-spacing: .5px; margin: 0 0 10px; }
 .empty-upload p { font-size: 11px; color: #8b9789; margin: 0 0 24px; }
 .format-note { font-size: 10px; color: #9ba496; margin-top: 15px; }
+.media-picker-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .button { border-radius: 6px; border: 1px solid transparent; display: inline-flex; align-items: center; justify-content: center; gap: 9px; height: 39px; padding: 0 17px; font-size: 12px; font-weight: 500; transition: background .15s, opacity .15s; white-space: nowrap; }
 .button-primary { background: #285b49; color: #fff; box-shadow: 0 2px 3px #254c3b0d; }
 .button-primary:hover:not(:disabled) { background: #1e4939; }
@@ -297,10 +298,6 @@ textarea:disabled { opacity: .7; }
 .video-media[hidden] { display: none; }
 .video-comparison { flex: 1; min-height: 0; overflow-y: auto; border-top: 1px solid #dfe8d6; padding: 15px 18px; color: #5e7852; font-size: 12px; }
 .comparison-title { font-weight: 500; font-size: 13px; margin: 0 0 12px; }
-.video-view-switch { display: flex; gap: 3px; background: #f3f6ee; border-radius: 5px; padding: 3px; margin-left: auto; margin-right: 12px; }
-.video-view-switch button { font: inherit; font-size: 11px; border: 0; border-radius: 4px; padding: 4px 9px; color: #7b9071; background: transparent; }
-.video-view-switch button[aria-pressed="true"] { background: white; color: #315f46; }
-.video-view-switch button:disabled { opacity: .4; }
 .comparison-source { font-size: 10px; color: #a08546; margin: 10px 0; }
 .comparison-question { color: #8a9b7f; font-size: 10px; overflow-wrap: anywhere; }
 .comparison-content h3 { margin: 12px 0 7px; font-size: 13px; }

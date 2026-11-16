@@ -126,15 +126,16 @@ class ChatStore:
             ).fetchall()
             return opening["content"] if opening else "", [row["content"] for row in replies]
 
-    def recent(self, kind: str | None = None, space: str | None = None) -> list[dict]:
+    def recent(self, kind: str | None = None, space: str | None = None, *, limit: int = 20) -> list[dict]:
         filters = ["c.video_id IS NOT NULL"] if kind == "video" else ["c.video_id IS NULL"] if kind == "image" else []
         if space is not None:
             filters.append("c.space=?")
         condition = "WHERE " + " AND ".join(filters) if filters else ""
+        params = (space, limit) if space is not None else (limit,)
         with self.connection() as conn:
             return [media_row(row) for row in conn.execute(
                 "SELECT c.*, (SELECT count(*) FROM messages m WHERE m.conversation_id=c.id) AS message_count "
-                f"FROM conversations c {condition} ORDER BY updated_at DESC LIMIT 20", (space,) if space is not None else ()
+                f"FROM conversations c {condition} ORDER BY updated_at DESC LIMIT ?", params
             ).fetchall()]
 
     def finish_turn(self, *, conversation: dict | None, conversation_id: str, image_id: str | None,

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { IMAGE_ACCEPT } from './media-workflow.mjs';
 import { MAX_CHAT_IMAGES } from './workflow.mjs';
 
+const topicDateFormat = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric' });
+
 async function readApprovedFile(file) {
   if (!/\.(txt|csv|json)$/i.test(file.name)) throw new Error('请选择 TXT、CSV 或 JSON 文件。');
   if (file.size > 8192) throw new Error('数据文件超过 8 KiB，请选择较小的文件。');
@@ -32,6 +34,9 @@ function SandboxRun({ initial, runId, disabled }) {
   const [error, setError] = useState('');
   const filePicker = useRef(null);
   const result = latest || initial;
+  if (result.desktop_result_opened) {
+    return <div className="python-check python-run"><p role="status">试跑结果已经发送到桌面</p></div>;
+  }
   const waitingForFile = ['awaiting_file', 'file_unused'].includes(result.status);
   const needsFile = waitingForFile || initial.status === 'awaiting_file' || Boolean(result.data_file);
   const showFailure = ['failed', 'mismatch', 'limit'].includes(result.status);
@@ -75,11 +80,9 @@ function SandboxRun({ initial, runId, disabled }) {
   }
 
   return <div className="python-check python-run">
-    <p role="status">{running ? '正在本机沙箱试跑…' : !['ran', 'passed'].includes(result.status)
-      ? result.detail : result.desktop_result_opened ? '试跑结果已发送到桌面。'
-        : result.detail}</p>
+    <p role="status">{running ? '正在本机沙箱试跑…' : result.detail}</p>
     {result.output_path && <p>结果文件已保存 <code>{result.output_path}</code></p>}
-    {!waitingForFile && (!result.desktop_result_opened || showFailure) && <details open={showFailure || undefined}>
+    {!waitingForFile && <details open={showFailure || undefined}>
       <summary>{showFailure ? '查看失败详情' : '查看运行输出'}</summary>
       {result.error_line && <div className="notice notice-error">
         <strong>源码第 {result.error_line} 行</strong><pre>{result.source_line}</pre>
@@ -185,7 +188,11 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
         setDraft(''); if (event.target.value) void workflow.loadConversation(event.target.value); else workflow.clear();
       }}><option value="">新话题 · 图片、视频或文字</option>
         {chat.conversationId && !chat.recent.some(row => row.id === chat.conversationId) && <option value={chat.conversationId}>当前话题</option>}
-        {chat.recent.map(row => <option key={row.id} value={row.id}>{row.video_id ? '视频' : row.image_id ? '图片' : '文字'} · {row.title}</option>)}
+        {chat.recent.map(row => {
+          const date = Date.parse(row.created_at);
+          const prefix = Number.isFinite(date) ? `${topicDateFormat.format(date)} · ` : '';
+          return <option key={row.id} value={row.id}>{prefix}{row.video_id ? '视频' : row.image_id ? '图片' : '文字'} · {row.title}</option>;
+        })}
       </select><span>{state.kind === 'video' ? '视频' : state.kind === 'image' ? '单张图片' : '也可以直接聊文字'}</span></div>
     {!!chat.legacy?.length && <details className="legacy-topics"><summary>未分类旧话题（{chat.legacy.length}）</summary>
       <p>旧记录保持原样。选择后归入当前空间；归入工作解析后，旧角色口吻仍保留，新回复采用客观分析。归类后不支持跨区移动。</p>
@@ -238,7 +245,7 @@ export default function MediaChatPanel({ workflow, state, draft, setDraft }) {
         </article>;
         })}
         {chat.sending && <div className="companion-thinking"><span className="thinking-dot"/><span className="thinking-dot"/><span className="thinking-dot"/>正在分析与回复…</div>}
-      </> : <div className="chat-welcome"><span className="welcome-mark">▷</span><h3>{companion ? `和${chat.persona.name}聊聊吧。` : '一张图片，或一段视频。'}</h3>
+      </> : <div className="chat-welcome"><span className="welcome-mark">▷</span><h3>{companion ? `和${chat.persona.name}聊聊吧。` : `最多 ${MAX_CHAT_IMAGES} 张图片，或一段视频。`}</h3>
         <p>上传后点击“开始分析”，也可以配上你想问的问题。</p><span>换素材会开启新话题，旧记录仍可恢复。</span></div>}
     </div>
     <div className="chat-composer">

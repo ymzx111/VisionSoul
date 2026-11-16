@@ -125,11 +125,11 @@ def chat_status(settings: Annotated[Settings, Depends(get_settings)], space: Cha
             "style": style, "space": space, "context_turns": settings.chat_context_turns}
 
 
-@router.get("/conversations", summary="查看本机最近二十个话题")
+@router.get("/conversations", summary="查看本机最近话题（工作解析最多十五条）")
 def conversations(settings: Annotated[Settings, Depends(get_settings)], kind: Literal["image", "video", "all"] = "image",
                   space: Literal["work", "companion", "legacy"] = "companion") -> list[dict]:
     try:
-        return open_store(settings).recent(kind, space)
+        return open_store(settings).recent(kind, space, limit=15 if space == "work" else 20)
     except (OSError, sqlite3.Error, json.JSONDecodeError) as exc:
         raise HTTPException(503, "暂时无法读取本机话题。") from exc
 
